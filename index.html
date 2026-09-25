@@ -114,41 +114,59 @@ async function loadOlder(){
 function chartPointerUp(){if(chartState.tool==="line"){let d=chartState.drawings.at(-1);if(d&&d.pending){d.pending=false;if(d.i1===d.i2){chartState.drawings.pop()}}}if(chartState.tool==="cursor"&&chartState.draggingDrawing!=null){let d=chartState.drawings[chartState.draggingDrawing];if(d){delete d._lastI;delete d._lastP}}chartState.dragging=false;chartState.draggingDrawing=null;if(last)draw(last)}
 $("chart").addEventListener("pointerleave",()=>{chartState.hoverX=null;if(!chartState.dragging&&last)draw(last)});document.querySelectorAll("#drawTools .drawbtn[data-tool]").forEach(b=>b.onclick=()=>{chartState.tool=b.dataset.tool;document.querySelectorAll("#drawTools .drawbtn").forEach(x=>x.classList.toggle("active",x===b));$("chart").style.cursor=chartState.tool==="cursor"?"crosshair":chartState.tool==="line"?"crosshair":"crosshair"});$("clearDrawings").onclick=()=>{chartState.drawings=[];draw(last)};$("srTool").onclick=()=>{if(!candles.length)return;let visible=Math.max(25,Math.min(candles.length,chartState.visible)),end=Math.min(candles.length,chartState.end),begin=Math.max(0,end-visible),a=candles.slice(begin,end);let lows=a.map(x=>x.l),highs=a.map(x=>x.h),low=Math.min(...lows),high=Math.max(...highs),mid=(low+high)/2;chartState.drawings=chartState.drawings.filter(d=>d.type!=="hline");chartState.drawings.push({type:"hline",price:low,color:"#27e58a"},{type:"hline",price:mid,color:"#ffd166"},{type:"hline",price:high,color:"#ff5f68"});draw(last)};function chartWheel(ev){ev.preventDefault();let old=chartState.visible,delta=ev.deltaY<0?-10:10;chartState.visible=Math.max(25,Math.min(candles.length,old+delta));chartState.end=Math.max(chartState.visible,Math.min(candles.length+Math.floor(chartState.visible*.8),chartState.end));draw(last)}
 function render(e){$("state").className="badge "+(e.sig==="LONG"?"long":e.sig==="SHORT"?"short":"none");$("state").textContent=e.sig;$("close").textContent=fmt(e.x.c);$("sfast").textContent=fmt(e.sf);$("sslow").textContent=fmt(e.ss);$("vol").textContent=e.vx.toFixed(2)+"×";$("htrend").textContent=e.ht;$("bigSignal").textContent=e.sig;$("bigSignal").style.color=e.sig==="LONG"?"var(--g)":e.sig==="SHORT"?"var(--r)":"var(--t)";$("signalReason").textContent=e.reason;$("strength").textContent=e.str;$("volx").textContent=e.vx.toFixed(2)+"×";$("candle").textContent=e.bull?"BULLISH":e.bear?"BEARISH":"FLAT";$("candleTime").textContent=new Date(e.x.ts).toLocaleString("ru-RU");$("updated").textContent="обновлено "+new Date().toLocaleTimeString("ru-RU");draw(e)}
-let liveSocket=null,liveCandle=null,liveReconnect=null,livePing=null,liveRetry=0,liveManualClose=false,liveEndpointIndex=0;
+let liveSocket=null,liveCandle=null,liveReconnect=null,livePing=null,liveRetry=0,liveManualClose=false,liveEndpointIndex=0,liveHasData=false;
 function wsBar(tf){return tf==="1m"?"candle1m":tf==="5m"?"candle5m":tf==="15m"?"candle15m":tf==="30m"?"candle30m":tf==="1H"?"candle1H":tf==="4H"?"candle4H":"candle1D"}
 function setLiveStatus(ok,msg){let el=$("liveStatus");if(!el)return;el.textContent=ok?"● LIVE":"● "+(msg||"OFFLINE");el.style.color=ok?"#27e58a":"#ffd166"}
 function stopLiveTimers(){if(liveReconnect){clearTimeout(liveReconnect);liveReconnect=null}if(livePing){clearInterval(livePing);livePing=null}}
 function disconnectLive(){liveManualClose=true;stopLiveTimers();if(liveSocket){try{liveSocket.close()}catch{}liveSocket=null}liveCandle=null;setLiveStatus(false,"CONNECTING…")}
 function connectLive(){
   stopLiveTimers();
-  if(liveSocket){try{liveSocket.close()}catch{}liveSocket=null}
+  if(liveSocket){try{liveSocket.onclose=null;liveSocket.close()}catch{}liveSocket=null}
   liveManualClose=false;
   if(!currentPair)return;
   let pair=currentPair,bar=$("tf").value,channel=wsBar(bar);
   const endpoints=["wss://ws.okx.com:8443/ws/v5/business","wss://wseea.okx.com:8443/ws/v5/business"];
-  const retry=()=>{if(liveManualClose||pair!==currentPair||bar!==$("tf").value)return;setLiveStatus(false,"RECONNECT…");let delay=Math.min(30000,2000*Math.min(4,liveRetry++));liveReconnect=setTimeout(connectLive,delay)};
+  const retry=()=>{
+    if(liveManualClose||pair!==currentPair||bar!==$("tf").value)return;
+    setLiveStatus(false,"RECONNECT…");
+    let delay=Math.min(30000,2000*Math.max(1,Math.min(8,++liveRetry)));
+    liveReconnect=setTimeout(connectLive,delay);
+  };
   try{
     setLiveStatus(false,"CONNECTING…");
     liveSocket=new WebSocket(endpoints[liveEndpointIndex]);
-    liveSocket.onopen=()=>{
-      liveRetry=0;
-      setLiveStatus(true);
-      liveSocket.send(JSON.stringify({op:"subscribe",args:[{channel,instId:pair}]}));
+    let socket=liveSocket;
+    socket.onopen=()=>{
+      liveHasData=false;
+      setLiveStatus(false,"CONNECTING…");
+      socket.send(JSON.stringify({id:String(Date.now()),op:"subscribe",args:[{channel,instId:pair}]}));
       let lastRx=Date.now();
       livePing=setInterval(()=>{
-        if(!liveSocket||liveSocket.readyState!==WebSocket.OPEN)return;
-        if(Date.now()-lastRx>=15000)liveSocket.send("ping");
+        if(socket.readyState!==WebSocket.OPEN)return;
+        if(Date.now()-lastRx>=10000)socket.send("ping");
       },5000);
-      liveSocket._markRx=()=>{lastRx=Date.now()};
+      socket._markRx=()=>{lastRx=Date.now()};
     };
-    liveSocket.onmessage=ev=>{
+    socket.onmessage=ev=>{
       try{
-        if(liveSocket)liveSocket._markRx?.();
+        socket._markRx?.();
         if(ev.data==="pong")return;
         let j=JSON.parse(ev.data);
-        if(j.event==="error"){console.warn("OKX WS error",j);setLiveStatus(false,"WS "+(j.code||"ERROR"));try{liveSocket.close()}catch{}return}
+        if(j.event==="subscribe"){
+          setLiveStatus(false,"CONNECTING…");
+          return;
+        }
+        if(j.event==="error"){
+          console.warn("OKX WS error",j);
+          setLiveStatus(false,"WS "+(j.code||"ERROR"));
+          try{socket.close()}catch{}
+          return;
+        }
         if(j.event==="notice"){console.warn("OKX WS notice",j);return}
         if(!j.data||!j.data[0])return;
+        liveHasData=true;
+        liveRetry=0;
+        setLiveStatus(true);
         let x=j.data[0],z={ts:+x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4],v:+x[5],confirm:String(x[8]??"0")};
         if(pair!==currentPair||bar!==$("tf").value)return;
         liveCandle=z;
@@ -167,14 +185,14 @@ function connectLive(){
         }
       }catch(e){console.warn("live message",e)}
     };
-    liveSocket.onclose=()=>{
+    socket.onclose=ev=>{
       stopLiveTimers();
       if(liveManualClose||pair!==currentPair||bar!==$("tf").value)return;
-      liveEndpointIndex=(liveEndpointIndex+1)%endpoints.length;
+      if(!liveHasData)liveEndpointIndex=(liveEndpointIndex+1)%endpoints.length;
       setLiveStatus(false,"RECONNECT…");
       liveReconnect=setTimeout(connectLive,2000);
     };
-    liveSocket.onerror=()=>{setLiveStatus(false,"WS ERROR")};
+    socket.onerror=()=>{setLiveStatus(false,"RECONNECT…")};
   }catch(e){console.warn("live connect",e);retry()}
 }
 async function refresh(){$("state").className="badge none";$("state").textContent="Загрузка…";try{let pair=currentPair,bar=$("tf").value;if(!pair)throw Error("Нет доступных Perpetual с объёмом > $1 млн");$("subtitle").textContent=bar+" • SMA + Volume • только закрытые свечи";$("charttf").textContent=bar;[candles,h1]=await Promise.all([fetchC(pair,bar),fetchC(pair,"1H",120)]);resetChart();connectLive();let e=evaluate();if(direction!=="ALL"&&e.sig!==direction)e.sig="NO SIGNAL";last=e;record(e);outcomes();render(e);renderJournal()}catch(e){$("state").className="badge warn";$("state").textContent="ОШИБКА";$("signalReason").textContent=(e.message||"Ошибка сети")+" — проверь интернет/OKX API.";toast(e.message||"Ошибка")}}
