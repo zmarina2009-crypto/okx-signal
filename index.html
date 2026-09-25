@@ -125,7 +125,7 @@ function connectLive(){
   liveManualClose=false;
   if(!currentPair)return;
   let pair=currentPair,bar=$("tf").value,channel=wsBar(bar);
-  const endpoints=["wss://wseea.okx.com:8443/ws/v5/public","wss://ws.okx.com:8443/ws/v5/public"];
+  const endpoints=["wss://ws.okx.com:8443/ws/v5/business","wss://wseea.okx.com:8443/ws/v5/business"];
   const retry=()=>{if(liveManualClose||pair!==currentPair||bar!==$("tf").value)return;setLiveStatus(false,"RECONNECT…");let delay=Math.min(30000,2000*Math.min(4,liveRetry++));liveReconnect=setTimeout(connectLive,delay)};
   try{
     setLiveStatus(false,"CONNECTING…");
@@ -146,7 +146,7 @@ function connectLive(){
         if(liveSocket)liveSocket._markRx?.();
         if(ev.data==="pong")return;
         let j=JSON.parse(ev.data);
-        if(j.event==="error"){console.warn("OKX WS error",j);setLiveStatus(false,"WS ERROR");return}
+        if(j.event==="error"){console.warn("OKX WS error",j);setLiveStatus(false,"WS "+(j.code||"ERROR"));try{liveSocket.close()}catch{}return}
         if(j.event==="notice"){console.warn("OKX WS notice",j);return}
         if(!j.data||!j.data[0])return;
         let x=j.data[0],z={ts:+x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4],v:+x[5],confirm:String(x[8]??"0")};
@@ -155,7 +155,16 @@ function connectLive(){
         if(last)draw(last);
         $("close").textContent=fmt(z.c);
         $("updated").textContent="LIVE • "+new Date().toLocaleTimeString("ru-RU");
-        if(z.confirm==="1"){liveCandle=null;refresh()}
+        if(z.confirm==="1"){
+          liveCandle=null;
+          let idx=candles.findIndex(k=>k.ts===z.ts);
+          if(idx>=0)candles[idx]=z;else candles.push(z);
+          candles.sort((a,b)=>a.ts-b.ts);
+          chartState.end=Math.max(chartState.end,candles.length+12);
+          let e=evaluate();
+          if(direction!=="ALL"&&e.sig!==direction)e.sig="NO SIGNAL";
+          last=e;record(e);outcomes();render(e);renderJournal();
+        }
       }catch(e){console.warn("live message",e)}
     };
     liveSocket.onclose=()=>{
@@ -163,7 +172,7 @@ function connectLive(){
       if(liveManualClose||pair!==currentPair||bar!==$("tf").value)return;
       liveEndpointIndex=(liveEndpointIndex+1)%endpoints.length;
       setLiveStatus(false,"RECONNECT…");
-      liveReconnect=setTimeout(connectLive,1200);
+      liveReconnect=setTimeout(connectLive,2000);
     };
     liveSocket.onerror=()=>{setLiveStatus(false,"WS ERROR")};
   }catch(e){console.warn("live connect",e);retry()}
