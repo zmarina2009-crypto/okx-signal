@@ -114,7 +114,7 @@ async function loadOlder(){
 function chartPointerUp(){if(chartState.tool==="line"){let d=chartState.drawings.at(-1);if(d&&d.pending){d.pending=false;if(d.i1===d.i2){chartState.drawings.pop()}}}if(chartState.tool==="cursor"&&chartState.draggingDrawing!=null){let d=chartState.drawings[chartState.draggingDrawing];if(d){delete d._lastI;delete d._lastP}}chartState.dragging=false;chartState.draggingDrawing=null;if(last)draw(last)}
 $("chart").addEventListener("pointerleave",()=>{chartState.hoverX=null;if(!chartState.dragging&&last)draw(last)});document.querySelectorAll("#drawTools .drawbtn[data-tool]").forEach(b=>b.onclick=()=>{chartState.tool=b.dataset.tool;document.querySelectorAll("#drawTools .drawbtn").forEach(x=>x.classList.toggle("active",x===b));$("chart").style.cursor=chartState.tool==="cursor"?"crosshair":chartState.tool==="line"?"crosshair":"crosshair"});$("clearDrawings").onclick=()=>{chartState.drawings=[];draw(last)};$("srTool").onclick=()=>{if(!candles.length)return;let visible=Math.max(25,Math.min(candles.length,chartState.visible)),end=Math.min(candles.length,chartState.end),begin=Math.max(0,end-visible),a=candles.slice(begin,end);let lows=a.map(x=>x.l),highs=a.map(x=>x.h),low=Math.min(...lows),high=Math.max(...highs),mid=(low+high)/2;chartState.drawings=chartState.drawings.filter(d=>d.type!=="hline");chartState.drawings.push({type:"hline",price:low,color:"#27e58a"},{type:"hline",price:mid,color:"#ffd166"},{type:"hline",price:high,color:"#ff5f68"});draw(last)};function chartWheel(ev){ev.preventDefault();let old=chartState.visible,delta=ev.deltaY<0?-10:10;chartState.visible=Math.max(25,Math.min(candles.length,old+delta));chartState.end=Math.max(chartState.visible,Math.min(candles.length+Math.floor(chartState.visible*.8),chartState.end));draw(last)}
 function render(e){$("state").className="badge "+(e.sig==="LONG"?"long":e.sig==="SHORT"?"short":"none");$("state").textContent=e.sig;$("close").textContent=fmt(e.x.c);$("sfast").textContent=fmt(e.sf);$("sslow").textContent=fmt(e.ss);$("vol").textContent=e.vx.toFixed(2)+"×";$("htrend").textContent=e.ht;$("bigSignal").textContent=e.sig;$("bigSignal").style.color=e.sig==="LONG"?"var(--g)":e.sig==="SHORT"?"var(--r)":"var(--t)";$("signalReason").textContent=e.reason;$("strength").textContent=e.str;$("volx").textContent=e.vx.toFixed(2)+"×";$("candle").textContent=e.bull?"BULLISH":e.bear?"BEARISH":"FLAT";$("candleTime").textContent=new Date(e.x.ts).toLocaleString("ru-RU");$("updated").textContent="обновлено "+new Date().toLocaleTimeString("ru-RU");draw(e)}
-let liveSocket=null,liveCandle=null,liveReconnect=null,livePing=null,liveRetry=0,liveManualClose=false;
+let liveSocket=null,liveCandle=null,liveReconnect=null,livePing=null,liveRetry=0,liveManualClose=false,liveEndpointIndex=0;
 function wsBar(tf){return tf==="1m"?"candle1m":tf==="5m"?"candle5m":tf==="15m"?"candle15m":tf==="30m"?"candle30m":tf==="1H"?"candle1H":tf==="4H"?"candle4H":"candle1D"}
 function setLiveStatus(ok,msg){let el=$("liveStatus");if(!el)return;el.textContent=ok?"● LIVE":"● "+(msg||"OFFLINE");el.style.color=ok?"#27e58a":"#ffd166"}
 function stopLiveTimers(){if(liveReconnect){clearTimeout(liveReconnect);liveReconnect=null}if(livePing){clearInterval(livePing);livePing=null}}
@@ -125,10 +125,11 @@ function connectLive(){
   liveManualClose=false;
   if(!currentPair)return;
   let pair=currentPair,bar=$("tf").value,channel=wsBar(bar);
-  const retry=()=>{if(liveManualClose||pair!==currentPair||bar!==$("tf").value)return;setLiveStatus(false,"RECONNECT…");let delay=Math.min(30000,2000*Math.pow(1,liveRetry++));liveReconnect=setTimeout(connectLive,delay)};
+  const endpoints=["wss://wseea.okx.com:8443/ws/v5/public","wss://ws.okx.com:8443/ws/v5/public"];
+  const retry=()=>{if(liveManualClose||pair!==currentPair||bar!==$("tf").value)return;setLiveStatus(false,"RECONNECT…");let delay=Math.min(30000,2000*Math.min(4,liveRetry++));liveReconnect=setTimeout(connectLive,delay)};
   try{
     setLiveStatus(false,"CONNECTING…");
-    liveSocket=new WebSocket("wss://ws.okx.com:8443/ws/v5/public");
+    liveSocket=new WebSocket(endpoints[liveEndpointIndex]);
     liveSocket.onopen=()=>{
       liveRetry=0;
       setLiveStatus(true);
@@ -159,7 +160,10 @@ function connectLive(){
     };
     liveSocket.onclose=()=>{
       stopLiveTimers();
-      if(!liveManualClose&&pair===currentPair&&bar===$("tf").value)retry();
+      if(liveManualClose||pair!==currentPair||bar!==$("tf").value)return;
+      liveEndpointIndex=(liveEndpointIndex+1)%endpoints.length;
+      setLiveStatus(false,"RECONNECT…");
+      liveReconnect=setTimeout(connectLive,1200);
     };
     liveSocket.onerror=()=>{setLiveStatus(false,"WS ERROR")};
   }catch(e){console.warn("live connect",e);retry()}
