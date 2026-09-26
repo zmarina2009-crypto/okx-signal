@@ -86,7 +86,7 @@
       const short=prev.h>=mPrev&&prev.c<mPrev&&x.c<x.o&&x.c<m;
       if(!long&&!short)continue;
       const dir=long?1:-1, entry=x.c*(1+dir*costPct), risk=av*mult;
-      pos={ts:x.ts,dir:dir===1?"LONG":"SHORT",entry,stop:entry-dir*risk,risk,qty:1,initialQty:1,tp1:false,pnl:0};
+      pos={ts:x.ts,dir:dir===1?"LONG":"SHORT",entry,stop:entry-dir*risk,risk,qty:100,initialQty:100,tp1:false,pnl:0};
     }
     if(pos){closePart(a.at(-1).c,1,"END",a.at(-1).ts)}
     const net=equity;
