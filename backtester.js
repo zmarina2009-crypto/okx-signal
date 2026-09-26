@@ -63,10 +63,10 @@
       const qty=pos.qty*fraction, dir=pos.dir;
       const raw=(price-pos.entry)*dir*qty/pos.entry*100;
       const costs=(pos.entry+price)*qty/pos.entry*100*costPct;
-      const pnl=raw-costs; equity+=pnl;
+      const pnl=raw-costs; pos.pnl=(pos.pnl||0)+pnl; equity+=pnl;
       if(pnl>=0)grossWin+=pnl;else grossLoss+=Math.abs(pnl);
       pos.qty-=qty; pos.exit=price;pos.why=why;pos.lastBar=bar;
-      if(Math.abs(pos.qty)<1e-8){trades.push(pos);if(pos.pnl>=0){}pos=null}
+      if(Math.abs(pos.qty)<1e-8){trades.push(pos);pos=null}
       return pnl;
     }
     for(let i=30;i<a.length;i++){
@@ -76,7 +76,7 @@
         const tp1Hit=!pos.tp1&&(pos.dir===1?x.h>=pos.entry+pos.risk:x.l<=pos.entry-pos.risk);
         const tp2Hit=pos.tp1&&(pos.dir===1?x.h>=pos.entry+2*pos.risk:x.l<=pos.entry-2*pos.risk);
         if(stopHit){closePart(pos.stop,1,"SL",x.ts);continue}
-        if(tp1Hit){closePart(pos.entry+pos.dir*pos.risk,.5,"TP1",x.ts);if(pos){pos.tp1=true;pos.qty=pos.initialQty*.5;pos.pnl=(pos.pnl||0)}}
+        if(tp1Hit){closePart(pos.entry+pos.dir*pos.risk,.5,"TP1",x.ts);if(pos){pos.tp1=true;pos.qty=pos.initialQty*.5}}
         if(pos&&tp2Hit){closePart(pos.entry+pos.dir*2*pos.risk,1,"TP2",x.ts);continue}
         peak=Math.max(peak,equity);maxDD=Math.max(maxDD,peak-equity);continue;
       }
