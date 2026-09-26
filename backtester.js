@@ -62,7 +62,7 @@
     function closePart(price, fraction, why, bar) {
       const qty=pos.qty*fraction, dir=pos.dir;
       const raw=(price-pos.entry)*dir*qty/pos.entry;
-      const costs=(pos.entry+price)*qty/pos.entry*costPct;
+      const costs=(qty+price*qty/pos.entry)*costPct;
       const pnl=raw-costs; pos.pnl=(pos.pnl||0)+pnl; equity+=pnl;
       if(pnl>=0)grossWin+=pnl;else grossLoss+=Math.abs(pnl);
       pos.qty-=qty; pos.exit=price;pos.why=why;pos.lastBar=bar;
@@ -85,8 +85,8 @@
       const long=prev.l<=mPrev&&prev.c>mPrev&&x.c> x.o&&x.c>m;
       const short=prev.h>=mPrev&&prev.c<mPrev&&x.c<x.o&&x.c<m;
       if(!long&&!short)continue;
-      const dir=long?1:-1, entry=x.c*(1+dir*costPct), risk=av*mult;
-      pos={ts:x.ts,dir:dir===1?"LONG":"SHORT",entry,stop:entry-dir*risk,risk,qty:100,initialQty:100,tp1:false,pnl:0};
+      const dir=long?1:-1, entry=x.c, risk=av*mult;
+      pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,initialQty:100,tp1:false,pnl:0};
     }
     if(pos){closePart(a.at(-1).c,1,"END",a.at(-1).ts)}
     const net=equity;
@@ -101,7 +101,7 @@
       const r=run(candles,mult,fee,slip), trades=r.trades;
       const metrics=[["Закрытых сделок",trades.length],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor",r.grossLoss?fmt(r.grossWin/r.grossLoss):"—"],["Свечей",candles.length]];
       $("btResults").innerHTML=metrics.map(([k,v])=>'<div class="btmetric"><small>'+k+'</small><b>'+v+'</b></div>').join("");
-      $("btTrades").innerHTML=trades.slice(-100).reverse().map(t=>'<tr><td>'+new Date(t.ts).toLocaleString("ru-RU")+'</td><td>'+t.dir+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.exit||0)+' ('+t.why+')</td><td>'+fmt(t.pnl||0)+'</td></tr>').join("");
+      $("btTrades").innerHTML=trades.slice(-100).reverse().map(t=>'<tr><td>'+new Date(t.ts).toLocaleString("ru-RU")+'</td><td>'+(t.dir===1?"LONG":"SHORT")+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.exit||0)+' ('+t.why+')</td><td>'+fmt(t.pnl||0)+'</td></tr>').join("");
       $("btStatus").textContent="Готово. Загружено "+candles.length+" закрытых свечей. Последние 100 сделок показаны ниже.";
     }catch(e){$("btStatus").textContent="Ошибка теста: "+(e.message||e)}
     finally{btn.disabled=false}
