@@ -61,8 +61,8 @@
     const costPct=(feePct+slipPct)/100;
     function closePart(price, fraction, why, bar) {
       const qty=pos.qty*fraction, dir=pos.dir;
-      const raw=(price-pos.entry)*dir*qty/pos.entry*100;
-      const costs=(pos.entry+price)*qty/pos.entry*100*costPct;
+      const raw=(price-pos.entry)*dir*qty/pos.entry;
+      const costs=(pos.entry+price)*qty/pos.entry*costPct;
       const pnl=raw-costs; pos.pnl=(pos.pnl||0)+pnl; equity+=pnl;
       if(pnl>=0)grossWin+=pnl;else grossLoss+=Math.abs(pnl);
       pos.qty-=qty; pos.exit=price;pos.why=why;pos.lastBar=bar;
