@@ -63,7 +63,7 @@
       const qty=pos.qty*fraction, dir=pos.dir;
       const raw=(price-pos.entry)*dir*qty/pos.entry;
       const costs=(qty+price*qty/pos.entry)*costPct;
-      const pnl=raw-costs; pos.pnl=(pos.pnl||0)+pnl; equity+=pnl;
+      const pnl=raw-costs; pos.pnl=(pos.pnl||0)+pnl; equity+=pnl; peak=Math.max(peak,equity); maxDD=Math.max(maxDD,peak-equity);
       if(pnl>=0)grossWin+=pnl;else grossLoss+=Math.abs(pnl);
       pos.qty-=qty; pos.exit=price;pos.why=why;pos.lastBar=bar;
       if(Math.abs(pos.qty)<1e-8){trades.push(pos);pos=null}
