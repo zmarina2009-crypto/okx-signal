@@ -62,8 +62,15 @@
     function closePart(price, fraction, why, bar) {
       const qty=pos.qty*fraction, dir=pos.dir;
       const raw=(price-pos.entry)*dir*qty/pos.entry;
-      const costs=(qty+price*qty/pos.entry)*costPct;
-      const pnl=raw-costs; pos.pnl=(pos.pnl||0)+pnl; equity+=pnl; peak=Math.max(peak,equity); maxDD=Math.max(maxDD,peak-equity);
+      const entryNotional=qty;
+      const exitNotional=price*qty/pos.entry;
+      const fees=(entryNotional+exitNotional)*feeRate;
+      const slippage=(entryNotional+exitNotional)*slipRate;
+      const costs=fees+slippage;
+      const pnl=raw-costs;
+      pos.pnl=(pos.pnl||0)+pnl; pos.gross=(pos.gross||0)+raw; pos.fees=(pos.fees||0)+fees; pos.slippage=(pos.slippage||0)+slippage;
+      grossTotal+=raw; feesTotal+=fees; slippageTotal+=slippage;
+      equity+=pnl; peak=Math.max(peak,equity); maxDD=Math.max(maxDD,peak-equity);
       pos.qty-=qty; pos.exit=price;pos.why=why;pos.lastBar=bar;
       if(Math.abs(pos.qty)<1e-8){trades.push(pos);pos=null}
       return pnl;
