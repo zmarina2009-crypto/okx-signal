@@ -27,7 +27,7 @@
     <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
     <div id="btResults" class="btresults"></div>
-    <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></tr></thead><tbody id="btTrades"></tbody></table></div>
+    <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
     <div class="small" style="margin-top:8px">*Расчёт для условной позиции 100 USDT. Для минут, где внутри одной свечи могли сработать и стоп, и тейк, используется консервативное допущение: стоп считается первым. Это исследовательский тест, не прогноз доходности.</div>`;
   const anchor = document.querySelector("footer");
   if (anchor) anchor.parentNode.insertBefore(panel, anchor);
@@ -57,8 +57,8 @@
   function sma(a,i,n){if(i+1<n)return NaN;let s=0;for(let k=i-n+1;k<=i;k++)s+=a[k].c;return s/n}
   function atr(a,i,n=14){if(i<n)return NaN;let sum=0;for(let k=i-n+1;k<=i;k++){const p=a[k-1]?.c;if(!Number.isFinite(p))return NaN;sum+=Math.max(a[k].h-a[k].l,Math.abs(a[k].h-p),Math.abs(a[k].l-p))}return sum/n}
   function run(a, mult, feePct, slipPct) {
-    const trades=[]; let pos=null, equity=0, peak=0,maxDD=0;
-    const costPct=(feePct+slipPct)/100;
+    const trades=[]; let pos=null, equity=0, peak=0,maxDD=0, grossTotal=0, feesTotal=0, slippageTotal=0;
+    const feeRate=feePct/100, slipRate=slipPct/100;
     function closePart(price, fraction, why, bar) {
       const qty=pos.qty*fraction, dir=pos.dir;
       const raw=(price-pos.entry)*dir*qty/pos.entry;
@@ -78,7 +78,7 @@
         if(tp1Hit){closePart(pos.entry+pos.dir*pos.risk,.5,"TP1",x.ts);if(pos){pos.tp1=true;pos.qty=pos.initialQty*.5}}
         if(pos&&tp2Hit){closePart(pos.entry+pos.dir*2*pos.risk,1,"TP2",x.ts);continue}
         // Include adverse unrealized PnL on the remaining position in drawdown.
-        if(pos){const mark=pos.dir===1?x.l:x.h;const unrealized=(mark-pos.entry)*pos.dir*pos.qty/pos.entry;const exitCost=(pos.qty+mark*pos.qty/pos.entry)*costPct;const markedEquity=equity+unrealized-exitCost;peak=Math.max(peak,markedEquity);maxDD=Math.max(maxDD,peak-markedEquity);}
+        if(pos){const mark=pos.dir===1?x.l:x.h;const unrealized=(mark-pos.entry)*pos.dir*pos.qty/pos.entry;const exitNotional=mark*pos.qty/pos.entry;const exitCost=(pos.qty+exitNotional)*(feeRate+slipRate);const markedEquity=equity+unrealized-exitCost;peak=Math.max(peak,markedEquity);maxDD=Math.max(maxDD,peak-markedEquity);}
         else {peak=Math.max(peak,equity);maxDD=Math.max(maxDD,peak-equity);}
         continue;
       }
@@ -95,7 +95,7 @@
     // Profit Factor is calculated per completed trade, aggregating partial exits (TP1/TP2/SL).
     const grossWin=trades.reduce((sum,t)=>sum+(t.pnl>0?t.pnl:0),0);
     const grossLoss=trades.reduce((sum,t)=>sum+(t.pnl<0?Math.abs(t.pnl):0),0);
-    return {trades,net,maxDD,wins:trades.filter(t=>t.pnl>0).length,grossWin,grossLoss};
+    return {trades,net,maxDD,wins:trades.filter(t=>t.pnl>0).length,grossWin,grossLoss,grossTotal,feesTotal,slippageTotal};
   }
   $("btRun").addEventListener("click",async()=>{
     const btn=$("btRun");btn.disabled=true;$("btStatus").textContent="Загружаю закрытые свечи BTC-USDT…";$("btResults").innerHTML="";$("btTrades").innerHTML="";
@@ -104,7 +104,7 @@
       const candles=await getCandles(days);
       if(candles.length<50)throw Error("Недостаточно исторических свечей");
       const r=run(candles,mult,fee,slip), trades=r.trades;
-      const metrics=[["Закрытых сделок",trades.length],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["Свечей",candles.length]];
+      const metrics=[["Закрытых сделок",trades.length],["Валовый результат",fmt(r.grossTotal)+" USDT"],["Комиссии",fmt(r.feesTotal)+" USDT"],["Проскальзывание",fmt(r.slippageTotal)+" USDT"],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["Свечей",candles.length]];
       $("btResults").innerHTML=metrics.map(([k,v])=>'<div class="btmetric"><small>'+k+'</small><b>'+v+'</b></div>').join("");
       $("btTrades").innerHTML=trades.slice(-100).reverse().map(t=>'<tr><td>'+new Date(t.ts).toLocaleString("ru-RU")+'</td><td>'+(t.dir===1?"LONG":"SHORT")+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.exit||0)+' ('+t.why+')</td><td>'+fmt(t.pnl||0)+'</td></tr>').join("");
       $("btStatus").textContent="Готово. Загружено "+candles.length+" закрытых свечей (цель: "+Math.min(days*1440,10000)+"). Последние 100 сделок показаны ниже.";
