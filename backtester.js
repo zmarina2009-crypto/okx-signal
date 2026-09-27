@@ -77,7 +77,10 @@
         if(stopHit){closePart(pos.stop,1,"SL",x.ts);continue}
         if(tp1Hit){closePart(pos.entry+pos.dir*pos.risk,.5,"TP1",x.ts);if(pos){pos.tp1=true;pos.qty=pos.initialQty*.5}}
         if(pos&&tp2Hit){closePart(pos.entry+pos.dir*2*pos.risk,1,"TP2",x.ts);continue}
-        peak=Math.max(peak,equity);maxDD=Math.max(maxDD,peak-equity);continue;
+        // Include adverse unrealized PnL on the remaining position in drawdown.
+        if(pos){const mark=pos.dir===1?x.l:x.h;const unrealized=(mark-pos.entry)*pos.dir*pos.qty/pos.entry;const exitCost=(pos.qty+mark*pos.qty/pos.entry)*costPct;const markedEquity=equity+unrealized-exitCost;peak=Math.max(peak,markedEquity);maxDD=Math.max(maxDD,peak-markedEquity);}
+        else {peak=Math.max(peak,equity);maxDD=Math.max(maxDD,peak-equity);}
+        continue;
       }
       if(!Number.isFinite(av)||!Number.isFinite(m)||!Number.isFinite(mPrev)||av<=0)continue;
       // Pullback to SMA21, then closed-candle directional confirmation.
