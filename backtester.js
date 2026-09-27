@@ -33,7 +33,7 @@
   if (anchor) anchor.parentNode.insertBefore(panel, anchor);
   const $ = id => document.getElementById(id);
   const fmt = n => Number(n).toLocaleString("ru-RU",{maximumFractionDigits:2});
-  const BASE = "https://www.okx.com/api/v5/market/candles";
+  const BASE = "https://www.okx.com/api/v5/market/history-candles";
   async function getCandles(days) {
     const target = Math.min(days * 1440, 10000), all = new Map();
     let after = "";
@@ -99,10 +99,10 @@
       const candles=await getCandles(days);
       if(candles.length<50)throw Error("Недостаточно исторических свечей");
       const r=run(candles,mult,fee,slip), trades=r.trades;
-      const metrics=[["Закрытых сделок",trades.length],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor",r.grossLoss?fmt(r.grossWin/r.grossLoss):"—"],["Свечей",candles.length]];
+      const metrics=[["Закрытых сделок",trades.length],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["Свечей",candles.length]];
       $("btResults").innerHTML=metrics.map(([k,v])=>'<div class="btmetric"><small>'+k+'</small><b>'+v+'</b></div>').join("");
       $("btTrades").innerHTML=trades.slice(-100).reverse().map(t=>'<tr><td>'+new Date(t.ts).toLocaleString("ru-RU")+'</td><td>'+(t.dir===1?"LONG":"SHORT")+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.exit||0)+' ('+t.why+')</td><td>'+fmt(t.pnl||0)+'</td></tr>').join("");
-      $("btStatus").textContent="Готово. Загружено "+candles.length+" закрытых свечей. Последние 100 сделок показаны ниже.";
+      $("btStatus").textContent="Готово. Загружено "+candles.length+" закрытых свечей (цель: "+Math.min(days*1440,10000)+"). Последние 100 сделок показаны ниже.";
     }catch(e){$("btStatus").textContent="Ошибка теста: "+(e.message||e)}
     finally{btn.disabled=false}
   });
