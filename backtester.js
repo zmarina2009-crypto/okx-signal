@@ -57,14 +57,13 @@
   function sma(a,i,n){if(i+1<n)return NaN;let s=0;for(let k=i-n+1;k<=i;k++)s+=a[k].c;return s/n}
   function atr(a,i,n=14){if(i<n)return NaN;let sum=0;for(let k=i-n+1;k<=i;k++){const p=a[k-1]?.c;if(!Number.isFinite(p))return NaN;sum+=Math.max(a[k].h-a[k].l,Math.abs(a[k].h-p),Math.abs(a[k].l-p))}return sum/n}
   function run(a, mult, feePct, slipPct) {
-    const trades=[]; let pos=null, equity=0, peak=0,maxDD=0, wins=0, grossWin=0,grossLoss=0;
+    const trades=[]; let pos=null, equity=0, peak=0,maxDD=0;
     const costPct=(feePct+slipPct)/100;
     function closePart(price, fraction, why, bar) {
       const qty=pos.qty*fraction, dir=pos.dir;
       const raw=(price-pos.entry)*dir*qty/pos.entry;
       const costs=(qty+price*qty/pos.entry)*costPct;
       const pnl=raw-costs; pos.pnl=(pos.pnl||0)+pnl; equity+=pnl; peak=Math.max(peak,equity); maxDD=Math.max(maxDD,peak-equity);
-      if(pnl>=0)grossWin+=pnl;else grossLoss+=Math.abs(pnl);
       pos.qty-=qty; pos.exit=price;pos.why=why;pos.lastBar=bar;
       if(Math.abs(pos.qty)<1e-8){trades.push(pos);pos=null}
       return pnl;
@@ -90,6 +89,9 @@
     }
     if(pos){closePart(a.at(-1).c,1,"END",a.at(-1).ts)}
     const net=equity;
+    // Profit Factor is calculated per completed trade, aggregating partial exits (TP1/TP2/SL).
+    const grossWin=trades.reduce((sum,t)=>sum+(t.pnl>0?t.pnl:0),0);
+    const grossLoss=trades.reduce((sum,t)=>sum+(t.pnl<0?Math.abs(t.pnl):0),0);
     return {trades,net,maxDD,wins:trades.filter(t=>t.pnl>0).length,grossWin,grossLoss};
   }
   $("btRun").addEventListener("click",async()=>{
