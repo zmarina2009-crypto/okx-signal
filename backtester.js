@@ -23,6 +23,7 @@
       <div><label for="btFee">Комиссия, % на сторону</label><input id="btFee" type="number" min="0" step="0.001" value="0.05"></div>
       <div><label for="btSlip">Проскальзывание, % на сторону</label><input id="btSlip" type="number" min="0" step="0.001" value="0.02"></div>
       <div><label for="btAtr">ATR-множитель</label><input id="btAtr" type="number" min="0.1" step="0.1" value="1.5"></div>
+      <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
     </div>
     <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
@@ -56,7 +57,7 @@
   }
   function sma(a,i,n){if(i+1<n)return NaN;let s=0;for(let k=i-n+1;k<=i;k++)s+=a[k].c;return s/n}
   function atr(a,i,n=14){if(i<n)return NaN;let sum=0;for(let k=i-n+1;k<=i;k++){const p=a[k-1]?.c;if(!Number.isFinite(p))return NaN;sum+=Math.max(a[k].h-a[k].l,Math.abs(a[k].h-p),Math.abs(a[k].l-p))}return sum/n}
-  function run(a, mult, feePct, slipPct) {
+  function run(a, mult, feePct, slipPct, filterMode) {
     const trades=[]; let pos=null, equity=0, peak=0,maxDD=0, grossTotal=0, feesTotal=0, slippageTotal=0;
     const feeRate=feePct/100, slipRate=slipPct/100;
     function closePart(price, fraction, why, bar) {
@@ -91,8 +92,11 @@
       }
       if(!Number.isFinite(av)||!Number.isFinite(m)||!Number.isFinite(mPrev)||av<=0)continue;
       // Pullback to SMA21, then closed-candle directional confirmation.
-      const long=prev.l<=mPrev&&prev.c>mPrev&&x.c> x.o&&x.c>m;
-      const short=prev.h>=mPrev&&prev.c<mPrev&&x.c<x.o&&x.c<m;
+      const slopeBase=sma(a,i-5,21);
+      const slopeUp=Number.isFinite(slopeBase)&&m>slopeBase;
+      const slopeDown=Number.isFinite(slopeBase)&&m<slopeBase;
+      const long=prev.l<=mPrev&&prev.c>mPrev&&x.c>x.o&&x.c>m&&(filterMode!=="slope"||slopeUp);
+      const short=prev.h>=mPrev&&prev.c<mPrev&&x.c<x.o&&x.c<m&&(filterMode!=="slope"||slopeDown);
       if(!long&&!short)continue;
       const dir=long?1:-1, entry=x.c, risk=av*mult;
       pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,initialQty:100,tp1:false,pnl:0};
@@ -110,11 +114,11 @@
       const days=+$("btDays").value, mult=Math.max(.1,+$("btAtr").value||1.5), fee=Math.max(0,+$("btFee").value||0), slip=Math.max(0,+$("btSlip").value||0);
       const candles=await getCandles(days);
       if(candles.length<50)throw Error("Недостаточно исторических свечей");
-      const r=run(candles,mult,fee,slip), trades=r.trades;
+      const filterMode=$("btFilter").value; const r=run(candles,mult,fee,slip,filterMode), trades=r.trades;
       const count=(fn)=>trades.filter(fn).length; const sum=(fn)=>trades.filter(fn).reduce((v,t)=>v+(t.pnl||0),0); const metrics=[["Закрытых сделок",trades.length],["Валовый результат",fmt(r.grossTotal)+" USDT"],["Комиссии",fmt(r.feesTotal)+" USDT"],["Проскальзывание",fmt(r.slippageTotal)+" USDT"],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["TP2",count(t=>t.why==="TP2")],["Стоп до TP1",count(t=>t.why==="SL"&&!t.tp1)],["Стоп после TP1",count(t=>t.why==="SL"&&t.tp1)],["Завершены по последней свече",count(t=>t.why==="END")],["Результат LONG",fmt(sum(t=>t.dir===1))+" USDT"],["Результат SHORT",fmt(sum(t=>t.dir===-1))+" USDT"],["Свечей",candles.length]];
       $("btResults").innerHTML=metrics.map(([k,v])=>'<div class="btmetric"><small>'+k+'</small><b>'+v+'</b></div>').join("");
       $("btTrades").innerHTML=trades.slice(-100).reverse().map(t=>'<tr><td>'+new Date(t.ts).toLocaleString("ru-RU")+'</td><td>'+(t.dir===1?"LONG":"SHORT")+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.exit||0)+' ('+t.why+')</td><td>'+fmt(t.pnl||0)+'</td></tr>').join("");
-      $("btStatus").textContent="Готово. Загружено "+candles.length+" закрытых свечей (цель: "+Math.min(days*1440,10000)+"). Последние 100 сделок показаны ниже.";
+      $("btStatus").textContent="Готово. Загружено "+candles.length+" закрытых свечей (цель: "+Math.min(days*1440,10000)+"). Фильтр: "+(filterMode==="slope"?"наклон SMA21 за 5 свечей":"без фильтра")+". Последние 100 сделок показаны ниже.";
     }catch(e){$("btStatus").textContent="Ошибка теста: "+(e.message||e)}
     finally{btn.disabled=false}
   });
