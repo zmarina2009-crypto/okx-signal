@@ -25,9 +25,9 @@
       <div><label for="btAtr">ATR-множитель</label><input id="btAtr" type="number" min="0.1" step="0.1" value="1.5"></div>
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
     </div>
-    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
+    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompare" type="button">Сравнить оба фильтра</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
-    <div id="btResults" class="btresults"></div>
+    <div id="btResults" class="btresults"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
     <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
     <div class="small" style="margin-top:8px">*Расчёт для условной позиции 100 USDT. Для минут, где внутри одной свечи могли сработать и стоп, и тейк, используется консервативное допущение: стоп считается первым. Это исследовательский тест, не прогноз доходности.</div>`;
   const anchor = document.querySelector("footer");
@@ -108,6 +108,31 @@
     const grossLoss=trades.reduce((sum,t)=>sum+(t.pnl<0?Math.abs(t.pnl):0),0);
     return {trades,net,maxDD,wins:trades.filter(t=>t.pnl>0).length,grossWin,grossLoss,grossTotal,feesTotal,slippageTotal};
   }
+  $("btCompare").addEventListener("click",async()=>{
+    const btn=$("btCompare");btn.disabled=true;
+    $("btCompareResults").innerHTML="";
+    $("btStatus").textContent="Загружаю один и тот же набор свечей для честного сравнения…";
+    try{
+      const days=+$("btDays").value, mult=Math.max(.1,+$("btAtr").value||1.5), fee=Math.max(0,+$("btFee").value||0), slip=Math.max(0,+$("btSlip").value||0);
+      const candles=await getCandles(days);
+      if(candles.length<50)throw Error("Недостаточно исторических свечей");
+      const a=run(candles,mult,fee,slip,"none"), b=run(candles,mult,fee,slip,"slope");
+      const rows=[
+        ["Сделок",a.trades.length,b.trades.length],
+        ["Валовый результат, USDT",a.grossTotal,b.grossTotal],
+        ["Комиссии, USDT",a.feesTotal,b.feesTotal],
+        ["Проскальзывание, USDT",a.slippageTotal,b.slippageTotal],
+        ["Чистый результат, USDT",a.net,b.net],
+        ["Win rate",a.trades.length?100*a.wins/a.trades.length:0,b.trades.length?100*b.wins/b.trades.length:0],
+        ["Profit Factor",a.grossLoss>0?a.grossWin/a.grossLoss:(a.grossWin>0?Infinity:0),b.grossLoss>0?b.grossWin/b.grossLoss:(b.grossWin>0?Infinity:0)],
+        ["Макс. просадка, USDT",a.maxDD,b.maxDD]
+      ];
+      const show=(v,i)=>i===0?String(Math.round(v)):i===5?fmt(v)+"%":i===6?(v===Infinity?"∞":fmt(v)):fmt(v);
+      $("btCompareResults").innerHTML='<table class="table"><thead><tr><th>Показатель</th><th>Без фильтра</th><th>Наклон SMA21</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td>'+r[0]+'</td><td>'+show(r[1],i)+'</td><td>'+show(r[2],i)+'</td></tr>').join("")+'</tbody></table>';
+      $("btStatus").textContent="Сравнение завершено на одном наборе из "+candles.length+" закрытых свечей. Период и издержки одинаковы для обоих режимов.";
+    }catch(e){$("btStatus").textContent="Ошибка сравнения: "+(e.message||e)}
+    finally{btn.disabled=false}
+  });
   $("btRun").addEventListener("click",async()=>{
     const btn=$("btRun");btn.disabled=true;$("btStatus").textContent="Загружаю закрытые свечи BTC-USDT…";$("btResults").innerHTML="";$("btTrades").innerHTML="";
     try{
