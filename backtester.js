@@ -36,7 +36,7 @@
   const fmt = n => Number(n).toLocaleString("ru-RU",{maximumFractionDigits:2});
   const BASE = "https://www.okx.com/api/v5/market/history-candles";
   async function getCandles(days) {
-    const target = Math.min(days * 1440, 10000), all = new Map();
+    const target = days * 1440, all = new Map();
     let after = "";
     for (let page=0; page<Math.ceil(target/300); page++) {
       const url = BASE+"?instId=BTC-USDT-SWAP&bar=1m&limit=300"+(after?"&after="+after:"");
