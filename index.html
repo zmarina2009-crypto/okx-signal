@@ -30,7 +30,7 @@ function chartView(){
       a=series.slice(begin,dataEnd);
   return {visible,viewEnd,pad,dataVisible,dataEnd,begin,a,series};
 }
-window.candles=candles;window.chartState=chartState;function draw(e){
+function draw(e){window.candles=candles;window.chartState=chartState;
   let c=$("chart"),r=c.getBoundingClientRect(),d=devicePixelRatio||1;
   c.width=r.width*d;c.height=r.height*d;
   let q=c.getContext("2d");q.setTransform(d,0,0,d,0,0);
