@@ -36,14 +36,27 @@
   const fmt = n => Number(n).toLocaleString("ru-RU",{maximumFractionDigits:2});
   const BASE = "https://www.okx.com/api/v5/market/history-candles";
   async function getCandles(days) {
-    const target = days * 1440, all = new Map();
+    const target = days * 1440, pages = Math.ceil(target / 300), all = new Map();
     let after = "";
-    for (let page=0; page<Math.ceil(target/300); page++) {
-      const url = BASE+"?instId=BTC-USDT-SWAP&bar=1m&limit=300"+(after?"&after="+after:"");
-      const res = await fetch(url,{cache:"no-store"});
-      if(!res.ok) throw Error("HTTP "+res.status);
-      const j = await res.json();
-      if(j.code!=="0") throw Error(j.msg||"Ошибка OKX");
+    for (let page=0; page<pages; page++) {
+      $("btStatus").textContent = "Загружаю закрытые свечи BTC-USDT… " + Math.min(all.size, target) + " / " + target + " свечей (запрос " + (page+1) + "/" + pages + ")";
+      let j = null, lastErr = null;
+      for (let attempt=0; attempt<3; attempt++) {
+        const controller = new AbortController();
+        const timer = setTimeout(()=>controller.abort(), 20000);
+        try {
+          const url = BASE+"?instId=BTC-USDT-SWAP&bar=1m&limit=300"+(after?"&after="+after:"");
+          const res = await fetch(url,{cache:"no-store",signal:controller.signal});
+          if(!res.ok) throw Error("HTTP "+res.status);
+          j = await res.json();
+          if(j.code!=="0") throw Error(j.msg||"Ошибка OKX");
+          break;
+        } catch(e) {
+          lastErr=e;
+          if(attempt<2) await new Promise(r=>setTimeout(r,1000*(attempt+1)));
+        } finally { clearTimeout(timer); }
+      }
+      if(!j) throw Error("Не удалось загрузить свечи: "+(lastErr?.message||"ошибка сети"));
       const rows = (j.data||[]).map(x=>({ts:+x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4],confirm:String(x[8]??"1")}))
         .filter(x=>Number.isFinite(x.ts)&&Number.isFinite(x.c)&&x.confirm==="1");
       if(!rows.length) break;
@@ -52,6 +65,7 @@
       if(after && oldest>=Number(after)) break;
       after=String(oldest);
       if(all.size>=target) break;
+      await new Promise(r=>setTimeout(r,80));
     }
     return [...all.values()].sort((a,b)=>a.ts-b.ts).slice(-target);
   }
