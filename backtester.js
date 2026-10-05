@@ -25,9 +25,9 @@
       <div><label for="btAtr">ATR-множитель</label><input id="btAtr" type="number" min="0.1" step="0.1" value="1.5"></div>
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
     </div>
-    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompare" type="button">Сравнить оба фильтра</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
+    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompare" type="button">Сравнить оба фильтра</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
-    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
+    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
     <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
     <div class="small" style="margin-top:8px">*Расчёт для условной позиции 100 USDT. Для минут, где внутри одной свечи могли сработать и стоп, и тейк, используется консервативное допущение: стоп считается первым. Это исследовательский тест, не прогноз доходности.</div>`;
   const anchor = document.querySelector("footer");
@@ -71,7 +71,7 @@
   }
   function sma(a,i,n){if(i+1<n)return NaN;let s=0;for(let k=i-n+1;k<=i;k++)s+=a[k].c;return s/n}
   function atr(a,i,n=14){if(i<n)return NaN;let sum=0;for(let k=i-n+1;k<=i;k++){const p=a[k-1]?.c;if(!Number.isFinite(p))return NaN;sum+=Math.max(a[k].h-a[k].l,Math.abs(a[k].h-p),Math.abs(a[k].l-p))}return sum/n}
-  function run(a, mult, feePct, slipPct, filterMode, entryMode="current") {
+  function run(a, mult, feePct, slipPct, filterMode, entryMode="current", exitR=null) {
     const trades=[]; let pos=null, equity=0, peak=0,maxDD=0, grossTotal=0, feesTotal=0, slippageTotal=0;
     const feeRate=feePct/100, slipRate=slipPct/100;
     function closePart(price, fraction, why, bar) {
@@ -94,11 +94,17 @@
       const x=a[i], prev=a[i-1], m=sma(a,i,21), mPrev=sma(a,i-1,21), av=atr(a,i,14);
       if(pos){
         const stopHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
-        const tp1Hit=!pos.tp1&&(pos.dir===1?x.h>=pos.entry+pos.risk:x.l<=pos.entry-pos.risk);
-        const tp2Hit=pos.tp1&&(pos.dir===1?x.h>=pos.entry+2*pos.risk:x.l<=pos.entry-2*pos.risk);
         if(stopHit){closePart(pos.stop,1,"SL",x.ts);continue}
-        if(tp1Hit){closePart(pos.entry+pos.dir*pos.risk,.5,"TP1",x.ts);if(pos){pos.tp1=true;pos.qty=pos.initialQty*.5}}
-        if(pos&&tp2Hit){closePart(pos.entry+pos.dir*2*pos.risk,1,"TP2",x.ts);continue}
+        if(exitR!=null){
+          const target=pos.entry+pos.dir*exitR*pos.risk;
+          const hit=pos.dir===1?x.h>=target:x.l<=target;
+          if(hit){closePart(target,1,"TP"+exitR+"R",x.ts);continue}
+        }else{
+          const tp1Hit=!pos.tp1&&(pos.dir===1?x.h>=pos.entry+pos.risk:x.l<=pos.entry-pos.risk);
+          const tp2Hit=pos.tp1&&(pos.dir===1?x.h>=pos.entry+2*pos.risk:x.l<=pos.entry-2*pos.risk);
+          if(tp1Hit){closePart(pos.entry+pos.dir*pos.risk,.5,"TP1",x.ts);if(pos){pos.tp1=true;pos.qty=pos.initialQty*.5}}
+          if(pos&&tp2Hit){closePart(pos.entry+pos.dir*2*pos.risk,1,"TP2",x.ts);continue}
+        }
         // Include adverse unrealized PnL on the remaining position in drawdown.
         if(pos){const mark=pos.dir===1?x.l:x.h;const unrealized=(mark-pos.entry)*pos.dir*pos.qty/pos.entry;const exitNotional=mark*pos.qty/pos.entry;const exitCost=(pos.qty+exitNotional)*(feeRate+slipRate);const markedEquity=equity+unrealized-exitCost;peak=Math.max(peak,markedEquity);maxDD=Math.max(maxDD,peak-markedEquity);}
         else {peak=Math.max(peak,equity);maxDD=Math.max(maxDD,peak-equity);}
@@ -153,6 +159,29 @@
       $("btCompareEntryResults").innerHTML='<table class="table"><thead><tr><th>Показатель</th><th>Текущий вход</th><th>3 свечи</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td>'+r[0]+'</td><td>'+show(r[1],i)+'</td><td>'+show(r[2],i)+'</td></tr>').join("")+'</tbody></table>';
       $("btStatus").textContent="Сравнение входов завершено на одном наборе из "+candles.length+" закрытых свечей.";
     }catch(e){$("btStatus").textContent="Ошибка сравнения входов: "+(e.message||e)}
+    finally{btn.disabled=false}
+  });
+  $("btCompareExit").addEventListener("click",async()=>{
+    const btn=$("btCompareExit");btn.disabled=true;
+    $("btCompareExitResults").innerHTML="";
+    $("btStatus").textContent="Сравниваю варианты выхода 1:1, 1:2, 1:3 и 1:5 на одном наборе свечей…";
+    try{
+      const days=+$("btDays").value, mult=Math.max(.1,+$("btAtr").value||1.5), fee=Math.max(0,+$("btFee").value||0), slip=Math.max(0,+$("btSlip").value||0);
+      const candles=await getCandles(days);
+      if(candles.length<50)throw Error("Недостаточно исторических свечей");
+      const ratios=[1,2,3,5], filter=$("btFilter").value;
+      const results=ratios.map(ratio=>({ratio,current:run(candles,mult,fee,slip,filter,"current",ratio),three:run(candles,mult,fee,slip,filter,"3c",ratio)}));
+      const stats=r=>({trades:r.trades.length,net:r.net,wr:r.trades.length?100*r.wins/r.trades.length:0,pf:r.grossLoss>0?r.grossWin/r.grossLoss:(r.grossWin>0?Infinity:0),dd:r.maxDD});
+      const rows=[];
+      results.forEach(x=>{const a=stats(x.current),b=stats(x.three);rows.push(["1:"+x.ratio,a,b]);});
+      const show=(v,type)=>type==="trades"?String(Math.round(v)):type==="wr"?fmt(v)+"%":type==="pf"?(v===Infinity?"∞":fmt(v)):fmt(v);
+      let html='<div class="small" style="margin-bottom:6px">Все варианты используют одинаковые свечи, ATR(14) × '+fmt(mult)+', комиссию и проскальзывание. Для этого сравнения позиция закрывается целиком на указанном R; частичная фиксация 50%/50% остаётся отдельным режимом основной стратегии.</div>';
+      html+='<table class="table"><thead><tr><th>Выход</th><th colspan="5">Текущий вход</th><th colspan="5">Вход по 3 свечам</th></tr><tr><th></th><th>Сделок</th><th>Net, USDT</th><th>Win rate</th><th>PF</th><th>DD, USDT</th><th>Сделок</th><th>Net, USDT</th><th>Win rate</th><th>PF</th><th>DD, USDT</th></tr></thead><tbody>';
+      rows.forEach(([label,a,b])=>html+='<tr><td>'+label+'</td><td>'+show(a.trades,"trades")+'</td><td>'+show(a.net,"net")+'</td><td>'+show(a.wr,"wr")+'</td><td>'+show(a.pf,"pf")+'</td><td>'+show(a.dd,"dd")+'</td><td>'+show(b.trades,"trades")+'</td><td>'+show(b.net,"net")+'</td><td>'+show(b.wr,"wr")+'</td><td>'+show(b.pf,"pf")+'</td><td>'+show(b.dd,"dd")+'</td></tr>');
+      html+='</tbody></table>';
+      $("btCompareExitResults").innerHTML=html;
+      $("btStatus").textContent="Сравнение выходов завершено на одном наборе из "+candles.length+" закрытых свечей.";
+    }catch(e){$("btStatus").textContent="Ошибка сравнения выходов: "+(e.message||e)}
     finally{btn.disabled=false}
   });
   $("btCompare").addEventListener("click",async()=>{
