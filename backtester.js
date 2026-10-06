@@ -25,10 +25,10 @@
       <div><label for="btAtr">ATR-множитель</label><input id="btAtr" type="number" min="0.1" step="0.1" value="1.5"></div>
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
     </div>
-    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompare" type="button">Сравнить оба фильтра</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
+    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompare" type="button">Сравнить оба фильтра</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
-    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
-    <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
+    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
+    <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Фаза</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
     <div class="small" style="margin-top:8px">*Расчёт для условной позиции 100 USDT. Для минут, где внутри одной свечи могли сработать и стоп, и тейк, используется консервативное допущение: стоп считается первым. Это исследовательский тест, не прогноз доходности.</div>`;
   const anchor = document.querySelector("footer");
   if (anchor) anchor.parentNode.insertBefore(panel, anchor);
@@ -71,6 +71,17 @@
   }
   function sma(a,i,n){if(i+1<n)return NaN;let s=0;for(let k=i-n+1;k<=i;k++)s+=a[k].c;return s/n}
   function atr(a,i,n=14){if(i<n)return NaN;let sum=0;for(let k=i-n+1;k<=i;k++){const p=a[k-1]?.c;if(!Number.isFinite(p))return NaN;sum+=Math.max(a[k].h-a[k].l,Math.abs(a[k].h-p),Math.abs(a[k].l-p))}return sum/n}
+  const PHASE_LABELS={up:"Тренд ↑",down:"Тренд ↓",range:"Боковик"};
+  function marketPhase(a,i){
+    const m=sma(a,i,21), m10=sma(a,i-10,21), av=atr(a,i,14);
+    if(!Number.isFinite(m)||!Number.isFinite(m10)||!Number.isFinite(av)||av<=0)return "range";
+    const slope=(m-m10)/av;
+    const dist=Math.abs(a[i].c-m)/av;
+    // Uses only candles up to i: no future information.
+    if(slope>=0.35 && dist>=0.25)return "up";
+    if(slope<=-0.35 && dist>=0.25)return "down";
+    return "range";
+  }
   function run(a, mult, feePct, slipPct, filterMode, entryMode="current", exitR=null) {
     const trades=[]; let pos=null, equity=0, peak=0,maxDD=0, grossTotal=0, feesTotal=0, slippageTotal=0;
     const feeRate=feePct/100, slipRate=slipPct/100;
@@ -123,15 +134,17 @@
       const long=prev.l<=mPrev&&prev.c>mPrev&&longConfirm&&x.c>m&&(filterMode!=="slope"||slopeUp);
       const short=prev.h>=mPrev&&prev.c<mPrev&&shortConfirm&&x.c<m&&(filterMode!=="slope"||slopeDown);
       if(!long&&!short)continue;
-      const dir=long?1:-1, entry=x.c, risk=av*mult;
-      pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,initialQty:100,tp1:false,pnl:0};
+      const dir=long?1:-1, entry=x.c, risk=av*mult, phase=marketPhase(a,i);
+      pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,initialQty:100,tp1:false,pnl:0,phase};
     }
     if(pos){closePart(a.at(-1).c,1,"END",a.at(-1).ts)}
     const net=equity;
     // Profit Factor is calculated per completed trade, aggregating partial exits (TP1/TP2/SL).
     const grossWin=trades.reduce((sum,t)=>sum+(t.pnl>0?t.pnl:0),0);
     const grossLoss=trades.reduce((sum,t)=>sum+(t.pnl<0?Math.abs(t.pnl):0),0);
-    return {trades,net,maxDD,wins:trades.filter(t=>t.pnl>0).length,grossWin,grossLoss,grossTotal,feesTotal,slippageTotal};
+    const phaseStats={up:{trades:[],net:0},down:{trades:[],net:0},range:{trades:[],net:0}};
+    trades.forEach(t=>{const p=phaseStats[t.phase]||phaseStats.range; p.trades.push(t); p.net+=t.pnl||0;});
+    return {trades,net,maxDD,wins:trades.filter(t=>t.pnl>0).length,grossWin,grossLoss,grossTotal,feesTotal,slippageTotal,phaseStats};
   }
   $("btCompareEntry").addEventListener("click",async()=>{
     const btn=$("btCompareEntry");btn.disabled=true;
@@ -159,6 +172,28 @@
       $("btCompareEntryResults").innerHTML='<table class="table"><thead><tr><th>Показатель</th><th>Текущий вход</th><th>3 свечи</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td>'+r[0]+'</td><td>'+show(r[1],i)+'</td><td>'+show(r[2],i)+'</td></tr>').join("")+'</tbody></table>';
       $("btStatus").textContent="Сравнение входов завершено на одном наборе из "+candles.length+" закрытых свечей.";
     }catch(e){$("btStatus").textContent="Ошибка сравнения входов: "+(e.message||e)}
+    finally{btn.disabled=false}
+  });
+  $("btComparePhase").addEventListener("click",async()=>{
+    const btn=$("btComparePhase");btn.disabled=true;$("btComparePhaseResults").innerHTML="";
+    $("btStatus").textContent="Определяю фазу рынка и сравниваю результаты…";
+    try{
+      const days=+$("btDays").value,mult=Math.max(.1,+$("btAtr").value||1.5),fee=Math.max(0,+$("btFee").value||0),slip=Math.max(0,+$("btSlip").value||0),filter=$("btFilter").value;
+      const candles=await getCandles(days); if(candles.length<50)throw Error("Недостаточно исторических свечей");
+      const a=run(candles,mult,fee,slip,filter,"current"),b=run(candles,mult,fee,slip,filter,"3c");
+      const phases=["up","down","range"];
+      const stats=p=>{const t=p.trades,w=t.filter(x=>x.pnl>0).length,g=t.reduce((s,x)=>s+(x.pnl>0?x.pnl:0),0),l=t.reduce((s,x)=>s+(x.pnl<0?Math.abs(x.pnl):0),0);return{n:t.length,net:p.net,wr:t.length?100*w/t.length:0,pf:l?g/l:(g?Infinity:0),dd:calcPhaseDD(t)}};
+      function calcPhaseDD(t){
+        let e=0,peak=0,dd=0;
+        t.forEach(x=>{e+=x.pnl||0;peak=Math.max(peak,e);dd=Math.max(dd,peak-e)});return dd;
+      }
+      let html='<div class="small" style="margin-bottom:6px">Фаза определяется на момент входа только по прошлым/текущей закрытой свече: наклон SMA21 за 10 свечей нормирован на ATR(14). Сильный наклон → тренд, иначе → боковик. Порог: 0,35 ATR; близость цены к SMA учитывается. Это исследовательская классификация, не готовый торговый фильтр.</div>';
+      html+='<table class="table"><thead><tr><th>Фаза</th><th colspan="5">Текущий вход</th><th colspan="5">3 свечи</th></tr><tr><th></th><th>Сделок</th><th>Net</th><th>Win rate</th><th>PF</th><th>DD</th><th>Сделок</th><th>Net</th><th>Win rate</th><th>PF</th><th>DD</th></tr></thead><tbody>';
+      phases.forEach(k=>{const x=stats(a.phaseStats[k]),y=stats(b.phaseStats[k]);html+='<tr><td>'+PHASE_LABELS[k]+'</td><td>'+x.n+'</td><td>'+fmt(x.net)+'</td><td>'+fmt(x.wr)+'%</td><td>'+(x.pf===Infinity?'∞':fmt(x.pf))+'</td><td>'+fmt(x.dd)+'</td><td>'+y.n+'</td><td>'+fmt(y.net)+'</td><td>'+fmt(y.wr)+'%</td><td>'+(y.pf===Infinity?'∞':fmt(y.pf))+'</td><td>'+fmt(y.dd)+'</td></tr>'});
+      html+='</tbody></table>';
+      $("btComparePhaseResults").innerHTML=html;
+      $("btStatus").textContent="Фазы рынка определены. Сравнение завершено на одном наборе из "+candles.length+" закрытых свечей.";
+    }catch(e){$("btStatus").textContent="Ошибка анализа фаз: "+(e.message||e)}
     finally{btn.disabled=false}
   });
   $("btCompareExit").addEventListener("click",async()=>{
@@ -218,7 +253,7 @@
       const filterMode=$("btFilter").value; const r=run(candles,mult,fee,slip,filterMode), trades=r.trades;
       const count=(fn)=>trades.filter(fn).length; const sum=(fn)=>trades.filter(fn).reduce((v,t)=>v+(t.pnl||0),0); const metrics=[["Закрытых сделок",trades.length],["Валовый результат",fmt(r.grossTotal)+" USDT"],["Комиссии",fmt(r.feesTotal)+" USDT"],["Проскальзывание",fmt(r.slippageTotal)+" USDT"],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["TP2",count(t=>t.why==="TP2")],["Стоп до TP1",count(t=>t.why==="SL"&&!t.tp1)],["Стоп после TP1",count(t=>t.why==="SL"&&t.tp1)],["Завершены по последней свече",count(t=>t.why==="END")],["Результат LONG",fmt(sum(t=>t.dir===1))+" USDT"],["Результат SHORT",fmt(sum(t=>t.dir===-1))+" USDT"],["Свечей",candles.length]];
       $("btResults").innerHTML=metrics.map(([k,v])=>'<div class="btmetric"><small>'+k+'</small><b>'+v+'</b></div>').join("");
-      $("btTrades").innerHTML=trades.slice(-100).reverse().map(t=>'<tr><td>'+new Date(t.ts).toLocaleString("ru-RU")+'</td><td>'+(t.dir===1?"LONG":"SHORT")+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.exit||0)+' ('+t.why+')</td><td>'+fmt(t.pnl||0)+'</td></tr>').join("");
+      $("btTrades").innerHTML=trades.slice(-100).reverse().map(t=>'<tr><td>'+new Date(t.ts).toLocaleString("ru-RU")+'</td><td>'+((PHASE_LABELS[t.phase])||"Боковик")+'</td><td>'+(t.dir===1?"LONG":"SHORT")+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.exit||0)+' ('+t.why+')</td><td>'+fmt(t.pnl||0)+'</td></tr>').join("");
       $("btStatus").textContent="Готово. Загружено "+candles.length+" закрытых свечей (цель: "+days*1440+"). Фильтр: "+(filterMode==="slope"?"наклон SMA21 за 5 свечей":"без фильтра")+". Последние 100 сделок показаны ниже.";
     }catch(e){$("btStatus").textContent="Ошибка теста: "+(e.message||e)}
     finally{btn.disabled=false}
