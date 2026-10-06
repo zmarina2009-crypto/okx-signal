@@ -25,9 +25,9 @@
       <div><label for="btAtr">ATR-множитель</label><input id="btAtr" type="number" min="0.1" step="0.1" value="1.5"></div>
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
     </div>
-    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompare" type="button">Сравнить оба фильтра</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
+    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить оба фильтра</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
-    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
+    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
     <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Фаза</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
     <div class="small" style="margin-top:8px">*Расчёт для условной позиции 100 USDT. Для минут, где внутри одной свечи могли сработать и стоп, и тейк, используется консервативное допущение: стоп считается первым. Это исследовательский тест, не прогноз доходности.</div>`;
   const anchor = document.querySelector("footer");
@@ -82,7 +82,7 @@
     if(slope<=-0.35 && dist>=0.25)return "down";
     return "range";
   }
-  function run(a, mult, feePct, slipPct, filterMode, entryMode="current", exitR=null) {
+  function run(a, mult, feePct, slipPct, filterMode, entryMode="current", exitR=null, phaseExit=null) {
     const trades=[]; let pos=null, equity=0, peak=0,maxDD=0, grossTotal=0, feesTotal=0, slippageTotal=0;
     const feeRate=feePct/100, slipRate=slipPct/100;
     function closePart(price, fraction, why, bar) {
@@ -106,10 +106,11 @@
       if(pos){
         const stopHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
         if(stopHit){closePart(pos.stop,1,"SL",x.ts);continue}
-        if(exitR!=null){
-          const target=pos.entry+pos.dir*exitR*pos.risk;
+        const activeExitR=phaseExit?(phaseExit[pos.phase]??exitR):exitR;
+        if(activeExitR!=null){
+          const target=pos.entry+pos.dir*activeExitR*pos.risk;
           const hit=pos.dir===1?x.h>=target:x.l<=target;
-          if(hit){closePart(target,1,"TP"+exitR+"R",x.ts);continue}
+          if(hit){closePart(target,1,"TP"+activeExitR+"R",x.ts);continue}
         }else{
           const tp1Hit=!pos.tp1&&(pos.dir===1?x.h>=pos.entry+pos.risk:x.l<=pos.entry-pos.risk);
           const tp2Hit=pos.tp1&&(pos.dir===1?x.h>=pos.entry+2*pos.risk:x.l<=pos.entry-2*pos.risk);
@@ -172,6 +173,38 @@
       $("btCompareEntryResults").innerHTML='<table class="table"><thead><tr><th>Показатель</th><th>Текущий вход</th><th>3 свечи</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td>'+r[0]+'</td><td>'+show(r[1],i)+'</td><td>'+show(r[2],i)+'</td></tr>').join("")+'</tbody></table>';
       $("btStatus").textContent="Сравнение входов завершено на одном наборе из "+candles.length+" закрытых свечей.";
     }catch(e){$("btStatus").textContent="Ошибка сравнения входов: "+(e.message||e)}
+    finally{btn.disabled=false}
+  });
+  $("btCompareAdaptive").addEventListener("click",async()=>{
+    const btn=$("btCompareAdaptive");btn.disabled=true;$("btCompareAdaptiveResults").innerHTML="";
+    $("btStatus").textContent="Сравниваю адаптивные выходы по фазам рынка…";
+    try{
+      const days=+$("btDays").value,mult=Math.max(.1,+$("btAtr").value||1.5),fee=Math.max(0,+$("btFee").value||0),slip=Math.max(0,+$("btSlip").value||0),filter=$("btFilter").value;
+      const candles=await getCandles(days); if(candles.length<50)throw Error("Недостаточно исторических свечей");
+      const configs=[
+        {name:"A: 1:2 / 1:2",up:2,down:2,range:2},
+        {name:"B: 1:3 / 1:2",up:3,down:3,range:2},
+        {name:"C: 1:5 / 1:2",up:5,down:5,range:2},
+        {name:"D: 1:5 / 1:1",up:5,down:5,range:1}
+      ];
+      const pf=r=>r.grossLoss>0?r.grossWin/r.grossLoss:(r.grossWin>0?Infinity:0);
+      const wr=r=>r.trades.length?100*r.wins/r.trades.length:0;
+      const rows=[];
+      for(const c of configs){
+        const a=run(candles,mult,fee,slip,filter,"current",null,c);
+        const b=run(candles,mult,fee,slip,filter,"3c",null,c);
+        rows.push({name:c.name,a,b});
+      }
+      let html='<div class="small" style="margin-bottom:6px">Тренд ↑/↓ получает одинаковый TP, боковик — отдельный TP. Все варианты используют один и тот же набор свечей, ATR(14), комиссию и проскальзывание. Выход целиком на TP; частичная фиксация 50%/50% не меняется.</div>';
+      html+='<table class="table"><thead><tr><th>Схема</th><th colspan="4">Текущий вход</th><th colspan="4">3 свечи</th></tr><tr><th></th><th>Сделок</th><th>Net</th><th>Win rate</th><th>PF</th><th>Сделок</th><th>Net</th><th>Win rate</th><th>PF</th></tr></thead><tbody>';
+      rows.forEach(r=>{
+        const x=r.a,y=r.b;
+        html+='<tr><td>'+r.name+'</td><td>'+x.trades.length+'</td><td>'+fmt(x.net)+'</td><td>'+fmt(wr(x))+'%</td><td>'+(pf(x)===Infinity?'∞':fmt(pf(x)))+'</td><td>'+y.trades.length+'</td><td>'+fmt(y.net)+'</td><td>'+fmt(wr(y))+'%</td><td>'+(pf(y)===Infinity?'∞':fmt(pf(y)))+'</td></tr>';
+      });
+      html+='</tbody></table>';
+      $("btCompareAdaptiveResults").innerHTML=html;
+      $("btStatus").textContent="Адаптивное сравнение завершено на одном наборе из "+candles.length+" закрытых свечей.";
+    }catch(e){$("btStatus").textContent="Ошибка адаптивного сравнения: "+(e.message||e)}
     finally{btn.disabled=false}
   });
   $("btComparePhase").addEventListener("click",async()=>{
