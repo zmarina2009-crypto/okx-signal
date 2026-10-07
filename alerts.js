@@ -2,8 +2,9 @@
 (function(){
   "use strict";
   const KEY="okx_alerts_v1";
-  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:.15,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[]};
+  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[]};
   let cfg=Object.assign({},defaults,(()=>{try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch{return{}}})());
+  if(!Number.isFinite(Number(cfg.smaTolerance))||Number(cfg.smaTolerance)===.15)cfg.smaTolerance=0;
   let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false;
   const $=id=>document.getElementById(id);
   const esc=s=>String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
@@ -68,34 +69,40 @@
     evaluatePair({a,live,pair,tf,updateUi:true});
   }
   function evaluatePair(o){
-    const a=o.a||[],live=o.live,pair=o.pair,tf=o.tf,updateUi=o.updateUi;
-    if(a.length<5)return;
+    const raw=o.a||[],pair=o.pair,tf=o.tf||"15m",updateUi=o.updateUi;
+    if(raw.length<6)return;
+    const polled=o.polled===true;
+    const hist=polled?raw.slice(0,-1):raw;
+    const live=polled?raw[raw.length-1]:o.live;
+    if(hist.length<5)return;
     const st=pairState[pair]||(pairState[pair]={lastClosedTs:0,lastTouch:false});
-    const closed=a[a.length-1];
+    const closed=hist[hist.length-1];
     if(closed&&closed.ts!==st.lastClosedTs){
       st.lastClosedTs=closed.ts;
-      if(cfg.volume&&a.length>=Math.max(3,+cfg.volumePeriod||20)+1){
-        const n=Math.max(2,+cfg.volumePeriod||20),base=a.slice(0,-1).slice(-n),avg=base.reduce((z,x)=>z+(Number(x.v)||0),0)/base.length,v=Number(closed.v)||0,m=avg>0?v/avg:0;
-        if(m>=Math.max(1,+cfg.volumeMult||2))fire("volume","Volume ×"+m.toFixed(1)+" • "+pair,"volume:"+pair);
+      if(cfg.volume&&hist.length>=Math.max(3,+cfg.volumePeriod||20)+1){
+        const n=Math.max(2,+cfg.volumePeriod||20),base=hist.slice(0,-1).slice(-n),avg=base.reduce((z,x)=>z+(Number(x.v)||0),0)/base.length,v=Number(closed.v)||0,m=avg>0?v/avg:0;
+        if(m>=Math.max(1,+cfg.volumeMult||2))fire("volume","Volume ×"+m.toFixed(1)+" • "+pair+" • "+tf,"volume:"+pair+":"+tf);
       }
       if(cfg.rsi){
-        const rv=rsi(a,Math.max(2,+cfg.rsiPeriod||14)),prev=rsi(a.slice(0,-1),Math.max(2,+cfg.rsiPeriod||14));
+        const n=Math.max(2,+cfg.rsiPeriod||14),rv=rsi(hist,n),prev=rsi(hist.slice(0,-1),n);
         if(rv!=null&&prev!=null){
-          if(prev>=cfg.rsiLow&&rv<cfg.rsiLow)fire("rsi","RSI ниже "+cfg.rsiLow+" • "+pair+" • "+rv.toFixed(1),"rsi-low:"+pair);
-          if(prev<=cfg.rsiHigh&&rv>cfg.rsiHigh)fire("rsi","RSI выше "+cfg.rsiHigh+" • "+pair+" • "+rv.toFixed(1),"rsi-high:"+pair);
+          if(prev>=cfg.rsiLow&&rv<cfg.rsiLow)fire("rsi","RSI ниже "+cfg.rsiLow+" • "+pair+" • "+tf+" • "+rv.toFixed(1),"rsi-low:"+pair+":"+tf);
+          if(prev<=cfg.rsiHigh&&rv>cfg.rsiHigh)fire("rsi","RSI выше "+cfg.rsiHigh+" • "+pair+" • "+tf+" • "+rv.toFixed(1),"rsi-high:"+pair+":"+tf);
         }
       }
     }
     if(cfg.sma){
-      const n=Math.max(2,+cfg.smaPeriod||21),m=sma(a,n);
+      const n=Math.max(2,+cfg.smaPeriod||21),m=sma(hist,n);
       if(m){
         const src=live||closed,price=Number(src?.c)||0,high=Number(src?.h)||price,low=Number(src?.l)||price,tol=Math.max(0,+cfg.smaTolerance||0)/100;
-        const touched=price>0&&(Math.abs(price-m)/m<=tol||(low<=m*(1+tol)&&high>=m*(1-tol)));
-        if(touched&&!st.lastTouch)fire("sma","SMA"+n+" touch • "+pair,"sma:"+pair);
+        const exactTouch=price>0&&low<=m&&high>=m;
+        const nearTouch=tol>0&&price>0&&Math.abs(price-m)/m<=tol;
+        const touched=exactTouch||nearTouch;
+        if(touched&&!st.lastTouch)fire("sma","SMA"+n+" touch • "+pair+" • "+tf,"sma:"+pair+":"+tf);
         st.lastTouch=touched;
       }
     }
-    if(updateUi)updateStats({pair},a);
+    if(updateUi)updateStats({pair},hist);
   }
   function updateStats(s,a){
     const m=a.length?Number(a[a.length-1].c):0,sm=cfg.sma?sma(a,Math.max(2,+cfg.smaPeriod||21)):null,rv=cfg.rsi?rsi(a,Math.max(2,+cfg.rsiPeriod||14)):null;
@@ -109,7 +116,7 @@
     if(!aside)return;
     const p=document.createElement("div");p.id="alertsPanel";p.className="panel";p.style.marginTop="12px";
     p.innerHTML='<h2>🔔 Alerts</h2>'+
-      '<div class="alerts-note">Независимый модуль Volume + RSI + SMA Touch. Сигналы работают по текущему выбранному инструменту и таймфрейму.</div>'+
+      '<div class="alerts-note">Volume + RSI + SMA Touch. Таймфрейм берётся из выбранного сверху графика. В каждом сигнале теперь показывается пара и таймфрейм.</div>'+
       '<div class="alerts-section"><b>📋 Пары для оповещений</b><div class="alerts-pair-actions"><button id="alertsPairsAll">Все доступные</button><button id="alertsPairsClear">Очистить</button></div><div id="alertsPairs" class="alerts-pairs"></div><div class="alerts-note">Выбери пары. Максимум 20 одновременно.</div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertVolume" type="checkbox"><span>Volume Spike</span></label><div class="alerts-grid"><label>Период<input id="alertVolPeriod" type="number" min="2" value="'+cfg.volumePeriod+'"></label><label>Порог ×<input id="alertVolMult" type="number" min="1" step=".1" value="'+cfg.volumeMult+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertRsi" type="checkbox"><span>RSI</span></label><div class="alerts-grid"><label>Период<input id="alertRsiPeriod" type="number" min="2" value="'+cfg.rsiPeriod+'"></label><label>Зоны<input id="alertRsiLow" type="number" min="1" max="49" value="'+cfg.rsiLow+'"> / <input id="alertRsiHigh" type="number" min="51" max="99" value="'+cfg.rsiHigh+'"></label></div></div>'+
@@ -147,7 +154,7 @@
     pollBusy=true;
     try{
       const results=await Promise.allSettled(sel.map(async pair=>({pair,a:await fetchCandles(pair,tf)})));
-      for(const r of results)if(r.status==="fulfilled"&&r.value.a?.length)evaluatePair({a:r.value.a,live:null,pair:r.value.pair,tf,updateUi:r.value.pair===app()?.currentPair});
+      for(const r of results)if(r.status==="fulfilled"&&r.value.a?.length)evaluatePair({a:r.value.a,live:r.value.a[r.value.a.length-1],pair:r.value.pair,tf,polled:true,updateUi:r.value.pair===app()?.currentPair});
     }finally{pollBusy=false}
   }
   setInterval(()=>{pollSelected().catch(e=>console.warn("Alerts poll",e))},15000);
