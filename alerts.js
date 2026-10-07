@@ -2,7 +2,7 @@
 (function(){
   "use strict";
   const KEY="okx_alerts_v1";
-  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[]};
+  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
   let cfg=Object.assign({},defaults,(()=>{try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch{return{}}})());
   if(!Number.isFinite(Number(cfg.smaTolerance))||Number(cfg.smaTolerance)===.15)cfg.smaTolerance=0;
   let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false;
@@ -64,6 +64,8 @@
   }
   function evaluate(s){
     const a=s.candles||[],live=s.liveCandle,pair=s.currentPair||"",tf=s.tf||"";
+    const selected=new Set(cfg.selectedPairs||[]);
+    if(tf!==cfg.alertTf||!selected.has(pair))return;
     if(pair!==lastPair||tf!==lastTf){lastPair=pair;lastTf=tf;lastClosedTs=0;lastTouch=false}
     if(a.length<5)return;
     evaluatePair({a,live,pair,tf,updateUi:true});
@@ -117,7 +119,7 @@
     const p=document.createElement("div");p.id="alertsPanel";p.className="panel";p.style.marginTop="12px";
     p.innerHTML='<h2>🔔 Alerts</h2>'+
       '<div class="alerts-note">Volume + RSI + SMA Touch. Таймфрейм берётся из выбранного сверху графика. В каждом сигнале теперь показывается пара и таймфрейм.</div>'+
-      '<div class="alerts-section"><b>📋 Пары для оповещений</b><div class="alerts-pair-actions"><button id="alertsPairsAll">Все доступные</button><button id="alertsPairsClear">Очистить</button></div><div id="alertsPairs" class="alerts-pairs"></div><div class="alerts-note">Выбери пары. Максимум 20 одновременно.</div></div>'+
+      '<div class="alerts-section"><b>⏱️ Таймфрейм оповещений</b><select id="alertTf" class="alerts-tf"><option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option><option value="30m">30m</option><option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option></select><div class="alerts-note">Таймфрейм оповещений независим от таймфрейма графика.</div></div><div class="alerts-section"><b>📋 Пары для оповещений</b><div class="alerts-pair-actions"><button id="alertsPairsAll">Все доступные</button><button id="alertsPairsClear">Очистить</button></div><div id="alertsPairs" class="alerts-pairs"></div><div class="alerts-note">Выбери пары. Максимум 20 одновременно.</div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertVolume" type="checkbox"><span>Volume Spike</span></label><div class="alerts-grid"><label>Период<input id="alertVolPeriod" type="number" min="2" value="'+cfg.volumePeriod+'"></label><label>Порог ×<input id="alertVolMult" type="number" min="1" step=".1" value="'+cfg.volumeMult+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertRsi" type="checkbox"><span>RSI</span></label><div class="alerts-grid"><label>Период<input id="alertRsiPeriod" type="number" min="2" value="'+cfg.rsiPeriod+'"></label><label>Зоны<input id="alertRsiLow" type="number" min="1" max="49" value="'+cfg.rsiLow+'"> / <input id="alertRsiHigh" type="number" min="51" max="99" value="'+cfg.rsiHigh+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertSma" type="checkbox"><span>SMA Touch</span></label><div class="alerts-grid"><label>Период<input id="alertSmaPeriod" type="number" min="2" value="'+cfg.smaPeriod+'"></label><label>Допуск %<input id="alertSmaTol" type="number" min="0" step=".05" value="'+cfg.smaTolerance+'"></label></div></div>'+
@@ -125,6 +127,8 @@
       '<div class="alerts-stats"><div><small>Price</small><b id="alertsPriceValue">—</b></div><div><small>SMA</small><b id="alertsSmaValue">—</b></div><div><small>RSI</small><b id="alertsRsiValue">—</b></div></div>'+
       '<div id="alertsLast" class="alerts-last">Ожидание сигнала…</div><div id="alertsLog" class="alerts-log"></div>';
     aside.appendChild(p);
+    $("alertTf").value=cfg.alertTf||"15m";
+    $("alertTf").onchange=()=>{cfg.alertTf=$("alertTf").value;pairState={};save();log("sma","Таймфрейм Alerts: "+cfg.alertTf)};
     renderPairs();
     $("alertsPairsAll").onclick=()=>{cfg.selectedPairs=markets().slice(0,20).map(x=>x.instId);save();renderPairs()};
     $("alertsPairsClear").onclick=()=>{cfg.selectedPairs=[];save();renderPairs()};
@@ -142,14 +146,14 @@
   }
   function injectCss(){
     if(document.getElementById("alertsCss"))return;
-    const st=document.createElement("style");st.id="alertsCss";st.textContent='.alerts-note{color:var(--m);font-size:10px;line-height:1.35;margin:-2px 0 9px}.alerts-section{padding:8px 0;border-top:1px solid #1a2530}.alerts-check{display:flex;gap:7px;align-items:center;font-weight:700;font-size:12px}.alerts-check input{width:auto}.alerts-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}.alerts-grid label{color:var(--m);font-size:10px}.alerts-grid input{width:100%;margin-top:3px;padding:7px}.alerts-grid input[type=range]{padding:0}.alerts-pair-actions{display:flex;gap:6px;margin:7px 0}.alerts-pair-actions button{flex:1;padding:6px;font-size:10px}.alerts-pairs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:150px;overflow:auto;padding:2px 0}.alert-pair{display:flex;gap:4px;align-items:center;background:#101823;border:1px solid #17212d;border-radius:6px;padding:5px;font-size:9px}.alert-pair input{width:auto}.alerts-actions{display:flex;gap:7px;margin-top:8px}.alerts-actions button{flex:1;padding:8px;font-size:11px}.alerts-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.alerts-stats>div{background:var(--p2);border:1px solid #17212d;border-radius:8px;padding:7px}.alerts-stats small{display:block;color:var(--m);font-size:9px}.alerts-stats b{display:block;margin-top:2px;font-size:11px}.alerts-last{margin-top:8px;padding:8px;border-radius:8px;background:#111923;color:var(--m);font-size:10px}.alerts-last.volume{color:var(--y);border:1px solid #4b3e15}.alerts-last.rsi{color:#55a8ff;border:1px solid #25496c}.alerts-last.sma{color:var(--g);border:1px solid #205f45}.alerts-log{margin-top:6px;max-height:150px;overflow:auto}.alertlogrow{display:grid;grid-template-columns:8px 55px 1fr;gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid #17212d;font-size:9px}.alertlogrow b{font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.alertdot{width:7px;height:7px;border-radius:50%;background:#8290a0}.alertdot.volume{background:#ffd166}.alertdot.rsi{background:#55a8ff}.alertdot.sma{background:#27e58a}@media(max-width:900px){.alerts-grid{grid-template-columns:1fr 1fr}}';
+    const st=document.createElement("style");st.id="alertsCss";st.textContent='.alerts-tf{width:100%;margin-top:6px;padding:8px}.alerts-note{color:var(--m);font-size:10px;line-height:1.35;margin:-2px 0 9px}.alerts-section{padding:8px 0;border-top:1px solid #1a2530}.alerts-check{display:flex;gap:7px;align-items:center;font-weight:700;font-size:12px}.alerts-check input{width:auto}.alerts-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}.alerts-grid label{color:var(--m);font-size:10px}.alerts-grid input{width:100%;margin-top:3px;padding:7px}.alerts-grid input[type=range]{padding:0}.alerts-pair-actions{display:flex;gap:6px;margin:7px 0}.alerts-pair-actions button{flex:1;padding:6px;font-size:10px}.alerts-pairs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:150px;overflow:auto;padding:2px 0}.alert-pair{display:flex;gap:4px;align-items:center;background:#101823;border:1px solid #17212d;border-radius:6px;padding:5px;font-size:9px}.alert-pair input{width:auto}.alerts-actions{display:flex;gap:7px;margin-top:8px}.alerts-actions button{flex:1;padding:8px;font-size:11px}.alerts-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.alerts-stats>div{background:var(--p2);border:1px solid #17212d;border-radius:8px;padding:7px}.alerts-stats small{display:block;color:var(--m);font-size:9px}.alerts-stats b{display:block;margin-top:2px;font-size:11px}.alerts-last{margin-top:8px;padding:8px;border-radius:8px;background:#111923;color:var(--m);font-size:10px}.alerts-last.volume{color:var(--y);border:1px solid #4b3e15}.alerts-last.rsi{color:#55a8ff;border:1px solid #25496c}.alerts-last.sma{color:var(--g);border:1px solid #205f45}.alerts-log{margin-top:6px;max-height:150px;overflow:auto}.alertlogrow{display:grid;grid-template-columns:8px 55px 1fr;gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid #17212d;font-size:9px}.alertlogrow b{font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.alertdot{width:7px;height:7px;border-radius:50%;background:#8290a0}.alertdot.volume{background:#ffd166}.alertdot.rsi{background:#55a8ff}.alertdot.sma{background:#27e58a}@media(max-width:900px){.alerts-grid{grid-template-columns:1fr 1fr}}';
     document.head.appendChild(st);
   }
   injectCss();build();
   setInterval(()=>{try{const s=app();if(s)evaluate(s)}catch(e){console.warn("Alerts",e)}},500);
   async function pollSelected(){
     if(pollBusy)return;
-    const sel=(cfg.selectedPairs||[]).slice(0,20),tf=(app()?.tf)||"15m";
+    const sel=(cfg.selectedPairs||[]).slice(0,20),tf=cfg.alertTf||"15m";
     if(!sel.length)return;
     pollBusy=true;
     try{
