@@ -20,16 +20,23 @@
     if(!cfg.sound)return;
     const run=()=>{
       if(!audioCtx)return;
-      const now=audioCtx.currentTime;
-      const map={volume:[520,.48],rsi:[740,.52],sma:[390,.44],test:[660,.5]};
-      const [freq,dur]=map[kind]||map.test;
-      const o=audioCtx.createOscillator(),g=audioCtx.createGain();
-      o.type=kind==="sma"?"sine":"triangle";o.frequency.value=freq;
-      g.gain.setValueAtTime(0.0001,now);
-      g.gain.exponentialRampToValueAtTime(Math.max(.02,cfg.volumeLevel*.12),now+.015);
-      g.gain.exponentialRampToValueAtTime(.0001,now+dur);
-      o.connect(g);g.connect(audioCtx.destination);o.start(now);o.stop(now+dur+.02);
-      if(kind==="volume"){const o2=audioCtx.createOscillator();const g2=audioCtx.createGain();o2.frequency.value=780;o2.type="triangle";g2.gain.setValueAtTime(.0001,now+.52);g2.gain.exponentialRampToValueAtTime(Math.max(.02,cfg.volumeLevel*.1),now+.54);g2.gain.exponentialRampToValueAtTime(.0001,now+.82);o2.connect(g2);g2.connect(audioCtx.destination);o2.start(now+.14);o2.stop(now+.84)}
+      const now=audioCtx.currentTime,level=Math.max(.02,cfg.volumeLevel*.12);
+      const play=(freq,start,dur,type="triangle",gain=level)=>{
+        const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+        o.type=type;o.frequency.value=freq;
+        g.gain.setValueAtTime(.0001,now+start);
+        g.gain.exponentialRampToValueAtTime(gain,now+start+.02);
+        g.gain.exponentialRampToValueAtTime(.0001,now+start+dur);
+        o.connect(g);g.connect(audioCtx.destination);o.start(now+start);o.stop(now+start+dur+.03);
+      };
+      // Volume: two rising beeps — energetic signal.
+      if(kind==="volume"){play(520,0,.32,"triangle");play(780,.38,.38,"triangle",level*.9);return}
+      // RSI: three alternating beeps — clearly different from Volume/SMA.
+      if(kind==="rsi"){play(740,0,.24,"square",level*.9);play(560,.30,.24,"square",level*.8);play(740,.60,.24,"square",level*.9);return}
+      // SMA: one lower, longer tone — calm "touch" notification.
+      if(kind==="sma"){play(390,0,.70,"sine",level*.85);return}
+      // Test sound: neutral middle tone.
+      play(660,0,.50,"triangle");
     };
     ensureAudio().then(run).catch(()=>{});
   }
