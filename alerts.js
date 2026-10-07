@@ -86,10 +86,11 @@
         }
       }
     }
-    if(cfg.sma&&live){
-      const n=Math.max(2,+cfg.smaPeriod||21),m=sma(a,n),price=Number(live.c)||0,high=Number(live.h)||price,low=Number(live.l)||price;
-      if(m&&price){
-        const tol=Math.max(0,+cfg.smaTolerance||0)/100,touched=Math.abs(price-m)/m<=tol||(low<=m*(1+tol)&&high>=m*(1-tol));
+    if(cfg.sma){
+      const n=Math.max(2,+cfg.smaPeriod||21),m=sma(a,n);
+      if(m){
+        const src=live||closed,price=Number(src?.c)||0,high=Number(src?.h)||price,low=Number(src?.l)||price,tol=Math.max(0,+cfg.smaTolerance||0)/100;
+        const touched=price>0&&(Math.abs(price-m)/m<=tol||(low<=m*(1+tol)&&high>=m*(1-tol)));
         if(touched&&!st.lastTouch)fire("sma","SMA"+n+" touch • "+pair,"sma:"+pair);
         st.lastTouch=touched;
       }
@@ -150,5 +151,6 @@
     }finally{pollBusy=false}
   }
   setInterval(()=>{pollSelected().catch(e=>console.warn("Alerts poll",e))},15000);
+  setInterval(()=>{try{renderPairs()}catch(e){}},5000);
   window.OKXAlerts={test:()=>tone("test"),getConfig:()=>Object.assign({},cfg)};
 })();
