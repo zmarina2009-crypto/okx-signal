@@ -90,13 +90,13 @@
       st.lastClosedTs=closed.ts;
       if(cfg.volume&&hist.length>=Math.max(3,+cfg.volumePeriod||20)+1){
         const n=Math.max(2,+cfg.volumePeriod||20),base=hist.slice(0,-1).slice(-n),avg=base.reduce((z,x)=>z+(Number(x.v)||0),0)/base.length,v=Number(closed.v)||0,m=avg>0?v/avg:0;
-        if(m>=Math.max(1,+cfg.volumeMult||2))fire("volume","Volume ×"+m.toFixed(1)+" • "+pair+" • "+tf,"volume:"+pair+":"+tf);
+        if(m>=Math.max(1,+cfg.volumeMult||2)){const dir=Number(closed.c)>=Number(closed.o)?"🟢 BUY":"🔴 SELL";fire("volume","⚡ VOLUME SPIKE "+dir+" • ×"+m.toFixed(1)+" • "+pair+" • "+tf,"volume:"+pair+":"+tf);}
       }
       if(cfg.rsi){
         const n=Math.max(2,+cfg.rsiPeriod||14),rv=rsi(hist,n),prev=rsi(hist.slice(0,-1),n);
         if(rv!=null&&prev!=null){
-          if(prev>=cfg.rsiLow&&rv<cfg.rsiLow)fire("rsi","RSI ниже "+cfg.rsiLow+" • "+pair+" • "+tf+" • "+rv.toFixed(1),"rsi-low:"+pair+":"+tf);
-          if(prev<=cfg.rsiHigh&&rv>cfg.rsiHigh)fire("rsi","RSI выше "+cfg.rsiHigh+" • "+pair+" • "+tf+" • "+rv.toFixed(1),"rsi-high:"+pair+":"+tf);
+          if(prev>=cfg.rsiLow&&rv<cfg.rsiLow)fire("rsi","📉 RSI OVERSOLD • ниже "+cfg.rsiLow+" → "+rv.toFixed(1)+" • "+pair+" • "+tf,"rsi-low:"+pair+":"+tf);
+          if(prev<=cfg.rsiHigh&&rv>cfg.rsiHigh)fire("rsi","📈 RSI OVERBOUGHT • выше "+cfg.rsiHigh+" → "+rv.toFixed(1)+" • "+pair+" • "+tf,"rsi-high:"+pair+":"+tf);
         }
       }
     }
@@ -107,7 +107,7 @@
         const exactTouch=price>0&&low<=m&&high>=m;
         const nearTouch=tol>0&&price>0&&Math.abs(price-m)/m<=tol;
         const touched=exactTouch||nearTouch;
-        if(touched&&!st.lastTouch)fire("sma","SMA"+n+" touch • "+pair+" • "+tf,"sma:"+pair+":"+tf);
+        if(touched&&!st.lastTouch){const prevPrice=Number(hist[hist.length-2]?.c)||price;const prevSma=sma(hist.slice(0,-1),n)||m;const crossUp=prevPrice<prevSma&&price>=m;const crossDown=prevPrice>prevSma&&price<=m;const label=crossUp?"🟢 SMA"+n+" CROSS UP":crossDown?"🔴 SMA"+n+" CROSS DOWN":"🟡 SMA"+n+" TOUCH";fire("sma",label+" • "+pair+" • "+tf+" • Price "+price.toFixed(2)+" / SMA "+m.toFixed(2),"sma:"+pair+":"+tf);}
         st.lastTouch=touched;
       }
     }
@@ -125,7 +125,7 @@
     if(!aside)return;
     const p=document.createElement("div");p.id="alertsPanel";p.className="panel";p.style.marginTop="12px";
     p.innerHTML='<h2>🔔 Alerts</h2>'+
-      '<div class="alerts-note">Volume + RSI + SMA Touch. Таймфрейм берётся из выбранного сверху графика. В каждом сигнале теперь показывается пара и таймфрейм.</div>'+
+      '<div class="alerts-note">⚡ Volume = всплеск объёма · 📈/📉 RSI = выход в перекупленность/перепроданность · 🟢/🔴 SMA = пересечение или касание SMA. Каждый сигнал показывает направление, пару и таймфрейм.</div>'+
       '<div class="alerts-section"><b>⏱️ Таймфрейм оповещений</b><select id="alertTf" class="alerts-tf"><option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option><option value="30m">30m</option><option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option></select><div class="alerts-note">Таймфрейм оповещений независим от таймфрейма графика.</div></div><div class="alerts-section"><b>📋 Пары для оповещений</b><div class="alerts-pair-actions"><button id="alertsPairsAll">Все доступные</button><button id="alertsPairsClear">Очистить</button></div><div id="alertsPairs" class="alerts-pairs"></div><div class="alerts-note">Выбери пары. Максимум 20 одновременно.</div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertVolume" type="checkbox"><span>Volume Spike</span></label><div class="alerts-grid"><label>Период<input id="alertVolPeriod" type="number" min="2" value="'+cfg.volumePeriod+'"></label><label>Порог ×<input id="alertVolMult" type="number" min="1" step=".1" value="'+cfg.volumeMult+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertRsi" type="checkbox"><span>RSI</span></label><div class="alerts-grid"><label>Период<input id="alertRsiPeriod" type="number" min="2" value="'+cfg.rsiPeriod+'"></label><label>Зоны<input id="alertRsiLow" type="number" min="1" max="49" value="'+cfg.rsiLow+'"> / <input id="alertRsiHigh" type="number" min="51" max="99" value="'+cfg.rsiHigh+'"></label></div></div>'+
