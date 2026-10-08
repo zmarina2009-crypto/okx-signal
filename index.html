@@ -209,7 +209,7 @@ $("gridTool").onclick=()=>{chartState.grid=!chartState.grid;$("gridTool").classL
       const begin=Math.max(0,end-visible),a=candles.slice(begin,end);
       if(!a.length)return;
       const lo=Math.min(...a.map(x=>x.l)),hi=Math.max(...a.map(x=>x.h)),range=hi-lo||1;
-      const rows=Math.max(12,Math.min(48,chartState.vpRows||30));
+      const rows=Math.max(18,Math.min(60,chartState.vpRows||30));
       const bins=new Array(rows).fill(0),up=new Array(rows).fill(0);
       a.forEach(x=>{
         const typical=(x.h+x.l+x.c)/3;
@@ -217,19 +217,53 @@ $("gridTool").onclick=()=>{chartState.grid=!chartState.grid;$("gridTool").classL
         const v=Number(x.v)||0; bins[k]+=v; if(x.c>=x.o)up[k]+=v;
       });
       const maxV=Math.max(...bins,1),rowH=(H-p.t-p.b)/rows,maxWidth=Math.min(W*.20,150);
+      const poc=bins.indexOf(maxV);
+      const target=bins.reduce((s,v)=>s+v,0)*.70;
+      let value=bins[poc],left=poc,right=poc;
+      while(value<target&&(left>0||right<rows-1)){
+        const lv=left>0?bins[left-1]:-1,rv=right<rows-1?bins[right+1]:-1;
+        if(rv>=lv){right++;value+=Math.max(0,rv)}else{left--;value+=Math.max(0,lv)}
+      }
+      const priceAt=k=>lo+(k+.5)*range/rows;
+      const pocPrice=priceAt(poc),valPrice=lo+left*range/rows,vahPrice=lo+(right+1)*range/rows;
       ctx.save();
       for(let k=0;k<rows;k++){
         const y=p.t+(rows-1-k)*rowH+1,bw=maxWidth*(bins[k]/maxV);
         if(!bw)continue;
-        ctx.globalAlpha=.16;ctx.fillStyle="#55a8ff";ctx.fillRect(W-p.r-bw,y,bw,Math.max(1,rowH-2));
+        const inVA=k>=left&&k<=right;
+        ctx.globalAlpha=inVA?.18:.10;ctx.fillStyle="#55a8ff";
+        ctx.fillRect(W-p.r-bw,y,Math.max(1,bw),Math.max(1,rowH-2));
         const upW=bw*(up[k]/Math.max(bins[k],1));
-        ctx.globalAlpha=.18;ctx.fillStyle="#27e58a";ctx.fillRect(W-p.r-bw,y,upW,Math.max(1,rowH-2));
+        ctx.globalAlpha=inVA?.22:.12;ctx.fillStyle="#27e58a";
+        ctx.fillRect(W-p.r-bw,y,upW,Math.max(1,rowH-2));
       }
-      const poc=bins.indexOf(maxV),pocY=p.t+(rows-1-poc+.5)*rowH;
-      ctx.globalAlpha=.85;ctx.strokeStyle="#ffd166";ctx.lineWidth=1.5;
-      ctx.beginPath();ctx.moveTo(W-p.r-maxWidth,pocY);ctx.lineTo(W-p.r,pocY);ctx.stroke();
-      ctx.globalAlpha=1;ctx.fillStyle="#ffd166";ctx.font="10px system-ui";
-      ctx.fillText("POC "+fmt(lo+(poc+.5)*range/rows),Math.max(p.l+4,W-p.r-maxWidth),Math.max(p.t+10,pocY-4));
+      const line=(price,label,textColor,alpha)=>{
+        const y=p.t+(hi-price)/range*(H-p.t-p.b);
+        ctx.globalAlpha=alpha;ctx.strokeStyle=textColor;ctx.lineWidth=1.3;ctx.setLineDash(label==="POC"?[]:[5,4]);
+        ctx.beginPath();ctx.moveTo(W-p.r-maxWidth,y);ctx.lineTo(W-p.r,y);ctx.stroke();ctx.setLineDash([]);
+        ctx.globalAlpha=.95;ctx.fillStyle=textColor;ctx.font="10px system-ui";ctx.fillText(label+" "+fmt(price),Math.max(p.l+4,W-p.r-maxWidth),Math.max(p.t+10,Math.min(H-p.b-2,y-4)));
+      };
+      line(vahPrice,"VAH","#ff5f68",.75);
+      line(pocPrice,"POC","#ffd166",.95);
+      line(valPrice,"VAL","#55a8ff",.75);
+      const zoneY1=p.t+(hi-vahPrice)/range*(H-p.t-p.b),zoneY2=p.t+(hi-valPrice)/range*(H-p.t-p.b);
+      ctx.globalAlpha=.045;ctx.fillStyle="#55a8ff";ctx.fillRect(W-p.r-maxWidth,Math.min(zoneY1,zoneY2),maxWidth,Math.abs(zoneY2-zoneY1));
+      const threshold=maxV*.65;
+      ctx.globalAlpha=.08;
+      for(let k=0;k<rows;k++){
+        if(bins[k]>=threshold&&(k<left-1||k>right+1)){
+          const y=p.t+(rows-1-k)*rowH+1,bw=maxWidth*(bins[k]/maxV);
+          ctx.fillStyle="#ffd166";ctx.fillRect(W-p.r-bw,y,bw,Math.max(1,rowH-2));
+        }
+      }
+      const lowThreshold=maxV*.22;
+      ctx.globalAlpha=.95;ctx.fillStyle="#8290a0";ctx.font="9px system-ui";
+      for(let k=0;k<rows;k++){
+        if(bins[k]>0&&bins[k]<=lowThreshold){
+          const y=p.t+(rows-1-k+.7)*rowH;
+          ctx.fillText("LVN",Math.max(p.l+4,W-p.r-maxWidth-28),y);
+        }
+      }
       ctx.restore();
     }catch(e){console.warn("Volume Profile",e)}
   }
@@ -239,5 +273,5 @@ $("gridTool").onclick=()=>{chartState.grid=!chartState.grid;$("gridTool").classL
     $("vpTool").classList.toggle("active",chartState.volumeProfile);
     draw(last);
   };
-})();
+})(););
 </script><script src="./alerts.js?v=3"></script><script src="./backtester.js?v=15"></script></body></html>
