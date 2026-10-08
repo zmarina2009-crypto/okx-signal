@@ -107,7 +107,13 @@
         const exactTouch=price>0&&low<=m&&high>=m;
         const nearTouch=tol>0&&price>0&&Math.abs(price-m)/m<=tol;
         const touched=exactTouch||nearTouch;
-        if(touched&&!st.lastTouch){const prevPrice=Number(hist[hist.length-2]?.c)||price;const prevSma=sma(hist.slice(0,-1),n)||m;const crossUp=prevPrice<prevSma&&price>=m;const crossDown=prevPrice>prevSma&&price<=m;const label=crossUp?"🟢 SMA"+n+" CROSS UP":crossDown?"🔴 SMA"+n+" CROSS DOWN":"🟡 SMA"+n+" TOUCH";fire("sma",label+" • "+pair+" • "+tf+" • Price "+price.toFixed(2)+" / SMA "+m.toFixed(2),"sma:"+pair+":"+tf);}
+        if(touched&&!st.lastTouch){
+          const prevPrice=Number(hist[hist.length-2]?.c)||price;
+          const prevSma=sma(hist.slice(0,-1),n)||m;
+          const direction=prevPrice<prevSma?"LONG":prevPrice>prevSma?"SHORT":"NEUTRAL";
+          const icon=direction==="LONG"?"🟢":direction==="SHORT"?"🔴":"🟡";
+          const label=icon+" SMA"+n+" "+direction+" TOUCH";
+          fire("sma",label+" • "+pair+" • "+tf+" • Price "+price.toFixed(2)+" / SMA "+m.toFixed(2),"sma:"+pair+":"+tf);}
         st.lastTouch=touched;
       }
     }
