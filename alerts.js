@@ -203,7 +203,7 @@
           const direction=prevPrice<prevSma?"LONG":prevPrice>prevSma?"SHORT":price>=m?"LONG":"SHORT";
           const icon=direction==="LONG"?"↑":"↓";
           const label=icon+" SMA"+n+" "+direction+" TOUCH";
-          fire("sma",label+" • "+pair+" • "+tf+" • Price "+price.toFixed(2)+" / SMA "+m.toFixed(2),"sma:"+pair+":"+tf,{pair,tf,ts:Number(src?.ts)||Number(closed?.ts)||now(),price:m,direction,label:"SMA"+n});}
+          fire("sma",label+" • "+pair+" • "+tf+" • Price "+price.toFixed(2)+" / SMA "+m.toFixed(2),"sma:"+pair+":"+tf,{pair,tf,ts:Number(src?.ts)||Number(closed?.ts)||now(),price:m,entryPrice:Number(src?.c)||m,direction,label:"SMA"+n});}
         st.lastTouch=touched;
       }
     }
