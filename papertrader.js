@@ -56,6 +56,15 @@
     syncState={pair:cfg.pair,tf:tfNorm(cfg.tf),source:cfg.source,lastTs,updatedAt:Date.now()};
     saveSync();
   }
+  async function advanceSyncToLatest(){
+    const api=window.OKXSignalApp;
+    if(!api||typeof api.fetchCandles!=="function")throw Error("Свечи OKX пока недоступны");
+    const bars=await api.fetchCandles(cfg.pair,apiTf(cfg.tf),5);
+    const closed=(Array.isArray(bars)?bars:[]).filter(b=>Number.isFinite(Number(b.ts))).sort((x,y)=>Number(x.ts)-Number(y.ts));
+    if(!closed.length)throw Error("Не удалось получить последнюю закрытую свечу");
+    syncState={pair:cfg.pair,tf:tfNorm(cfg.tf),source:cfg.source,lastTs:Number(closed.at(-1).ts),updatedAt:Date.now()};
+    saveSync();
+  }
   async function fetchHistory(pair,tf,sinceTs){
     const urlBase="https://www.okx.com/api/v5/market/history-candles";
     const from=Number(sinceTs)||0,found=new Map();let after="",complete=false,lastOldest=Infinity;
@@ -339,7 +348,9 @@
             processBar(trade,bar);
           }
         }
-        if(Number(bar.ts)<=cursor||!cfg.enabled||!matchingAlerts||blockedAtBar.has(pair+"|"+tf))continue;
+        if(Number(bar.ts)<=cursor)continue;
+        barCount++;
+        if(!cfg.enabled||!matchingAlerts||blockedAtBar.has(pair+"|"+tf))continue;
         const list=events.get(Number(bar.ts))||[];
         for(const sig of list){
           if(!cfg.enabled)break;
@@ -349,7 +360,6 @@
           await openTrade(sig);
           if(trades.length>before)created++;
         }
-        barCount++;
       }
       // Also recover any open positions on a different pair/timeframe retained in the journal.
       const otherGroups=new Map();
@@ -395,14 +405,24 @@
   }
   function wire(){
     $("ptStart").onclick=async()=>{
+      const wasEnabled=cfg.enabled;
       collectConfig();
-      try{await seedSync()}catch(e){setStatus("Не удалось запустить тест: "+String(e&&e.message||e));return}
+      try{
+        await seedSync();
+        // When resuming a paused test, skip signals from the paused interval,
+        // while still replaying bars for any positions that were already open.
+        if(!wasEnabled)await advanceSyncToLatest();
+      }catch(e){setStatus("Не удалось запустить тест: "+String(e&&e.message||e));return}
       cfg.enabled=true;saveCfg();render();
       const ac=readAlertCfg(),selected=(ac.selectedPairs||[]).includes(cfg.pair),tfMatch=tfNorm(ac.alertTf||"15m")===tfNorm(cfg.tf);
       setStatus("Тест включён. "+(selected&&tfMatch?"Пары и таймфрейм Alerts совпадают.":"Проверь Alerts: нужны та же пара, таймфрейм и выбранный источник.")+" Виртуальные позиции; реальные ордера не отправляются.");
       catchUpHistory("start").catch(()=>{});
     };
-    $("ptPause").onclick=()=>{collectConfig();cfg.enabled=false;saveCfg();render();setStatus("Новые виртуальные входы приостановлены. Открытые позиции продолжат отслеживаться и восстановятся при следующем открытии.")};
+    $("ptPause").onclick=async()=>{
+      collectConfig();cfg.enabled=false;saveCfg();render();
+      try{await advanceSyncToLatest();setStatus("Новые виртуальные входы приостановлены. Уже открытые позиции продолжат отслеживаться и восстановятся при следующем открытии; сигналы во время паузы пропускаются.")}
+      catch(e){setStatus("Пауза включена, но не удалось обновить точку восстановления: "+String(e&&e.message||e))}
+    };
     $("ptClear").onclick=()=>{if(!confirm("Удалить весь журнал Paper Trading, включая открытые виртуальные позиции?"))return;trades=[];saveTrades();render();setStatus("Журнал Paper Trading очищен.")};
     ["ptPair","ptTf","ptSource","ptNotional","ptAtrMult","ptFee","ptSlip"].forEach(id=>{const el=$(id);el.addEventListener("change",()=>{collectConfig();render()})});
     window.addEventListener("okx-alert-marker",ev=>handleMarker(ev.detail));
