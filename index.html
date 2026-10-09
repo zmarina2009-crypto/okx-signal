@@ -193,7 +193,7 @@ function draw(e){window.candles=candles;window.chartState=chartState;
     let marks=[];
     try{marks=JSON.parse(localStorage.getItem("okx_v2_alert_markers")||"[]");if(!Array.isArray(marks))marks=[]}catch{}
     const tf=$("tf")?.value||"15m";
-    const visibleMarks=marks.filter(m=>m.pair===currentPair&&m.tf===tf&&["LONG","SHORT"].includes(m.direction)).slice(-24);
+    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)).slice(-24);
     const indexByTs=new Map(series.map((c,i)=>[Number(c.ts),i]));
     visibleMarks.forEach(m=>{
       const gi=indexByTs.get(Number(m.ts));
