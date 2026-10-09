@@ -109,7 +109,8 @@
     const tolerance=Math.max(price*.0008,.01);
     const same=marks.filter(m=>m.pair===meta.pair&&m.tf===meta.tf&&m.kind===meta.kind&&Math.abs(Number(m.price)-price)<=Math.max(tolerance,Number(m.tolerance)||0));
     const touches=1+same.length;
-    const marker={id,pair:meta.pair,tf:meta.tf,kind:meta.kind,direction:meta.direction,price,ts,touches,label:meta.label||meta.kind,tolerance};
+    const entryPrice=Number(meta.entryPrice)>0?Number(meta.entryPrice):price;
+    const marker={id,pair:meta.pair,tf:meta.tf,kind:meta.kind,direction:meta.direction,price,entryPrice,ts,touches,label:meta.label||meta.kind,tolerance};
     marks.push(marker);
     try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-500)))}catch{}
     window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:marker}));
@@ -122,7 +123,7 @@
     if(!pair||!["LONG","SHORT"].includes(direction)||!Number.isFinite(ts))return;
     const bars=Math.max(1,Math.min(5,Number(cfg.comboWindow)||1)),windowMs=(COMBO_TF_MS[tf]||900000)*bars;
     const id=[pair,tf,kind,ts,direction].join("|");
-    if(!comboSignals.some(s=>s.id===id))comboSignals.push({id,pair,tf,kind,ts,direction,price:Number(marker.price)||0,label:marker.label||kind});
+    if(!comboSignals.some(s=>s.id===id))comboSignals.push({id,pair,tf,kind,ts,direction,price:Number(marker.price)||0,entryPrice:Number(marker.entryPrice)||Number(marker.price)||0,label:marker.label||kind});
     comboSignals=comboSignals.slice(-300);
     const matching=comboSignals.filter(s=>s.pair===pair&&s.tf===tf&&Math.abs(ts-s.ts)<=windowMs);
     const byKind=new Map();
@@ -143,7 +144,7 @@
     comboLastAt[alertKey]=comboTs;
     const kinds=chosen.map(s=>s.kind.toUpperCase());
     const message="✨ COMBO "+chosen.length+"/3 "+comboDirection+" • "+kinds.join(" + ")+" • "+pair+" • "+tf;
-    recordAlertMarker({pair,tf,ts:comboTs,price:Number(directionSignal.price)||Number(marker.price)||chosen.at(-1)?.price||0,direction:comboDirection,label:"COMBO "+kinds.join("+"),kind:"combo"});
+    recordAlertMarker({pair,tf,ts:comboTs,price:Number(directionSignal.price)||Number(marker.price)||chosen.at(-1)?.price||0,entryPrice:Number(directionSignal.entryPrice)||Number(marker.entryPrice)||Number(directionSignal.price)||Number(marker.price)||0,direction:comboDirection,label:"COMBO "+kinds.join("+"),kind:"combo"});
     log("combo",message);tone("combo");
     const badge=$("alertsLast");if(badge){badge.textContent=message;badge.className="alerts-last combo"}
   }
