@@ -2,10 +2,10 @@
 (function(){
   "use strict";
   const KEY="okx_alerts_v1";
-  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
+  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,comboEnabled:false,comboCount:2,comboWindow:1,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
   let cfg=Object.assign({},defaults,(()=>{try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch{return{}}})());
   if(!Number.isFinite(Number(cfg.smaTolerance))||Number(cfg.smaTolerance)===.15)cfg.smaTolerance=0;
-  let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false;
+  let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={};
   const $=id=>document.getElementById(id);
   const esc=s=>String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
   function save(){localStorage.setItem(KEY,JSON.stringify(cfg))}
@@ -35,6 +35,8 @@
       if(kind==="rsi"){play(740,0,.24,"square",level*.9);play(560,.30,.24,"square",level*.8);play(740,.60,.24,"square",level*.9);return}
       // SMA: two-note soft alert — clearly different from Volume/RSI.
       if(kind==="sma"){play(330,0,.55,"sine",level*.9);play(440,.62,.32,"sine",level*.65);return}
+      // Combo: three quick notes, distinct from single-indicator alerts.
+      if(kind==="combo"){play(880,0,.20,"triangle",level);play(660,.24,.20,"triangle",level*.85);play(1040,.48,.36,"triangle",level);return}
       // Test fallback.
       play(660,0,.40,"triangle");
     };
@@ -81,11 +83,41 @@
     try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-300)))}catch{}
     window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:marker}));
   }
+  const COMBO_SOURCES=["volume","rsi","sma"];
+  const COMBO_TF_MS={"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000};
+  function observeCombo(kind,marker){
+    if(!cfg.comboEnabled||!marker||!COMBO_SOURCES.includes(kind)||!cfg[kind])return;
+    const pair=marker.pair,tf=String(marker.tf||cfg.alertTf||"15m").toLowerCase(),direction=marker.direction,ts=Number(marker.ts)||now();
+    if(!pair||!["LONG","SHORT"].includes(direction)||!Number.isFinite(ts))return;
+    const bars=Math.max(1,Math.min(5,Number(cfg.comboWindow)||1)),windowMs=(COMBO_TF_MS[tf]||900000)*bars;
+    const id=[pair,tf,kind,ts,direction].join("|");
+    if(!comboSignals.some(s=>s.id===id))comboSignals.push({id,pair,tf,kind,ts,direction,price:Number(marker.price)||0,label:marker.label||kind});
+    comboSignals=comboSignals.slice(-300);
+    const matching=comboSignals.filter(s=>s.pair===pair&&s.tf===tf&&s.direction===direction&&Math.abs(ts-s.ts)<=windowMs);
+    const byKind=new Map();
+    matching.forEach(s=>{const old=byKind.get(s.kind);if(!old||Math.abs(ts-s.ts)<Math.abs(ts-old.ts))byKind.set(s.kind,s)});
+    const chosen=[...byKind.values()],required=Math.max(2,Math.min(3,Number(cfg.comboCount)||2));
+    if(chosen.length<required)return;
+    const alertKey="combo:"+pair+":"+tf+":"+direction,lastAt=comboLastAt[alertKey]||0;
+    if(lastAt&&Math.abs(ts-lastAt)<=windowMs)return;
+    if(!canAlert(alertKey))return;
+    comboLastAt[alertKey]=ts;
+    const kinds=chosen.map(s=>s.kind.toUpperCase());
+    const message="✨ COMBO "+chosen.length+"/3 "+direction+" • "+kinds.join(" + ")+" • "+pair+" • "+tf;
+    recordAlertMarker({pair,tf,ts,price:Number(marker.price)||chosen.at(-1)?.price||0,direction,label:"COMBO "+kinds.join("+"),kind:"combo"});
+    log("combo",message);tone("combo");
+    const badge=$("alertsLast");if(badge){badge.textContent=message;badge.className="alerts-last combo"}
+  }
   function fire(kind,text,key,marker){
-    if(!canAlert(key))return;
+    const source=marker&&COMBO_SOURCES.includes(kind);
+    if(!canAlert(key)){
+      if(source)observeCombo(kind,marker);
+      return;
+    }
     if(marker)recordAlertMarker(Object.assign({},marker,{kind}));
     log(kind,text);tone(kind);
     const badge=$("alertsLast");if(badge){badge.textContent=text;badge.className="alerts-last "+kind}
+    if(source)observeCombo(kind,marker);
   }
   function evaluate(s){
     const a=s.candles||[],live=s.liveCandle,pair=s.currentPair||"",tf=s.tf||"";
@@ -161,7 +193,8 @@
       '<div class="alerts-section"><label class="alerts-check"><input id="alertVolume" type="checkbox"><span>Volume Spike</span></label><div class="alerts-grid"><label>Период<input id="alertVolPeriod" type="number" min="2" value="'+cfg.volumePeriod+'"></label><label>Порог ×<input id="alertVolMult" type="number" min="1" step=".1" value="'+cfg.volumeMult+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertRsi" type="checkbox"><span>RSI</span></label><div class="alerts-grid"><label>Период<input id="alertRsiPeriod" type="number" min="2" value="'+cfg.rsiPeriod+'"></label><label>Зоны<input id="alertRsiLow" type="number" min="1" max="49" value="'+cfg.rsiLow+'"> / <input id="alertRsiHigh" type="number" min="51" max="99" value="'+cfg.rsiHigh+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertSma" type="checkbox"><span>SMA Touch</span></label><div class="alerts-grid"><label>Период<input id="alertSmaPeriod" type="number" min="2" value="'+cfg.smaPeriod+'"></label><label>Допуск %<input id="alertSmaTol" type="number" min="0" step=".05" value="'+cfg.smaTolerance+'"></label></div></div>'+
-      '<div class="alerts-section"><div class="alerts-grid"><label>Громкость<input id="alertVolumeLevel" type="range" min="0" max="1" step=".05" value="'+cfg.volumeLevel+'"></label><label>Антиспам, сек<input id="alertCooldown" type="number" min="1" value="'+cfg.cooldown+'"></label></div><div class="alerts-actions"><button id="alertsSound" class="primary">🔊 Включить звук</button></div><div class="alerts-sound-tests"><button id="testVolume">⚡ Volume</button><button id="testRsi">📈 RSI</button><button id="testSma">〽️ SMA</button><button id="testAll">▶ Все 3</button></div><div class="alerts-note">Нажми кнопки, чтобы сравнить реальные звуки каждого сигнала.</div></div>'+
+      '<div class="alerts-section"><label class="alerts-check"><input id="alertCombo" type="checkbox"><span>✨ Комбо-алерт</span></label><div class="alerts-grid"><label>Совпадение<select id="alertComboCount"><option value="2">2 из 3 индикаторов</option><option value="3">3 из 3 индикаторов</option></select></label><label>Окно<select id="alertComboWindow"><option value="1">1 свеча</option><option value="2">2 свечи</option><option value="3">3 свечи</option></select></label></div><div class="alerts-note">Сигналы должны совпасть по паре, таймфрейму и направлению LONG/SHORT. Самостоятельные алерты Volume, RSI и SMA остаются отдельными.</div></div>'+
+      '<div class="alerts-section"><div class="alerts-grid"><label>Громкость<input id="alertVolumeLevel" type="range" min="0" max="1" step=".05" value="'+cfg.volumeLevel+'"></label><label>Антиспам, сек<input id="alertCooldown" type="number" min="1" value="'+cfg.cooldown+'"></label></div><div class="alerts-actions"><button id="alertsSound" class="primary">🔊 Включить звук</button></div><div class="alerts-sound-tests"><button id="testVolume">⚡ Volume</button><button id="testRsi">📈 RSI</button><button id="testSma">〽️ SMA</button><button id="testCombo">✨ Combo</button><button id="testAll">▶ Все 3</button></div><div class="alerts-note">Нажми кнопки, чтобы сравнить реальные звуки каждого сигнала.</div></div>'+
       '<div class="alerts-stats"><div><small>Price</small><b id="alertsPriceValue">—</b></div><div><small>SMA</small><b id="alertsSmaValue">—</b></div><div><small>RSI</small><b id="alertsRsiValue">—</b></div></div>'+
       '<div id="alertsLast" class="alerts-last">Ожидание сигнала…</div><div id="alertsLog" class="alerts-log"></div>';
     target.appendChild(p);
@@ -177,14 +210,18 @@
       box.querySelectorAll("input[data-pair]").forEach(el=>el.onchange=()=>{let s=new Set(cfg.selectedPairs||[]);if(el.checked){if(s.size>=20){el.checked=false;return}s.add(el.dataset.pair)}else s.delete(el.dataset.pair);cfg.selectedPairs=[...s];save()});
     }
     ["alertVolume","alertRsi","alertSma"].forEach((id,i)=>{const el=$(id);el.checked=[cfg.volume,cfg.rsi,cfg.sma][i];el.onchange=()=>{if(i===0)cfg.volume=el.checked;if(i===1)cfg.rsi=el.checked;if(i===2)cfg.sma=el.checked;save()}});
-    const bind=(id,key,parse)=>{const el=$(id);el.onchange=()=>{cfg[key]=parse(el.value);save()}};
-    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
+    $("alertCombo").checked=!!cfg.comboEnabled;
+    $("alertCombo").onchange=()=>{cfg.comboEnabled=$("alertCombo").checked;comboSignals=[];comboLastAt={};save()};
+    $("alertComboCount").value=String(cfg.comboCount||2);
+    $("alertComboWindow").value=String(cfg.comboWindow||1);
+    const bind=(id,key,parse)=>{const el=$(id);el.onchange=()=>{cfg[key]=parse(el.value);comboSignals=[];comboLastAt={};save()}};
+    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertComboCount","comboCount",v=>Math.max(2,Math.min(3,+v||2)));bind("alertComboWindow","comboWindow",v=>Math.max(1,Math.min(3,+v||1)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
     $("alertsSound").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("test");$("alertsSound").textContent="🔊 Звук включён";log("sma","Звук включён")}catch{$("alertsSound").textContent="⚠️ Звук недоступен"}};
-    const testSound=async(kind,label)=>{try{await ensureAudio();cfg.sound=true;save();tone(kind);log(kind,"Тест звука: "+label)}catch{}};    $("testVolume").onclick=()=>testSound("volume","Volume");    $("testRsi").onclick=()=>testSound("rsi","RSI");    $("testSma").onclick=()=>testSound("sma","SMA21");    $("testAll").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("volume");setTimeout(()=>tone("rsi"),1100);setTimeout(()=>tone("sma"),2200);log("sma","Тест: Volume → RSI → SMA21")}catch{}};
+    const testSound=async(kind,label)=>{try{await ensureAudio();cfg.sound=true;save();tone(kind);log(kind,"Тест звука: "+label)}catch{}};    $("testVolume").onclick=()=>testSound("volume","Volume");    $("testRsi").onclick=()=>testSound("rsi","RSI");    $("testSma").onclick=()=>testSound("sma","SMA21");    $("testCombo").onclick=()=>testSound("combo","Combo");    $("testAll").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("volume");setTimeout(()=>tone("rsi"),1100);setTimeout(()=>tone("sma"),2200);log("sma","Тест: Volume → RSI → SMA21")}catch{}};
   }
   function injectCss(){
     if(document.getElementById("alertsCss"))return;
-    const st=document.createElement("style");st.id="alertsCss";st.textContent='#chartAlertsLayout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:12px;align-items:start}.alerts-tf{width:100%;margin-top:6px;padding:8px}.alerts-note{color:var(--m);font-size:10px;line-height:1.35;margin:-2px 0 9px}.alerts-section{padding:8px 0;border-top:1px solid #1a2530}.alerts-check{display:flex;gap:7px;align-items:center;font-weight:700;font-size:12px}.alerts-check input{width:auto}.alerts-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}.alerts-grid label{color:var(--m);font-size:10px}.alerts-grid input{width:100%;margin-top:3px;padding:7px}.alerts-grid input[type=range]{padding:0}.alerts-pair-actions{display:flex;gap:6px;margin:7px 0}.alerts-pair-actions button{flex:1;padding:6px;font-size:10px}.alerts-pairs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:150px;overflow:auto;padding:2px 0}.alert-pair{display:flex;gap:4px;align-items:center;background:#101823;border:1px solid #17212d;border-radius:6px;padding:5px;font-size:9px}.alert-pair input{width:auto}.alerts-actions{display:flex;gap:7px;margin-top:8px}.alerts-actions button{flex:1;padding:8px;font-size:11px}.alerts-sound-tests{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:7px}.alerts-sound-tests button{padding:7px 4px;font-size:10px}.alerts-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.alerts-stats>div{background:var(--p2);border:1px solid #17212d;border-radius:8px;padding:7px}.alerts-stats small{display:block;color:var(--m);font-size:9px}.alerts-stats b{display:block;margin-top:2px;font-size:11px}.alerts-last{margin-top:8px;padding:8px;border-radius:8px;background:#111923;color:var(--m);font-size:10px}.alerts-last.volume{color:var(--y);border:1px solid #4b3e15}.alerts-last.rsi{color:#55a8ff;border:1px solid #25496c}.alerts-last.sma{color:var(--g);border:1px solid #205f45}.alerts-log{margin-top:6px;max-height:150px;overflow:auto}.alertlogrow{display:grid;grid-template-columns:8px 55px 1fr;gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid #17212d;font-size:9px}.alertlogrow b{font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.alertdot{width:7px;height:7px;border-radius:50%;background:#8290a0}.alertdot.volume{background:#ffd166}.alertdot.rsi{background:#55a8ff}.alertdot.sma{background:#27e58a}@media(max-width:900px){#chartAlertsLayout{grid-template-columns:1fr}.alerts-grid{grid-template-columns:1fr 1fr}}';
+    const st=document.createElement("style");st.id="alertsCss";st.textContent='#chartAlertsLayout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:12px;align-items:start}.alerts-tf{width:100%;margin-top:6px;padding:8px}.alerts-note{color:var(--m);font-size:10px;line-height:1.35;margin:-2px 0 9px}.alerts-section{padding:8px 0;border-top:1px solid #1a2530}.alerts-check{display:flex;gap:7px;align-items:center;font-weight:700;font-size:12px}.alerts-check input{width:auto}.alerts-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}.alerts-grid label{color:var(--m);font-size:10px}.alerts-grid input{width:100%;margin-top:3px;padding:7px}.alerts-grid select{width:100%;margin-top:3px;padding:7px}.alerts-grid input[type=range]{padding:0}.alerts-pair-actions{display:flex;gap:6px;margin:7px 0}.alerts-pair-actions button{flex:1;padding:6px;font-size:10px}.alerts-pairs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:150px;overflow:auto;padding:2px 0}.alert-pair{display:flex;gap:4px;align-items:center;background:#101823;border:1px solid #17212d;border-radius:6px;padding:5px;font-size:9px}.alert-pair input{width:auto}.alerts-actions{display:flex;gap:7px;margin-top:8px}.alerts-actions button{flex:1;padding:8px;font-size:11px}.alerts-sound-tests{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:7px}.alerts-sound-tests button{padding:7px 4px;font-size:10px}.alerts-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.alerts-stats>div{background:var(--p2);border:1px solid #17212d;border-radius:8px;padding:7px}.alerts-stats small{display:block;color:var(--m);font-size:9px}.alerts-stats b{display:block;margin-top:2px;font-size:11px}.alerts-last{margin-top:8px;padding:8px;border-radius:8px;background:#111923;color:var(--m);font-size:10px}.alerts-last.volume{color:var(--y);border:1px solid #4b3e15}.alerts-last.rsi{color:#55a8ff;border:1px solid #25496c}.alerts-last.sma{color:var(--g);border:1px solid #205f45}.alerts-last.combo{color:#c5a3ff;border:1px solid #4b3b68}.alerts-log{margin-top:6px;max-height:150px;overflow:auto}.alertlogrow{display:grid;grid-template-columns:8px 55px 1fr;gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid #17212d;font-size:9px}.alertlogrow b{font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.alertdot{width:7px;height:7px;border-radius:50%;background:#8290a0}.alertdot.volume{background:#ffd166}.alertdot.rsi{background:#55a8ff}.alertdot.sma{background:#27e58a}.alertdot.combo{background:#c5a3ff}@media(max-width:900px){#chartAlertsLayout{grid-template-columns:1fr}.alerts-grid{grid-template-columns:1fr 1fr}}';
     document.head.appendChild(st);
   }
   injectCss();build();
