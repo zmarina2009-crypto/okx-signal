@@ -23,7 +23,7 @@ const BASE="https://www.okx.com/api/v5/market/candles",TICKERS="https://www.okx.
   });
   chartState.hideSignalMarkers=true;
   try{localStorage.setItem("okx_v2_hidden_signal_markers",JSON.stringify(chartState.hiddenSignalMarkers))}catch{}
-  const wrap=$("chart")?.parentElement;
+  const wrap=$("chart")?.closest(".chartwrap");
   wrap?.querySelectorAll("[data-signal-marker],.signal-marker,.chart-marker,.chart-annotation").forEach(el=>el.remove());
   return entries.length;
 }
