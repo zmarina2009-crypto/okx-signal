@@ -64,8 +64,26 @@
     row.innerHTML='<span class="alertdot '+kind+'"></span><span>'+esc(new Date().toLocaleTimeString("ru-RU"))+'</span><b>'+esc(text)+'</b>';
     box.prepend(row);while(box.children.length>8)box.lastElementChild.remove();
   }
-  function fire(kind,text,key){
+  const MARKER_KEY="okx_v2_alert_markers";
+  function recordAlertMarker(meta){
+    if(!meta||!meta.pair||!meta.tf||!["LONG","SHORT"].includes(meta.direction))return;
+    const price=Number(meta.price),ts=Number(meta.ts)||now();
+    if(!Number.isFinite(price)||price<=0)return;
+    let marks=[];
+    try{marks=JSON.parse(localStorage.getItem(MARKER_KEY)||"[]");if(!Array.isArray(marks))marks=[]}catch{}
+    const id=[meta.pair,meta.tf,meta.kind,ts,meta.direction].join("|");
+    if(marks.some(m=>m.id===id))return;
+    const tolerance=Math.max(price*.0008,.01);
+    const same=marks.filter(m=>m.pair===meta.pair&&m.tf===meta.tf&&m.kind===meta.kind&&Math.abs(Number(m.price)-price)<=Math.max(tolerance,Number(m.tolerance)||0));
+    const touches=1+same.length;
+    const marker={id,pair:meta.pair,tf:meta.tf,kind:meta.kind,direction:meta.direction,price,ts,touches,label:meta.label||meta.kind,tolerance};
+    marks.push(marker);
+    try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-300)))}catch{}
+    window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:marker}));
+  }
+  function fire(kind,text,key,marker){
     if(!canAlert(key))return;
+    if(marker)recordAlertMarker(Object.assign({},marker,{kind}));
     log(kind,text);tone(kind);
     const badge=$("alertsLast");if(badge){badge.textContent=text;badge.className="alerts-last "+kind}
   }
@@ -90,13 +108,13 @@
       st.lastClosedTs=closed.ts;
       if(cfg.volume&&hist.length>=Math.max(3,+cfg.volumePeriod||20)+1){
         const n=Math.max(2,+cfg.volumePeriod||20),base=hist.slice(0,-1).slice(-n),avg=base.reduce((z,x)=>z+(Number(x.v)||0),0)/base.length,v=Number(closed.v)||0,m=avg>0?v/avg:0;
-        if(m>=Math.max(1,+cfg.volumeMult||2)){const dir=Number(closed.c)>=Number(closed.o)?"🟢 BUY":"🔴 SELL";fire("volume","⚡ VOLUME SPIKE "+dir+" • ×"+m.toFixed(1)+" • "+pair+" • "+tf,"volume:"+pair+":"+tf);}
+        if(m>=Math.max(1,+cfg.volumeMult||2)){const isLong=Number(closed.c)>=Number(closed.o),dir=isLong?"🟢 BUY":"🔴 SELL",side=isLong?"LONG":"SHORT";fire("volume","⚡ VOLUME SPIKE "+dir+" • ×"+m.toFixed(1)+" • "+pair+" • "+tf,"volume:"+pair+":"+tf,{pair,tf,ts:closed.ts,price:Number(closed.c),direction:side,label:"VOLUME"});}
       }
       if(cfg.rsi){
         const n=Math.max(2,+cfg.rsiPeriod||14),rv=rsi(hist,n),prev=rsi(hist.slice(0,-1),n);
         if(rv!=null&&prev!=null){
-          if(prev>=cfg.rsiLow&&rv<cfg.rsiLow)fire("rsi","📉 RSI OVERSOLD • ниже "+cfg.rsiLow+" → "+rv.toFixed(1)+" • "+pair+" • "+tf,"rsi-low:"+pair+":"+tf);
-          if(prev<=cfg.rsiHigh&&rv>cfg.rsiHigh)fire("rsi","📈 RSI OVERBOUGHT • выше "+cfg.rsiHigh+" → "+rv.toFixed(1)+" • "+pair+" • "+tf,"rsi-high:"+pair+":"+tf);
+          if(prev>=cfg.rsiLow&&rv<cfg.rsiLow)fire("rsi","📉 RSI OVERSOLD LONG • ниже "+cfg.rsiLow+" → "+rv.toFixed(1)+" • "+pair+" • "+tf,"rsi-low:"+pair+":"+tf,{pair,tf,ts:closed.ts,price:Number(closed.c),direction:"LONG",label:"RSI"});
+          if(prev<=cfg.rsiHigh&&rv>cfg.rsiHigh)fire("rsi","📈 RSI OVERBOUGHT SHORT • выше "+cfg.rsiHigh+" → "+rv.toFixed(1)+" • "+pair+" • "+tf,"rsi-high:"+pair+":"+tf,{pair,tf,ts:closed.ts,price:Number(closed.c),direction:"SHORT",label:"RSI"});
         }
       }
     }
@@ -110,10 +128,10 @@
         if(touched&&!st.lastTouch){
           const prevPrice=Number(hist[hist.length-2]?.c)||price;
           const prevSma=sma(hist.slice(0,-1),n)||m;
-          const direction=prevPrice<prevSma?"LONG":prevPrice>prevSma?"SHORT":"NEUTRAL";
-          const icon=direction==="LONG"?"🟢":direction==="SHORT"?"🔴":"🟡";
+          const direction=prevPrice<prevSma?"LONG":prevPrice>prevSma?"SHORT":price>=m?"LONG":"SHORT";
+          const icon=direction==="LONG"?"↑":"↓";
           const label=icon+" SMA"+n+" "+direction+" TOUCH";
-          fire("sma",label+" • "+pair+" • "+tf+" • Price "+price.toFixed(2)+" / SMA "+m.toFixed(2),"sma:"+pair+":"+tf);}
+          fire("sma",label+" • "+pair+" • "+tf+" • Price "+price.toFixed(2)+" / SMA "+m.toFixed(2),"sma:"+pair+":"+tf,{pair,tf,ts:Number(src?.ts)||Number(closed?.ts)||now(),price:m,direction,label:"SMA"+n});}
         st.lastTouch=touched;
       }
     }
