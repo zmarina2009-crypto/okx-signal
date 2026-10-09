@@ -8,6 +8,7 @@
   if(!Array.isArray(trades))trades=[];
   trades=trades.filter(t=>t&&t.id&&t.status&&Number.isFinite(Number(t.entry))).slice(-MAX_TRADES);
   let polling=false;
+  const pendingTrades=new Set();
   const $=id=>document.getElementById(id);
   const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
   const tfNorm=tf=>String(tf||"1m").toLowerCase();
@@ -105,27 +106,31 @@
       setStatus("Сигнал "+fmtKind(kind)+" пропущен: по "+pair+" / "+tf+" уже есть открытая виртуальная позиция (No trade).");return;
     }
     const id=String(meta.id||[pair,tf,kind,meta.ts,meta.direction].join("|"));
-    if(trades.some(t=>t.signalId===id)){return}
-    const signalTs=Number(meta.ts)||Date.now();
-    const entry=Number(meta.entryPrice)>0?Number(meta.entryPrice):Number(meta.price);
-    if(!Number.isFinite(entry)||entry<=0){setStatus("Сигнал пропущен: цена входа некорректна.");return}
-    const api=window.OKXSignalApp;
-    if(!api||typeof api.fetchCandles!=="function"){setStatus("Нет доступа к свечам OKX; виртуальная сделка не открыта.");return}
-    const candles=await api.fetchCandles(pair,apiTf(tf),80);
-    const history=(Array.isArray(candles)?candles:[]).filter(c=>Number(c.ts)<=signalTs).sort((x,y)=>Number(x.ts)-Number(y.ts));
-    const atr=calcAtr(history,14);
-    if(!atr){setStatus("Сигнал есть, но для "+pair+" / "+tf+" пока недостаточно закрытых свечей ATR(14). Сделка не открыта.");return}
-    const dir=meta.direction==="LONG"?1:-1,risk=atr*cfg.atrMult;
-    if(!Number.isFinite(risk)||risk<=0){setStatus("Сигнал пропущен: не удалось рассчитать риск.");return}
-    const now=Date.now(),entryCost=cfg.notional*(cfg.fee+cfg.slip)/100;
-    const trade={
-      id:"pt-"+now+"-"+Math.random().toString(36).slice(2,8),signalId:id,pair,tf,kind,direction:meta.direction,
-      label:String(meta.label||kind),entry,atr,atrMult:cfg.atrMult,risk,stop:entry-dir*risk,tp1:entry+dir*risk,tp2:entry+dir*risk*2,
-      notional:cfg.notional,feePct:cfg.fee,slipPct:cfg.slip,pnl:-entryCost,gross:0,costs:entryCost,remaining:1,tp1Done:false,
-      status:"OPEN",createdAt:now,signalTs,lastProcessedTs:signalTs,exits:[]
-    };
-    trades.push(trade);saveTrades();render();
-    setStatus("Виртуальная сделка открыта: "+pair+" / "+tf+" "+trade.direction+" по "+fmt(entry)+". Реальный ордер не отправлялся.");
+    if(trades.some(t=>t.signalId===id)||pendingTrades.has(key)){return}
+    pendingTrades.add(key);
+    try{
+      const signalTs=Number(meta.ts)||Date.now();
+      const entry=Number(meta.entryPrice)>0?Number(meta.entryPrice):Number(meta.price);
+      if(!Number.isFinite(entry)||entry<=0){setStatus("Сигнал пропущен: цена входа некорректна.");return}
+      const api=window.OKXSignalApp;
+      if(!api||typeof api.fetchCandles!=="function"){setStatus("Нет доступа к свечам OKX; виртуальная сделка не открыта.");return}
+      const candles=await api.fetchCandles(pair,apiTf(tf),80);
+      const history=(Array.isArray(candles)?candles:[]).filter(c=>Number(c.ts)<=signalTs).sort((x,y)=>Number(x.ts)-Number(y.ts));
+      const atr=calcAtr(history,14);
+      if(!atr){setStatus("Сигнал есть, но для "+pair+" / "+tf+" пока недостаточно закрытых свечей ATR(14). Сделка не открыта.");return}
+      if(trades.some(t=>t.status==="OPEN"&&t.pair===pair&&tfNorm(t.tf)===tf)){return}
+      const dir=meta.direction==="LONG"?1:-1,risk=atr*cfg.atrMult;
+      if(!Number.isFinite(risk)||risk<=0){setStatus("Сигнал пропущен: не удалось рассчитать риск.");return}
+      const now=Date.now(),entryCost=cfg.notional*(cfg.fee+cfg.slip)/100;
+      const trade={
+        id:"pt-"+now+"-"+Math.random().toString(36).slice(2,8),signalId:id,pair,tf,kind,direction:meta.direction,
+        label:String(meta.label||kind),entry,atr,atrMult:cfg.atrMult,risk,stop:entry-dir*risk,tp1:entry+dir*risk,tp2:entry+dir*risk*2,
+        notional:cfg.notional,feePct:cfg.fee,slipPct:cfg.slip,pnl:-entryCost,gross:0,costs:entryCost,remaining:1,tp1Done:false,
+        status:"OPEN",createdAt:now,signalTs,lastProcessedTs:signalTs,exits:[]
+      };
+      trades.push(trade);saveTrades();render();
+      setStatus("Виртуальная сделка открыта: "+pair+" / "+tf+" "+trade.direction+" по "+fmt(entry)+". Реальный ордер не отправлялся.");
+    }finally{pendingTrades.delete(key)}
   }
   function finishPortion(t,frac,price,reason,barTs){
     const f=Math.max(0,Math.min(Number(frac)||0,t.remaining));
