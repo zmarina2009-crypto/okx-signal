@@ -93,18 +93,26 @@
     const id=[pair,tf,kind,ts,direction].join("|");
     if(!comboSignals.some(s=>s.id===id))comboSignals.push({id,pair,tf,kind,ts,direction,price:Number(marker.price)||0,label:marker.label||kind});
     comboSignals=comboSignals.slice(-300);
-    const matching=comboSignals.filter(s=>s.pair===pair&&s.tf===tf&&s.direction===direction&&Math.abs(ts-s.ts)<=windowMs);
+    const matching=comboSignals.filter(s=>s.pair===pair&&s.tf===tf&&Math.abs(ts-s.ts)<=windowMs);
     const byKind=new Map();
     matching.forEach(s=>{const old=byKind.get(s.kind);if(!old||Math.abs(ts-s.ts)<Math.abs(ts-old.ts))byKind.set(s.kind,s)});
     const chosen=[...byKind.values()],required=Math.max(2,Math.min(3,Number(cfg.comboCount)||2));
     if(chosen.length<required)return;
-    const alertKey="combo:"+pair+":"+tf+":"+direction,lastAt=comboLastAt[alertKey]||0;
-    if(lastAt&&Math.abs(ts-lastAt)<=windowMs)return;
+    // Volume confirms activity, but candle body colour does not decide combo direction.
+    // RSI and SMA are directional; if both are present, their directions must agree.
+    const directed=chosen.filter(s=>s.kind!=="volume");
+    if(!directed.length)return;
+    const comboDirection=directed[0].direction;
+    if(directed.some(s=>s.direction!==comboDirection))return;
+    const comboTs=Math.max(...chosen.map(s=>Number(s.ts)||0));
+    const directionSignal=[...directed].sort((x,y)=>Math.abs(ts-x.ts)-Math.abs(ts-y.ts))[0];
+    const alertKey="combo:"+pair+":"+tf+":"+comboDirection,lastAt=comboLastAt[alertKey]||0;
+    if(lastAt&&Math.abs(comboTs-lastAt)<=windowMs)return;
     if(!canAlert(alertKey))return;
-    comboLastAt[alertKey]=ts;
+    comboLastAt[alertKey]=comboTs;
     const kinds=chosen.map(s=>s.kind.toUpperCase());
-    const message="✨ COMBO "+chosen.length+"/3 "+direction+" • "+kinds.join(" + ")+" • "+pair+" • "+tf;
-    recordAlertMarker({pair,tf,ts,price:Number(marker.price)||chosen.at(-1)?.price||0,direction,label:"COMBO "+kinds.join("+"),kind:"combo"});
+    const message="✨ COMBO "+chosen.length+"/3 "+comboDirection+" • "+kinds.join(" + ")+" • "+pair+" • "+tf;
+    recordAlertMarker({pair,tf,ts:comboTs,price:Number(directionSignal.price)||Number(marker.price)||chosen.at(-1)?.price||0,direction:comboDirection,label:"COMBO "+kinds.join("+"),kind:"combo"});
     log("combo",message);tone("combo");
     const badge=$("alertsLast");if(badge){badge.textContent=message;badge.className="alerts-last combo"}
   }
@@ -193,7 +201,7 @@
       '<div class="alerts-section"><label class="alerts-check"><input id="alertVolume" type="checkbox"><span>Volume Spike</span></label><div class="alerts-grid"><label>Период<input id="alertVolPeriod" type="number" min="2" value="'+cfg.volumePeriod+'"></label><label>Порог ×<input id="alertVolMult" type="number" min="1" step=".1" value="'+cfg.volumeMult+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertRsi" type="checkbox"><span>RSI</span></label><div class="alerts-grid"><label>Период<input id="alertRsiPeriod" type="number" min="2" value="'+cfg.rsiPeriod+'"></label><label>Зоны<input id="alertRsiLow" type="number" min="1" max="49" value="'+cfg.rsiLow+'"> / <input id="alertRsiHigh" type="number" min="51" max="99" value="'+cfg.rsiHigh+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertSma" type="checkbox"><span>SMA Touch</span></label><div class="alerts-grid"><label>Период<input id="alertSmaPeriod" type="number" min="2" value="'+cfg.smaPeriod+'"></label><label>Допуск %<input id="alertSmaTol" type="number" min="0" step=".05" value="'+cfg.smaTolerance+'"></label></div></div>'+
-      '<div class="alerts-section"><label class="alerts-check"><input id="alertCombo" type="checkbox"><span>✨ Комбо-алерт</span></label><div class="alerts-grid"><label>Совпадение<select id="alertComboCount"><option value="2">2 из 3 индикаторов</option><option value="3">3 из 3 индикаторов</option></select></label><label>Окно<select id="alertComboWindow"><option value="1">1 свеча</option><option value="2">2 свечи</option><option value="3">3 свечи</option></select></label></div><div class="alerts-note">Сигналы должны совпасть по паре, таймфрейму и направлению LONG/SHORT. Самостоятельные алерты Volume, RSI и SMA остаются отдельными.</div></div>'+
+      '<div class="alerts-section"><label class="alerts-check"><input id="alertCombo" type="checkbox"><span>✨ Комбо-алерт</span></label><div class="alerts-grid"><label>Совпадение<select id="alertComboCount"><option value="2">2 из 3 индикаторов</option><option value="3">3 из 3 индикаторов</option></select></label><label>Окно<select id="alertComboWindow"><option value="1">1 свеча</option><option value="2">2 свечи</option><option value="3">3 свечи</option></select></label></div><div class="alerts-note">Сигналы должны совпасть по паре, таймфрейму и окну. Volume подтверждает активность, а направление LONG/SHORT задают RSI и/или SMA. Если RSI и SMA одновременно сработали, их направления должны совпадать. Самостоятельные алерты Volume, RSI и SMA остаются отдельными.</div></div>'+
       '<div class="alerts-section"><div class="alerts-grid"><label>Громкость<input id="alertVolumeLevel" type="range" min="0" max="1" step=".05" value="'+cfg.volumeLevel+'"></label><label>Антиспам, сек<input id="alertCooldown" type="number" min="1" value="'+cfg.cooldown+'"></label></div><div class="alerts-actions"><button id="alertsSound" class="primary">🔊 Включить звук</button></div><div class="alerts-sound-tests"><button id="testVolume">⚡ Volume</button><button id="testRsi">📈 RSI</button><button id="testSma">〽️ SMA</button><button id="testCombo">✨ Combo</button><button id="testAll">▶ Все 3</button></div><div class="alerts-note">Нажми кнопки, чтобы сравнить реальные звуки каждого сигнала.</div></div>'+
       '<div class="alerts-stats"><div><small>Price</small><b id="alertsPriceValue">—</b></div><div><small>SMA</small><b id="alertsSmaValue">—</b></div><div><small>RSI</small><b id="alertsRsiValue">—</b></div></div>'+
       '<div id="alertsLast" class="alerts-last">Ожидание сигнала…</div><div id="alertsLog" class="alerts-log"></div>';
