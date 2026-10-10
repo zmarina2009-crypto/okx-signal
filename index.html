@@ -179,6 +179,7 @@ $("smaSettingsSave").onclick=()=>{
   closeChartSmaSettings();renderChartSmaLegend();if(last)draw(last);toast("Настройки SMA сохранены");
 };
 renderChartSmaLegend();
+window.addEventListener("okx-combo-mode-change",()=>{if(last)draw(last)});
 function removeAlertMarker(marker){
   if(!marker)return;
   let marks=[];try{marks=JSON.parse(localStorage.getItem("okx_v2_alert_markers")||"[]");if(!Array.isArray(marks))marks=[]}catch{}
