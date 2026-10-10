@@ -2,7 +2,7 @@
 (function(){
   "use strict";
   const KEY="okx_alerts_v1";
-  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,comboEnabled:false,comboCount:2,comboWindow:1,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
+  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,comboEnabled:false,comboModeActive:false,comboCount:2,comboWindow:1,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
   let cfg=Object.assign({},defaults,(()=>{try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch{return{}}})());
   if(!Number.isFinite(Number(cfg.smaTolerance))||Number(cfg.smaTolerance)===.15)cfg.smaTolerance=0;
   let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={};
@@ -74,7 +74,8 @@
   function saveAlertLog(){try{localStorage.setItem(ALERT_LOG_KEY,JSON.stringify(alertLogEntries.slice(-ALERT_LOG_LIMIT)))}catch(e){}}
   function renderAlertLog(){
     const box=$("alertsLog");if(!box)return;
-    box.innerHTML=alertLogEntries.slice().reverse().map(entry=>{
+    const visibleEntries=cfg.comboModeActive?alertLogEntries.filter(entry=>entry.kind==="combo"):alertLogEntries;
+    box.innerHTML=visibleEntries.slice().reverse().map(entry=>{
       const kind=["volume","rsi","sma","combo"].includes(entry.kind)?entry.kind:"other";
       const stamp=new Date(Number(entry.ts)).toLocaleString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"});
       return '<div class="alertlogrow"><span class="alertdot '+kind+'"></span><span title="'+esc(stamp)+'">'+esc(stamp)+'</span><b title="'+esc(entry.text)+'">'+esc(entry.text)+'</b></div>';
@@ -150,6 +151,8 @@
   }
   function fire(kind,text,key,marker){
     const source=marker&&COMBO_SOURCES.includes(kind);
+    // Combo-only mode: individual indicators are evaluated only as inputs to the combo.
+    if(cfg.comboModeActive&&source){observeCombo(kind,marker);return;}
     if(!canAlert(key)){
       if(source)observeCombo(kind,marker);
       return;
@@ -233,7 +236,7 @@
       '<div class="alerts-section"><label class="alerts-check"><input id="alertVolume" type="checkbox"><span>Volume Spike</span></label><div class="alerts-grid"><label>Период<input id="alertVolPeriod" type="number" min="2" value="'+cfg.volumePeriod+'"></label><label>Порог ×<input id="alertVolMult" type="number" min="1" step=".1" value="'+cfg.volumeMult+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertRsi" type="checkbox"><span>RSI</span></label><div class="alerts-grid"><label>Период<input id="alertRsiPeriod" type="number" min="2" value="'+cfg.rsiPeriod+'"></label><label>Зоны<input id="alertRsiLow" type="number" min="1" max="49" value="'+cfg.rsiLow+'"> / <input id="alertRsiHigh" type="number" min="51" max="99" value="'+cfg.rsiHigh+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertSma" type="checkbox"><span>SMA Touch</span></label><div class="alerts-grid"><label>Период<input id="alertSmaPeriod" type="number" min="2" value="'+cfg.smaPeriod+'"></label><label>Допуск %<input id="alertSmaTol" type="number" min="0" step=".05" value="'+cfg.smaTolerance+'"></label></div></div>'+
-      '<div class="alerts-section"><label class="alerts-check"><input id="alertCombo" type="checkbox"><span>✨ Комбо-алерт</span></label><div class="alerts-grid"><label>Совпадение<select id="alertComboCount"><option value="2">2 из 3 индикаторов</option><option value="3">3 из 3 индикаторов</option></select></label><label>Окно<select id="alertComboWindow"><option value="1">1 свеча</option><option value="2">2 свечи</option><option value="3">3 свечи</option></select></label></div><div class="alerts-note">Сигналы должны совпасть по паре, таймфрейму и окну. Volume подтверждает активность, а направление LONG/SHORT задают RSI и/или SMA. Если RSI и SMA одновременно сработали, их направления должны совпадать. Самостоятельные алерты Volume, RSI и SMA остаются отдельными.</div></div>'+
+      '<div class="alerts-section"><label class="alerts-check"><input id="alertCombo" type="checkbox"><span>✨ Комбо-алерт</span></label><div class="alerts-grid"><label>Совпадение<select id="alertComboCount"><option value="2">2 из 3 индикаторов</option><option value="3">3 из 3 индикаторов</option></select></label><label>Окно<select id="alertComboWindow"><option value="1">1 свеча</option><option value="2">2 свечи</option><option value="3">3 свечи</option></select></label></div><div class="alerts-note">Сигналы должны совпасть по паре, таймфрейму и окну. Volume подтверждает активность, а направление LONG/SHORT задают RSI и/или SMA. Если RSI и SMA одновременно сработали, их направления должны совпадать. Самостоятельные алерты Volume, RSI и SMA остаются отдельными.</div><button type="button" id="comboModeToggle" class="primary" style="width:100%;margin-top:8px">✨ Включить режим COMBO</button><div id="comboModeStatus" class="alerts-note" style="margin-top:6px">Обычные алерты работают независимо.</div></div>'+
       '<div class="alerts-section"><div class="alerts-grid"><label>Громкость<input id="alertVolumeLevel" type="range" min="0" max="1" step=".05" value="'+cfg.volumeLevel+'"></label><label>Антиспам, сек<input id="alertCooldown" type="number" min="1" value="'+cfg.cooldown+'"></label></div><div class="alerts-actions"><button id="alertsSound" class="primary">🔊 Включить звук</button></div><div class="alerts-sound-tests"><button id="testVolume">⚡ Volume</button><button id="testRsi">📈 RSI</button><button id="testSma">〽️ SMA</button><button id="testCombo">✨ Combo</button><button id="testAll">▶ Все 3</button></div><div class="alerts-note">Нажми кнопки, чтобы сравнить реальные звуки каждого сигнала.</div></div>'+
       '<div class="alerts-stats"><div><small>Price</small><b id="alertsPriceValue">—</b></div><div><small>SMA</small><b id="alertsSmaValue">—</b></div><div><small>RSI</small><b id="alertsRsiValue">—</b></div></div>'+
       '<div id="alertsLast" class="alerts-last">Ожидание сигнала…</div><div class="alerts-log-head"><b>📚 Журнал алертов · хранение 7 дней</b><button type="button" id="clearAlertsLog">Очистить</button></div><div id="alertsLog" class="alerts-log"></div>';
@@ -255,6 +258,26 @@
     ["alertVolume","alertRsi","alertSma"].forEach((id,i)=>{const el=$(id);el.checked=[cfg.volume,cfg.rsi,cfg.sma][i];el.onchange=()=>{if(i===0)cfg.volume=el.checked;if(i===1)cfg.rsi=el.checked;if(i===2)cfg.sma=el.checked;save()}});
     $("alertCombo").checked=!!cfg.comboEnabled;
     $("alertCombo").onchange=()=>{cfg.comboEnabled=$("alertCombo").checked;comboSignals=[];comboLastAt={};save()};
+    const comboModeButton=$("comboModeToggle"),comboModeStatus=$("comboModeStatus");
+    function renderComboMode(){
+      if(!comboModeButton||!comboModeStatus)return;
+      comboModeButton.textContent=cfg.comboModeActive?"■ Выключить режим COMBO":"✨ Включить режим COMBO";
+      comboModeButton.classList.toggle("primary",!!cfg.comboModeActive);
+      comboModeButton.style.borderColor=cfg.comboModeActive?"#4b3b68":"";
+      comboModeStatus.textContent=cfg.comboModeActive?"COMBO ACTIVE — на графике и в журнале только сигналы выбранного комбо; отдельные алерты и звуки подавлены.":"COMBO OFF — Volume, RSI и SMA работают независимо.";
+    }
+    if(cfg.comboModeActive){cfg.comboEnabled=true;$("alertCombo").checked=true;}
+    comboModeButton.onclick=()=>{
+      cfg.comboModeActive=!cfg.comboModeActive;
+      if(cfg.comboModeActive){cfg.comboEnabled=true;$("alertCombo").checked=true;}
+      comboSignals=[];comboLastAt={};save();
+      try{localStorage.setItem("okx_combo_mode_active",cfg.comboModeActive?"1":"0")}catch(e){}
+      window.dispatchEvent(new CustomEvent("okx-combo-mode-change",{detail:{active:cfg.comboModeActive}}));
+      renderComboMode();renderAlertLog();
+      const badge=$("alertsLast");if(badge){badge.textContent=cfg.comboModeActive?"COMBO ACTIVE — ожидание совпадения индикаторов":"COMBO OFF — обычные алерты включены";badge.className="alerts-last "+(cfg.comboModeActive?"combo":"");}
+    };
+    try{localStorage.setItem("okx_combo_mode_active",cfg.comboModeActive?"1":"0")}catch(e){}
+    renderComboMode();
     $("alertComboCount").value=String(cfg.comboCount||2);
     $("alertComboWindow").value=String(cfg.comboWindow||1);
     const bind=(id,key,parse)=>{const el=$(id);el.onchange=()=>{cfg[key]=parse(el.value);comboSignals=[];comboLastAt={};save()}};
