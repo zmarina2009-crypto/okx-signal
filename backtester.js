@@ -131,8 +131,12 @@
       const slopeDown=Number.isFinite(slopeBase)&&mPrev<slopeBase;
       const touchedFromAbove=prev.c>mPrev&&x.l<=mPrev;
       const touchedFromBelow=prev.c<mPrev&&x.h>=mPrev;
-      const short=touchedFromAbove&&(filterMode!=="slope"||slopeDown);
-      const long=touchedFromBelow&&(filterMode!=="slope"||slopeUp);
+      // Optional comparison mode: require three consecutive closes moving
+      // toward SMA21, but never use the touch candle's color as confirmation.
+      const threeLong=i>=3&&a[i-3].c<a[i-2].c&&a[i-2].c<a[i-1].c;
+      const threeShort=i>=3&&a[i-3].c>a[i-2].c&&a[i-2].c>a[i-1].c;
+      const short=touchedFromAbove&&(entryMode!=="3c"||threeShort)&&(filterMode!=="slope"||slopeDown);
+      const long=touchedFromBelow&&(entryMode!=="3c"||threeLong)&&(filterMode!=="slope"||slopeUp);
       if(!long&&!short)continue;
       const dir=long?1:-1, entry=mPrev, risk=avPrev*mult, phase=marketPhase(a,i-1);
       pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,initialQty:100,tp1:false,pnl:0,phase};
