@@ -309,21 +309,19 @@
             // candle, OHLC cannot reveal order; conservatively count BE exit.
             const beTouched=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
             if(beTouched){close(pos.stop,"BE",i);continue}
-          } else if(pos.activated) {
-            const oldBest=pos.best;
-            const trail=pos.dir===1?oldBest-avPrev*mult:oldBest+avPrev*mult;
+          }
+          // Use this candle's favorable extreme only to calculate the stop for
+          // the NEXT candle. Never test a stop derived from this candle's high/low
+          // against the same candle's opposite extreme (look-ahead bias).
+          if(pos && pos.activated){
+            if(pos.dir===1)pos.best=Math.max(pos.best,x.h);
+            else pos.best=Math.min(pos.best,x.l);
+            const trail=pos.dir===1?pos.best-avPrev*mult:pos.best+avPrev*mult;
             const tighter=pos.dir===1?Math.max(pos.stop,trail):Math.min(pos.stop,trail);
             if((pos.dir===1 && tighter>pos.stop) || (pos.dir===-1 && tighter<pos.stop)){
               pos.stop=tighter;
               pos.stopIsBE=false;
             }
-          }
-          // Use this candle's favorable extreme only to calculate the stop for
-          // the NEXT candle. Never test a stop derived from this candle's high/low
-          // against the same candle's opposite extreme (look-ahead bias).
-          if(pos){
-            if(pos.dir===1)pos.best=Math.max(pos.best,x.h);
-            else pos.best=Math.min(pos.best,x.l);
           }
         }
         const mark=pos.dir===1?x.l:x.h;
