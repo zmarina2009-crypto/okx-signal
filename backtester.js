@@ -102,7 +102,7 @@
       return pnl;
     }
     for(let i=30;i<a.length;i++){
-      const x=a[i], prev=a[i-1], m=sma(a,i,21), mPrev=sma(a,i-1,21), av=atr(a,i,14);
+      const x=a[i], prev=a[i-1], mPrev=sma(a,i-1,21), avPrev=atr(a,i-1,14);
       if(pos){
         const stopHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
         if(stopHit){closePart(pos.stop,1,"SL",x.ts);continue}
@@ -122,7 +122,7 @@
         else {peak=Math.max(peak,equity);maxDD=Math.max(maxDD,peak-equity);}
         continue;
       }
-      if(!Number.isFinite(av)||!Number.isFinite(m)||!Number.isFinite(mPrev)||av<=0)continue;
+      if(!Number.isFinite(avPrev)||!Number.isFinite(mPrev)||avPrev<=0)continue;
       // Enter on the first SMA21 touch, in the direction price was moving
       // into the average: falling from above => SHORT; rising from below => LONG.
       // Use the previous fully closed candle to determine approach side and ATR.
@@ -134,7 +134,7 @@
       const short=touchedFromAbove&&(filterMode!=="slope"||slopeDown);
       const long=touchedFromBelow&&(filterMode!=="slope"||slopeUp);
       if(!long&&!short)continue;
-      const dir=long?1:-1, entry=mPrev, risk=atr(a,i-1,14)*mult, phase=marketPhase(a,i-1);
+      const dir=long?1:-1, entry=mPrev, risk=avPrev*mult, phase=marketPhase(a,i-1);
       pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,initialQty:100,tp1:false,pnl:0,phase};
     }
     if(pos){closePart(a.at(-1).c,1,"END",a.at(-1).ts)}
