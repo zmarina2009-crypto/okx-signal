@@ -25,7 +25,7 @@
       <div><label for="btAtr">ATR-множитель</label><input id="btAtr" type="number" min="0.1" step="0.1" value="1.5"></div>
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
     </div>
-    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить оба фильтра</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; отдельное сравнение: BE после +1R и ATR-трейлинг</span></div>
+    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить VP-фильтры 15m</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; отдельное сравнение: BE после +1R и ATR-трейлинг</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
     <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
     <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Фаза</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
@@ -35,17 +35,18 @@
   const $ = id => document.getElementById(id);
   const fmt = n => Number(n).toLocaleString("ru-RU",{maximumFractionDigits:2});
   const BASE = "https://www.okx.com/api/v5/market/history-candles";
-  async function getCandles(days) {
-    const target = days * 1440, pages = Math.ceil(target / 300), all = new Map();
+  async function getCandles(days, bar="1m") {
+    const perDay=bar==="15m"?96:1440;
+    const target = days * perDay, pages = Math.ceil(target / 300), all = new Map();
     let after = "";
     for (let page=0; page<pages; page++) {
-      $("btStatus").textContent = "Загружаю закрытые свечи BTC-USDT… " + Math.min(all.size, target) + " / " + target + " свечей (запрос " + (page+1) + "/" + pages + ")";
+      $("btStatus").textContent = "Загружаю закрытые свечи BTC-USDT "+bar+"… " + Math.min(all.size, target) + " / " + target + " (запрос " + (page+1) + "/" + pages + ")";
       let j = null, lastErr = null;
       for (let attempt=0; attempt<3; attempt++) {
         const controller = new AbortController();
         const timer = setTimeout(()=>controller.abort(), 20000);
         try {
-          const url = BASE+"?instId=BTC-USDT-SWAP&bar=1m&limit=300"+(after?"&after="+after:"");
+          const url = BASE+"?instId=BTC-USDT-SWAP&bar="+bar+"&limit=300"+(after?"&after="+after:"");
           const res = await fetch(url,{cache:"no-store",signal:controller.signal});
           if(!res.ok) throw Error("HTTP "+res.status);
           j = await res.json();
@@ -56,8 +57,9 @@
           if(attempt<2) await new Promise(r=>setTimeout(r,1000*(attempt+1)));
         } finally { clearTimeout(timer); }
       }
-      if(!j) throw Error("Не удалось загрузить свечи: "+(lastErr?.message||"ошибка сети"));
-      const rows = (j.data||[]).map(x=>({ts:+x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4],confirm:String(x[8]??"1")}))
+      if(!j) throw Error("Не удалось загрузить свечи "+bar+": "+(lastErr?.message||"ошибка сети"));
+      const rows = (j.data||[]).map(x=>({ts:+x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4],
+        v:Number(x[7]??x[6]??x[5]??0),confirm:String(x[8]??"1")}))
         .filter(x=>Number.isFinite(x.ts)&&Number.isFinite(x.c)&&x.confirm==="1");
       if(!rows.length) break;
       rows.forEach(x=>all.set(x.ts,x));
@@ -72,6 +74,37 @@
   function sma(a,i,n){if(i+1<n)return NaN;let s=0;for(let k=i-n+1;k<=i;k++)s+=a[k].c;return s/n}
   function atr(a,i,n=14){if(i<n)return NaN;let sum=0;for(let k=i-n+1;k<=i;k++){const p=a[k-1]?.c;if(!Number.isFinite(p))return NaN;sum+=Math.max(a[k].h-a[k].l,Math.abs(a[k].h-p),Math.abs(a[k].l-p))}return sum/n}
   const PHASE_LABELS={up:"Тренд ↑",down:"Тренд ↓",range:"Боковик"};
+  // Build a causal 15m Volume Profile for each 1m candle timestamp.
+  // Profile uses the last 96 fully closed 15m candles (rolling 24h), 30 bins,
+  // typical-price volume allocation, and a 70% value area.
+  function buildVPByMinute(minuteCandles, fifteenCandles) {
+    const out=new Map(); let j=0;
+    const rows=30, lookback=96, quarterHour=15*60*1000;
+    for(const m of minuteCandles){
+      while(j<fifteenCandles.length && fifteenCandles[j].ts+quarterHour<=m.ts) j++;
+      const end=j, start=Math.max(0,end-lookback), history=fifteenCandles.slice(start,end);
+      if(history.length<lookback) continue;
+      const lo=Math.min(...history.map(x=>x.l)), hi=Math.max(...history.map(x=>x.h)), range=hi-lo;
+      if(!(range>0)) continue;
+      const bins=new Array(rows).fill(0);
+      for(const c of history){
+        const typical=(c.h+c.l+c.c)/3;
+        const k=Math.max(0,Math.min(rows-1,Math.floor((typical-lo)/range*rows)));
+        bins[k]+=Math.max(0,Number(c.v)||0);
+      }
+      const total=bins.reduce((a,b)=>a+b,0), maxV=Math.max(...bins);
+      if(!(total>0&&maxV>0)) continue;
+      const poc=bins.indexOf(maxV), target=total*.70;
+      let left=poc,right=poc,covered=bins[poc];
+      while(covered<target&&(left>0||right<rows-1)){
+        const lv=left>0?bins[left-1]:-1, rv=right<rows-1?bins[right+1]:-1;
+        if(rv>=lv){right++;covered+=Math.max(0,rv);}else{left--;covered+=Math.max(0,lv);}
+      }
+      const binWidth=range/rows;
+      out.set(m.ts,{poc:lo+(poc+.5)*binWidth,val:lo+left*binWidth,vah:lo+(right+1)*binWidth,binWidth});
+    }
+    return out;
+  }
   function marketPhase(a,i){
     const m=sma(a,i,21), m10=sma(a,i-10,21), av=atr(a,i,14);
     if(!Number.isFinite(m)||!Number.isFinite(m10)||!Number.isFinite(av)||av<=0)return "range";
@@ -84,7 +117,7 @@
   }
   // Shared fixed-target backtest engine. Default exit is 5R; optional comparisons
   // may override the target R or choose a target by the market phase at entry.
-  function run(a, mult, feePct, slipPct, filterMode, entryMode="current", exitR=null, phaseExit=null) {
+  function run(a, mult, feePct, slipPct, filterMode, entryMode="current", exitR=null, phaseExit=null, vpFilter=null, vpByMinute=null) {
     const trades=[];
     let pos=null, equity=0, peak=0, maxDD=0, grossTotal=0, feesTotal=0, slippageTotal=0;
     const feeRate=feePct/100, slipRate=slipPct/100, costRate=feeRate+slipRate;
@@ -135,11 +168,25 @@
       const touchedFromBelow=prev.c<mPrev&&x.h>=mPrev;
       const threeLong=i>=3&&a[i-3].c<a[i-2].c&&a[i-2].c<a[i-1].c;
       const threeShort=i>=3&&a[i-3].c>a[i-2].c&&a[i-2].c>a[i-1].c;
-      const short=touchedFromAbove&&(entryMode!=="3c"||threeShort)&&(filterMode!=="slope"||slopeDown);
-      const long=touchedFromBelow&&(entryMode!=="3c"||threeLong)&&(filterMode!=="slope"||slopeUp);
+      let short=touchedFromAbove&&(entryMode!=="3c"||threeShort)&&(filterMode!=="slope"||slopeDown);
+      let long=touchedFromBelow&&(entryMode!=="3c"||threeLong)&&(filterMode!=="slope"||slopeUp);
       if(!long&&!short) continue;
 
-      const dir=long?1:-1, entry=mPrev, risk=avPrev*mult, phase=marketPhase(a,i-1);
+      const entry=mPrev;
+      if(vpFilter){
+        const profile=vpByMinute?.get(x.ts);
+        // No profile means no trade: never silently bypass an enabled filter.
+        if(!profile){continue;}
+        const nearPOC=Math.abs(entry-profile.poc)<=profile.binWidth;
+        const nearVAL=Math.abs(entry-profile.val)<=profile.binWidth;
+        const nearVAH=Math.abs(entry-profile.vah)<=profile.binWidth;
+        if(vpFilter==="poc"){
+          if(nearPOC || (long&&entry<=profile.poc) || (short&&entry>=profile.poc)){continue;}
+        }else if(vpFilter==="value-area"){
+          if((long&&!nearVAL)||(short&&!nearVAH)){continue;}
+        }
+      }
+      const dir=long?1:-1, risk=avPrev*mult, phase=marketPhase(a,i-1);
       const configuredR=phaseExit?(phaseExit[phase]??exitR):exitR;
       const targetR=Number.isFinite(configuredR)&&configuredR>0?configuredR:5;
       pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,targetR,qty:100,phase,pnl:0};
@@ -411,26 +458,38 @@
   $("btCompare").addEventListener("click",async()=>{
     const btn=$("btCompare");btn.disabled=true;
     $("btCompareResults").innerHTML="";
-    $("btStatus").textContent="Загружаю один и тот же набор свечей для честного сравнения…";
+    $("btStatus").textContent="Загружаю 1m и 15m историю для сравнения Volume Profile…";
     try{
-      const days=+$("btDays").value, mult=Math.max(.1,+$("btAtr").value||1.5), fee=Math.max(0,+$("btFee").value||0), slip=Math.max(0,+$("btSlip").value||0);
-      const candles=await getCandles(days);
-      if(candles.length<50)throw Error("Недостаточно исторических свечей");
-      const a=run(candles,mult,fee,slip,"none"), b=run(candles,mult,fee,slip,"slope");
+      const days=+$("btDays").value, mult=Math.max(.1,+$("btAtr").value||1.5),
+        fee=Math.max(0,+$("btFee").value||0), slip=Math.max(0,+$("btSlip").value||0);
+      const candles=await getCandles(days,"1m");
+      // One extra day provides a complete 24h profile before the first tested minute.
+      const vpCandles=await getCandles(Math.min(15,days+1),"15m");
+      if(candles.length<50)throw Error("Недостаточно минутных свечей");
+      if(vpCandles.length<100)throw Error("Недостаточно 15m свечей для построения Volume Profile");
+      const vpByMinute=buildVPByMinute(candles,vpCandles);
+      const a=run(candles,mult,fee,slip,"none","current",null,null,"poc",vpByMinute);
+      const b=run(candles,mult,fee,slip,"none","current",null,null,"value-area",vpByMinute);
+      const pf=r=>r.grossLoss>0?r.grossWin/r.grossLoss:(r.grossWin>0?Infinity:0);
+      const wr=r=>r.trades.length?100*r.wins/r.trades.length:0;
       const rows=[
-        ["Сделок",a.trades.length,b.trades.length],
+        ["Закрытые сделки",a.trades.length,b.trades.length],
+        ["Чистый результат, USDT",a.net,b.net],
+        ["Win rate",wr(a),wr(b)],
+        ["Profit Factor",pf(a),pf(b)],
+        ["Макс. просадка, USDT",a.maxDD,b.maxDD],
         ["Валовый результат, USDT",a.grossTotal,b.grossTotal],
         ["Комиссии, USDT",a.feesTotal,b.feesTotal],
-        ["Проскальзывание, USDT",a.slippageTotal,b.slippageTotal],
-        ["Чистый результат, USDT",a.net,b.net],
-        ["Win rate",a.trades.length?100*a.wins/a.trades.length:0,b.trades.length?100*b.wins/b.trades.length:0],
-        ["Profit Factor",a.grossLoss>0?a.grossWin/a.grossLoss:(a.grossWin>0?Infinity:0),b.grossLoss>0?b.grossWin/b.grossLoss:(b.grossWin>0?Infinity:0)],
-        ["Макс. просадка, USDT",a.maxDD,b.maxDD]
+        ["Проскальзывание, USDT",a.slippageTotal,b.slippageTotal]
       ];
-      const show=(v,i)=>i===0?String(Math.round(v)):i===5?fmt(v)+"%":i===6?(v===Infinity?"∞":fmt(v)):fmt(v);
-      $("btCompareResults").innerHTML='<table class="table"><thead><tr><th>Показатель</th><th>Без фильтра</th><th>Наклон SMA21</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td>'+r[0]+'</td><td>'+show(r[1],i)+'</td><td>'+show(r[2],i)+'</td></tr>').join("")+'</tbody></table>';
-      $("btStatus").textContent="Сравнение завершено на одном наборе из "+candles.length+" закрытых свечей. Период и издержки одинаковы для обоих режимов.";
-    }catch(e){$("btStatus").textContent="Ошибка сравнения: "+(e.message||e)}
+      const show=(v,i)=>i===0?String(Math.round(v)):i===2?fmt(v)+"%":i===3?(v===Infinity?"∞":fmt(v)):fmt(v);
+      let html='<div class="small" style="margin-bottom:7px">Одинаковые закрытые свечи 1m, вход SMA21 по направлению подхода, ATR(14) × '+fmt(mult)+', TP 5R, комиссия '+fmt(fee)+'% и проскальзывание '+fmt(slip)+'% на сторону. VP: последние 96 полностью закрытых свечей 15m (24 часа), 30 ценовых bins, Value Area 70%. «Рядом» = не дальше одного bin. Вариант 1: LONG выше POC / SHORT ниже POC, но входы в пределах одного bin от POC блокируются. Вариант 2: LONG только в пределах одного bin от VAL; SHORT только в пределах одного bin от VAH.</div>';
+      html+='<table class="table"><thead><tr><th>Показатель</th><th>1. POC-направление</th><th>2. Отскок от VA</th></tr></thead><tbody>';
+      html+=rows.map((r,i)=>'<tr><td>'+r[0]+'</td><td>'+show(r[1],i)+'</td><td>'+show(r[2],i)+'</td></tr>').join("");
+      html+='</tbody></table><div class="small" style="margin-top:7px">Для каждого 1m сигнала профиль включает только 15m свечи, закрывшиеся к началу этой минуты; если полного профиля нет, вход блокируется. Объём распределяется по типичной цене свечи (H+L+C)/3 — это приближение, не биржевой tick-level Volume Profile. Если стоп и TP затронуты одной минутной свечой, первым считается стоп.</div>';
+      $("btCompareResults").innerHTML=html;
+      $("btStatus").textContent="Сравнение VP завершено: "+candles.length+" свечей 1m, "+vpCandles.length+" свечей 15m. Для обоих фильтров использованы одинаковые данные и издержки.";
+    }catch(e){$("btStatus").textContent="Ошибка сравнения VP: "+(e.message||e)}
     finally{btn.disabled=false}
   });
   $("btRun").addEventListener("click",async()=>{
