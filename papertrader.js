@@ -187,11 +187,17 @@
     const open=trades.filter(t=>t.status==="OPEN"),closed=trades.filter(t=>t.status==="CLOSED");
     const wins=closed.filter(t=>Number(t.pnl)>0),losses=closed.filter(t=>Number(t.pnl)<0);
     const net=closed.reduce((s,t)=>s+(Number(t.pnl)||0),0);
+    const grossPnl=closed.reduce((s,t)=>s+(Number(t.gross)||0),0);
+    const totalCosts=closed.reduce((s,t)=>s+(Number(t.costs)||0),0);
+    const expectancy=closed.length?net/closed.length:null;
     const grossWin=wins.reduce((s,t)=>s+(Number(t.pnl)||0),0),grossLoss=Math.abs(losses.reduce((s,t)=>s+(Number(t.pnl)||0),0));
     const pf=grossLoss>0?grossWin/grossLoss:null,wr=closed.length?wins.length/closed.length*100:null;
     $("ptOpen").textContent=String(open.length);$("ptClosed").textContent=String(closed.length);
     $("ptWinRate").textContent=wr==null?"—":wr.toFixed(1)+"%";
     $("ptNet").textContent=(net>=0?"+":"")+fmt(net)+" USDT";
+    if($("ptGross"))$("ptGross").textContent=(grossPnl>=0?"+":"")+fmt(grossPnl)+" USDT";
+    if($("ptCosts"))$("ptCosts").textContent="-"+fmt(totalCosts)+" USDT";
+    if($("ptExpectancy"))$("ptExpectancy").textContent=expectancy==null?"—":(expectancy>=0?"+":"")+fmt(expectancy)+" USDT";
     $("ptPF").textContent=pf==null?(grossWin>0?"∞":"—"):pf.toFixed(2);
     const body=$("ptTrades");
     const latest=trades.slice().sort((x,y)=>(Number(y.createdAt)||0)-(Number(x.createdAt)||0)).slice(0,60);
@@ -223,7 +229,7 @@
       '</div>'+
       '<div class="pt-buttons"><button id="ptStart" class="primary" type="button">▶ Начать тест</button><button id="ptPause" type="button">Ⅱ Приостановить новые входы</button><button id="ptClear" type="button">Очистить журнал</button><span id="ptEnabledBadge" class="pt-status-badge paused">ВХОДЫ ПРИОСТАНОВЛЕНЫ</span></div>'+
       '<div id="ptStatus" class="pt-status">Для старта выбери ту же пару и таймфрейм в панели Alerts. Приостановка запрещает только новые входы; открытые виртуальные позиции продолжают отслеживаться.</div>'+
-      '<div class="pt-metrics"><div><small>Открытых позиций</small><b id="ptOpen">0</b></div><div><small>Закрытых сделок</small><b id="ptClosed">0</b></div><div><small>Доля прибыльных</small><b id="ptWinRate">—</b></div><div><small>Сумма PnL после затрат</small><b id="ptNet">0.00 USDT</b></div><div><small>Profit Factor</small><b id="ptPF">—</b></div></div>'+
+      '<div class="pt-metrics"><div><small>Открытых позиций</small><b id="ptOpen">0</b></div><div><small>Закрытых сделок</small><b id="ptClosed">0</b></div><div><small>Доля прибыльных</small><b id="ptWinRate">—</b></div><div><small>Сумма PnL после затрат</small><b id="ptNet">0.00 USDT</b></div><div><small>Profit Factor</small><b id="ptPF">—</b></div><div><small>Валовой PnL</small><b id="ptGross">0.00 USDT</b></div><div><small>Комиссии + проскальзывание</small><b id="ptCosts">0.00 USDT</b></div><div><small>Матожидание / сделку</small><b id="ptExpectancy">—</b></div></div>'+
       '<div class="small" style="margin:10px 0 6px">Правила: ATR(14) × множитель; стоп по ATR; 50% позиции закрывается на 1R, оставшиеся 50% — на 2R; после TP1 стоп не переносится. Если стоп и тейк попали в одну свечу, консервативно считается, что первым сработал стоп. Одна открытая виртуальная позиция на пару и TF.</div>'+
       '<div class="tablewrap"><table class="table"><thead><tr><th>Время</th><th>Источник / TF</th><th>Сторона</th><th>Вход</th><th>Стоп</th><th>TP1 / TP2</th><th>Состояние / PnL</th></tr></thead><tbody id="ptTrades"></tbody></table></div>'+
       '<div class="small" style="margin-top:8px">Журнал хранится локально в браузере, максимум 500 сделок. После открытия приложения тест восстанавливает новые сигналы и проверяет пропущенные стопы/тейки по закрытым историческим свечам. Для теста выбери в Alerts ту же пару, таймфрейм и источник. Эти сделки не являются реальными ордерами и не гарантируют будущую доходность.</div>';
@@ -288,7 +294,8 @@
     if(f<=0)return;
     const qty=Number(t.notional)*f,dir=t.direction==="LONG"?1:-1;
     const raw=(Number(price)-Number(t.entry))*dir*qty/Number(t.entry);
-    const costs=qty*(Number(t.feePct||0)+Number(t.slipPct||0))/100;
+    const exitNotional=qty*Number(price)/Number(t.entry);
+    const costs=exitNotional*(Number(t.feePct||0)+Number(t.slipPct||0))/100;
     t.pnl=(Number(t.pnl)||0)+raw-costs;t.gross=(Number(t.gross)||0)+raw;t.costs=(Number(t.costs)||0)+costs;
     t.remaining=Math.max(0,Number(t.remaining)-f);t.exits.push({price:Number(price),reason,ts:Number(barTs)||Date.now(),portion:f,pnl:raw-costs});
     t.lastProcessedTs=Number(barTs)||t.lastProcessedTs;
