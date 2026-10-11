@@ -269,7 +269,7 @@
       pos.exit=price; pos.why=why; pos.exitIndex=barIndex;
       grossTotal+=raw; feesTotal+=fees; slippageTotal+=slippage;
       equity+=pnl; peak=Math.max(peak,equity); maxDD=Math.max(maxDD,peak-equity);
-      if(useTrail && why!=="TP5R") {
+      if(useTrail && why==="TRAIL/BE") {
         protectedExits++;
         const target=pos.entry+dir*5*pos.risk;
         const originalStop=pos.entry-dir*pos.risk;
