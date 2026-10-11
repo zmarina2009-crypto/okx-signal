@@ -25,7 +25,7 @@
       <div><label for="btAtr">ATR-множитель</label><input id="btAtr" type="number" min="0.1" step="0.1" value="1.5"></div>
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
     </div>
-    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить оба фильтра</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
+    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить оба фильтра</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; отдельное сравнение: BE после +1R и ATR-трейлинг</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
     <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
     <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Фаза</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
@@ -82,73 +82,84 @@
     if(slope<=-0.35 && dist>=0.25)return "down";
     return "range";
   }
+  // Shared fixed-target backtest engine. Default exit is 5R; optional comparisons
+  // may override the target R or choose a target by the market phase at entry.
   function run(a, mult, feePct, slipPct, filterMode, entryMode="current", exitR=null, phaseExit=null) {
-    const trades=[]; let pos=null, equity=0, peak=0,maxDD=0, grossTotal=0, feesTotal=0, slippageTotal=0;
-    const feeRate=feePct/100, slipRate=slipPct/100;
-    function closePart(price, fraction, why, bar) {
-      const qty=pos.qty*fraction, dir=pos.dir;
+    const trades=[];
+    let pos=null, equity=0, peak=0, maxDD=0, grossTotal=0, feesTotal=0, slippageTotal=0;
+    const feeRate=feePct/100, slipRate=slipPct/100, costRate=feeRate+slipRate;
+
+    function close(price, why, bar) {
+      const qty=pos.qty, dir=pos.dir;
       const raw=(price-pos.entry)*dir*qty/pos.entry;
-      const entryNotional=qty;
-      const exitNotional=price*qty/pos.entry;
+      const entryNotional=qty, exitNotional=price*qty/pos.entry;
       const fees=(entryNotional+exitNotional)*feeRate;
       const slippage=(entryNotional+exitNotional)*slipRate;
-      const costs=fees+slippage;
-      const pnl=raw-costs;
-      pos.pnl=(pos.pnl||0)+pnl; pos.gross=(pos.gross||0)+raw; pos.fees=(pos.fees||0)+fees; pos.slippage=(pos.slippage||0)+slippage;
+      const pnl=raw-fees-slippage;
+      pos.pnl=pnl; pos.gross=raw; pos.fees=fees; pos.slippage=slippage;
+      pos.exit=price; pos.why=why; pos.lastBar=bar;
       grossTotal+=raw; feesTotal+=fees; slippageTotal+=slippage;
       equity+=pnl; peak=Math.max(peak,equity); maxDD=Math.max(maxDD,peak-equity);
-      pos.qty-=qty; pos.exit=price;pos.why=why;pos.lastBar=bar;
-      if(Math.abs(pos.qty)<1e-8){trades.push(pos);pos=null}
-      return pnl;
+      trades.push(pos); pos=null;
     }
-    for(let i=30;i<a.length;i++){
+
+    for(let i=30;i<a.length;i++) {
       const x=a[i], prev=a[i-1], mPrev=sma(a,i-1,21), avPrev=atr(a,i-1,14);
-      if(pos){
+      if(pos) {
+        // Both levels can be crossed in one OHLC candle; resolve conservatively:
+        // stop first, then target.
         const stopHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
-        if(stopHit){closePart(pos.stop,1,"SL",x.ts);continue}
-        const activeExitR=phaseExit?(phaseExit[pos.phase]??exitR):exitR;
-        if(activeExitR!=null){
-          const target=pos.entry+pos.dir*activeExitR*pos.risk;
-          const hit=pos.dir===1?x.h>=target:x.l<=target;
-          if(hit){closePart(target,1,"TP"+activeExitR+"R",x.ts);continue}
-        }else{
-          const tp1Hit=!pos.tp1&&(pos.dir===1?x.h>=pos.entry+pos.risk:x.l<=pos.entry-pos.risk);
-          const tp2Hit=pos.tp1&&(pos.dir===1?x.h>=pos.entry+2*pos.risk:x.l<=pos.entry-2*pos.risk);
-          if(tp1Hit){closePart(pos.entry+pos.dir*pos.risk,.5,"TP1",x.ts);if(pos){pos.tp1=true;pos.qty=pos.initialQty*.5}}
-          if(pos&&tp2Hit){closePart(pos.entry+pos.dir*2*pos.risk,1,"TP2",x.ts);continue}
-        }
-        // Include adverse unrealized PnL on the remaining position in drawdown.
-        if(pos){const mark=pos.dir===1?x.l:x.h;const unrealized=(mark-pos.entry)*pos.dir*pos.qty/pos.entry;const exitNotional=mark*pos.qty/pos.entry;const exitCost=(pos.qty+exitNotional)*(feeRate+slipRate);const markedEquity=equity+unrealized-exitCost;peak=Math.max(peak,markedEquity);maxDD=Math.max(maxDD,peak-markedEquity);}
-        else {peak=Math.max(peak,equity);maxDD=Math.max(maxDD,peak-equity);}
+        if(stopHit) { close(pos.stop,"SL",x.ts); continue; }
+        const target=pos.entry+pos.dir*pos.targetR*pos.risk;
+        const targetHit=pos.dir===1?x.h>=target:x.l<=target;
+        if(targetHit) { close(target,"TP"+pos.targetR+"R",x.ts); continue; }
+
+        const mark=pos.dir===1?x.l:x.h;
+        const unrealized=(mark-pos.entry)*pos.dir*pos.qty/pos.entry;
+        const exitNotional=mark*pos.qty/pos.entry;
+        const exitCost=(pos.qty+exitNotional)*costRate;
+        const markedEquity=equity+unrealized-exitCost;
+        peak=Math.max(peak,markedEquity);
+        maxDD=Math.max(maxDD,peak-markedEquity);
         continue;
       }
-      if(!Number.isFinite(avPrev)||!Number.isFinite(mPrev)||avPrev<=0)continue;
-      // Enter on the first SMA21 touch, in the direction price was moving
-      // into the average: falling from above => SHORT; rising from below => LONG.
-      // Use the previous fully closed candle to determine approach side and ATR.
+
+      if(!Number.isFinite(avPrev)||!Number.isFinite(mPrev)||avPrev<=0) continue;
+      // Falling from above into SMA21 => SHORT; rising from below => LONG.
+      // Entry price, SMA and ATR use only information available before the
+      // touch candle closes. The touch candle's colour is not confirmation.
       const slopeBase=sma(a,i-5,21);
       const slopeUp=Number.isFinite(slopeBase)&&mPrev>slopeBase;
       const slopeDown=Number.isFinite(slopeBase)&&mPrev<slopeBase;
       const touchedFromAbove=prev.c>mPrev&&x.l<=mPrev;
       const touchedFromBelow=prev.c<mPrev&&x.h>=mPrev;
-      // Optional comparison mode: require three consecutive closes moving
-      // toward SMA21, but never use the touch candle's color as confirmation.
       const threeLong=i>=3&&a[i-3].c<a[i-2].c&&a[i-2].c<a[i-1].c;
       const threeShort=i>=3&&a[i-3].c>a[i-2].c&&a[i-2].c>a[i-1].c;
       const short=touchedFromAbove&&(entryMode!=="3c"||threeShort)&&(filterMode!=="slope"||slopeDown);
       const long=touchedFromBelow&&(entryMode!=="3c"||threeLong)&&(filterMode!=="slope"||slopeUp);
-      if(!long&&!short)continue;
+      if(!long&&!short) continue;
+
       const dir=long?1:-1, entry=mPrev, risk=avPrev*mult, phase=marketPhase(a,i-1);
-      pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,initialQty:100,tp1:false,pnl:0,phase};
+      const configuredR=phaseExit?(phaseExit[phase]??exitR):exitR;
+      const targetR=Number.isFinite(configuredR)&&configuredR>0?configuredR:5;
+      pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,targetR,qty:100,phase,pnl:0};
+
+      // Entry and exit levels can both be crossed during the touch candle.
+      // OHLC does not reveal sequence, so an initial stop takes precedence.
+      const initialStopHit=dir===1?x.l<=pos.stop:x.h>=pos.stop;
+      if(initialStopHit) { close(pos.stop,"SL",x.ts); continue; }
+      const initialTarget=entry+dir*targetR*risk;
+      const initialTargetHit=dir===1?x.h>=initialTarget:x.l<=initialTarget;
+      if(initialTargetHit) { close(initialTarget,"TP"+targetR+"R",x.ts); continue; }
     }
-    if(pos){closePart(a.at(-1).c,1,"END",a.at(-1).ts)}
-    const net=equity;
-    // Profit Factor is calculated per completed trade, aggregating partial exits (TP1/TP2/SL).
+
+    if(pos) close(a[a.length-1].c,"END",a[a.length-1].ts);
     const grossWin=trades.reduce((sum,t)=>sum+(t.pnl>0?t.pnl:0),0);
     const grossLoss=trades.reduce((sum,t)=>sum+(t.pnl<0?Math.abs(t.pnl):0),0);
     const phaseStats={up:{trades:[],net:0},down:{trades:[],net:0},range:{trades:[],net:0}};
-    trades.forEach(t=>{const p=phaseStats[t.phase]||phaseStats.range; p.trades.push(t); p.net+=t.pnl||0;});
-    return {trades,net,maxDD,wins:trades.filter(t=>t.pnl>0).length,grossWin,grossLoss,grossTotal,feesTotal,slippageTotal,phaseStats};
+    trades.forEach(t=>{const p=phaseStats[t.phase]||phaseStats.range;p.trades.push(t);p.net+=t.pnl||0;});
+    return {trades,net:equity,maxDD,wins:trades.filter(t=>t.pnl>0).length,
+      grossWin,grossLoss,grossTotal,feesTotal,slippageTotal,phaseStats};
   }
   $("btCompareEntry").addEventListener("click",async()=>{
     const btn=$("btCompareEntry");btn.disabled=true;
@@ -246,7 +257,7 @@
       const rows=[];
       results.forEach(x=>{const a=stats(x.current),b=stats(x.three);rows.push(["1:"+x.ratio,a,b]);});
       const show=(v,type)=>type==="trades"?String(Math.round(v)):type==="wr"?fmt(v)+"%":type==="pf"?(v===Infinity?"∞":fmt(v)):fmt(v);
-      let html='<div class="small" style="margin-bottom:6px">Все варианты используют одинаковые свечи, ATR(14) × '+fmt(mult)+', комиссию и проскальзывание. Для этого сравнения позиция закрывается целиком на указанном R; частичная фиксация 50%/50% остаётся отдельным режимом основной стратегии.</div>';
+      let html='<div class="small" style="margin-bottom:6px">Все варианты используют одинаковые свечи, ATR(14) × '+fmt(mult)+', комиссию и проскальзывание. Для каждого варианта позиция закрывается целиком на указанном R. Базовый тест использует TP 5R.</div>';
       html+='<table class="table"><thead><tr><th>Выход</th><th colspan="5">Текущий вход</th><th colspan="5">Вход по 3 свечам</th></tr><tr><th></th><th>Сделок</th><th>Net, USDT</th><th>Win rate</th><th>PF</th><th>DD, USDT</th><th>Сделок</th><th>Net, USDT</th><th>Win rate</th><th>PF</th><th>DD, USDT</th></tr></thead><tbody>';
       rows.forEach(([label,a,b])=>html+='<tr><td>'+label+'</td><td>'+show(a.trades,"trades")+'</td><td>'+show(a.net,"net")+'</td><td>'+show(a.wr,"wr")+'</td><td>'+show(a.pf,"pf")+'</td><td>'+show(a.dd,"dd")+'</td><td>'+show(b.trades,"trades")+'</td><td>'+show(b.net,"net")+'</td><td>'+show(b.wr,"wr")+'</td><td>'+show(b.pf,"pf")+'</td><td>'+show(b.dd,"dd")+'</td></tr>');
       html+='</tbody></table>';
@@ -341,7 +352,7 @@
       // SMA/ATR values come from the previous fully closed candle.
       const approachedFromAbove=prev.c>mPrev && x.l<=mPrev;
       const approachedFromBelow=prev.c<mPrev && x.h>=mPrev;
-      const slopeBase=sma(a,i-6,21);
+      const slopeBase=sma(a,i-5,21);
       const slopeUp=Number.isFinite(slopeBase)&&mPrev>slopeBase;
       const slopeDown=Number.isFinite(slopeBase)&&mPrev<slopeBase;
       const short=approachedFromAbove&&(filterMode!=="slope"||slopeDown);
@@ -429,7 +440,7 @@
       const candles=await getCandles(days);
       if(candles.length<50)throw Error("Недостаточно исторических свечей");
       const filterMode=$("btFilter").value; const r=run(candles,mult,fee,slip,filterMode), trades=r.trades;
-      const count=(fn)=>trades.filter(fn).length; const sum=(fn)=>trades.filter(fn).reduce((v,t)=>v+(t.pnl||0),0); const metrics=[["Закрытых сделок",trades.length],["Валовый результат",fmt(r.grossTotal)+" USDT"],["Комиссии",fmt(r.feesTotal)+" USDT"],["Проскальзывание",fmt(r.slippageTotal)+" USDT"],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["TP2",count(t=>t.why==="TP2")],["Стоп до TP1",count(t=>t.why==="SL"&&!t.tp1)],["Стоп после TP1",count(t=>t.why==="SL"&&t.tp1)],["Завершены по последней свече",count(t=>t.why==="END")],["Результат LONG",fmt(sum(t=>t.dir===1))+" USDT"],["Результат SHORT",fmt(sum(t=>t.dir===-1))+" USDT"],["Свечей",candles.length]];
+      const count=(fn)=>trades.filter(fn).length; const sum=(fn)=>trades.filter(fn).reduce((v,t)=>v+(t.pnl||0),0); const metrics=[["Закрытых сделок",trades.length],["Валовый результат",fmt(r.grossTotal)+" USDT"],["Комиссии",fmt(r.feesTotal)+" USDT"],["Проскальзывание",fmt(r.slippageTotal)+" USDT"],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["TP 5R",count(t=>String(t.why).startsWith("TP"))],["Стоп-лосс",count(t=>t.why==="SL")],["Закрыты по последней свече",count(t=>t.why==="END")],["Результат LONG",fmt(sum(t=>t.dir===1))+" USDT"],["Результат SHORT",fmt(sum(t=>t.dir===-1))+" USDT"],["Свечей",candles.length]];
       $("btResults").innerHTML=metrics.map(([k,v])=>'<div class="btmetric"><small>'+k+'</small><b>'+v+'</b></div>').join("");
       $("btTrades").innerHTML=trades.slice(-100).reverse().map(t=>'<tr><td>'+new Date(t.ts).toLocaleString("ru-RU")+'</td><td>'+((PHASE_LABELS[t.phase])||"Боковик")+'</td><td>'+(t.dir===1?"LONG":"SHORT")+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.exit||0)+' ('+t.why+')</td><td>'+fmt(t.pnl||0)+'</td></tr>').join("");
       $("btStatus").textContent="Готово. Загружено "+candles.length+" закрытых свечей (цель: "+days*1440+"). Фильтр: "+(filterMode==="slope"?"наклон SMA21 за 5 свечей":"без фильтра")+". Последние 100 сделок показаны ниже.";
