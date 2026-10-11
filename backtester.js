@@ -123,19 +123,18 @@
         continue;
       }
       if(!Number.isFinite(av)||!Number.isFinite(m)||!Number.isFinite(mPrev)||av<=0)continue;
-      // Pullback to SMA21, then closed-candle directional confirmation.
-      // "current" = current logic; "3c" = last 3 closed candles in entry direction.
+      // Enter on the first SMA21 touch, in the direction price was moving
+      // into the average: falling from above => SHORT; rising from below => LONG.
+      // Use the previous fully closed candle to determine approach side and ATR.
       const slopeBase=sma(a,i-5,21);
-      const slopeUp=Number.isFinite(slopeBase)&&m>slopeBase;
-      const slopeDown=Number.isFinite(slopeBase)&&m<slopeBase;
-      const threeLong=i>=2&&a[i-2].c>a[i-2].o&&prev.c>prev.o&&x.c>x.o;
-      const threeShort=i>=2&&a[i-2].c<a[i-2].o&&prev.c<prev.o&&x.c<x.o;
-      const longConfirm=entryMode==="3c"?threeLong:(x.c>x.o);
-      const shortConfirm=entryMode==="3c"?threeShort:(x.c<x.o);
-      const long=prev.l<=mPrev&&prev.c>mPrev&&longConfirm&&x.c>m&&(filterMode!=="slope"||slopeUp);
-      const short=prev.h>=mPrev&&prev.c<mPrev&&shortConfirm&&x.c<m&&(filterMode!=="slope"||slopeDown);
+      const slopeUp=Number.isFinite(slopeBase)&&mPrev>slopeBase;
+      const slopeDown=Number.isFinite(slopeBase)&&mPrev<slopeBase;
+      const touchedFromAbove=prev.c>mPrev&&x.l<=mPrev;
+      const touchedFromBelow=prev.c<mPrev&&x.h>=mPrev;
+      const short=touchedFromAbove&&(filterMode!=="slope"||slopeDown);
+      const long=touchedFromBelow&&(filterMode!=="slope"||slopeUp);
       if(!long&&!short)continue;
-      const dir=long?1:-1, entry=x.c, risk=av*mult, phase=marketPhase(a,i);
+      const dir=long?1:-1, entry=mPrev, risk=atr(a,i-1,14)*mult, phase=marketPhase(a,i-1);
       pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,initialQty:100,tp1:false,pnl:0,phase};
     }
     if(pos){closePart(a.at(-1).c,1,"END",a.at(-1).ts)}
@@ -171,7 +170,7 @@
       ];
       const show=(v,i)=>i===0?String(Math.round(v)):i===2?fmt(v)+"%":i===3?(v===Infinity?"∞":fmt(v)):fmt(v);
       $("btCompareEntryResults").innerHTML='<table class="table"><thead><tr><th>Показатель</th><th>Текущий вход</th><th>3 свечи</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td>'+r[0]+'</td><td>'+show(r[1],i)+'</td><td>'+show(r[2],i)+'</td></tr>').join("")+'</tbody></table>';
-      $("btStatus").textContent="Сравнение входов завершено на одном наборе из "+candles.length+" закрытых свечей.";
+      $("btStatus").textContent="Сравнение входов завершено (первое касание SMA21 по направлению подхода) на одном наборе из "+candles.length+" закрытых свечей.";
     }catch(e){$("btStatus").textContent="Ошибка сравнения входов: "+(e.message||e)}
     finally{btn.disabled=false}
   });
@@ -333,16 +332,16 @@
         continue;
       }
       if(!Number.isFinite(avPrev)||!Number.isFinite(mPrev)||avPrev<=0)continue;
-      // First touch of SMA21 with no candle-colour/close confirmation.
-      // Direction is determined by the side price approached from; indicators
-      // and ATR use only the previous fully closed candle to avoid look-ahead.
+      // First SMA21 touch, direction follows price momentum into the average:
+      // falling from above => SHORT; rising from below => LONG.
+      // SMA/ATR values come from the previous fully closed candle.
       const approachedFromAbove=prev.c>mPrev && x.l<=mPrev;
       const approachedFromBelow=prev.c<mPrev && x.h>=mPrev;
       const slopeBase=sma(a,i-6,21);
       const slopeUp=Number.isFinite(slopeBase)&&mPrev>slopeBase;
       const slopeDown=Number.isFinite(slopeBase)&&mPrev<slopeBase;
-      const long=approachedFromAbove&&(filterMode!=="slope"||slopeUp);
-      const short=approachedFromBelow&&(filterMode!=="slope"||slopeDown);
+      const short=approachedFromAbove&&(filterMode!=="slope"||slopeDown);
+      const long=approachedFromBelow&&(filterMode!=="slope"||slopeUp);
       if(!long&&!short)continue;
       const dir=long?1:-1, entry=mPrev, risk=avPrev*mult;
       pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,pnl:0,activated:false,best:entry,entryIndex:i,stopIsBE:false};
