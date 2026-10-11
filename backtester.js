@@ -25,9 +25,9 @@
       <div><label for="btAtr">ATR-множитель</label><input id="btAtr" type="number" min="0.1" step="0.1" value="1.5"></div>
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
     </div>
-    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить оба фильтра</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
+    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить оба фильтра</button><span class="small">ATR(14) • TP1 50% на 1R • TP2 50% на 2R • стоп не переносится</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
-    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
+    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
     <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Фаза</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
     <div class="small" style="margin-top:8px">*Расчёт для условной позиции 100 USDT. Для минут, где внутри одной свечи могли сработать и стоп, и тейк, используется консервативное допущение: стоп считается первым. Это исследовательский тест, не прогноз доходности.</div>`;
   const anchor = document.querySelector("footer");
@@ -252,6 +252,133 @@
     }catch(e){$("btStatus").textContent="Ошибка сравнения выходов: "+(e.message||e)}
     finally{btn.disabled=false}
   });
+
+  // Separate TP 5R exit comparison. The chart and Live modules are not touched.
+  function runTrail5R(a, mult, feePct, slipPct, filterMode, useTrail) {
+    const trades=[]; let pos=null, equity=0, peak=0, maxDD=0, grossTotal=0, feesTotal=0, slippageTotal=0;
+    let missedTP5R=0, protectedExits=0;
+    const feeRate=feePct/100, slipRate=slipPct/100, costRate=feeRate+slipRate;
+    function close(price, why, barIndex) {
+      const qty=pos.qty, dir=pos.dir;
+      const raw=(price-pos.entry)*dir*qty/pos.entry;
+      const entryNotional=qty, exitNotional=price*qty/pos.entry;
+      const fees=(entryNotional+exitNotional)*feeRate;
+      const slippage=(entryNotional+exitNotional)*slipRate;
+      const pnl=raw-fees-slippage;
+      pos.pnl=pnl; pos.gross=raw; pos.fees=fees; pos.slippage=slippage;
+      pos.exit=price; pos.why=why; pos.exitIndex=barIndex;
+      grossTotal+=raw; feesTotal+=fees; slippageTotal+=slippage;
+      equity+=pnl; peak=Math.max(peak,equity); maxDD=Math.max(maxDD,peak-equity);
+      if(useTrail && why!=="TP5R") {
+        protectedExits++;
+        const target=pos.entry+dir*5*pos.risk;
+        const originalStop=pos.entry-dir*pos.risk;
+        let outcome="";
+        for(let j=barIndex+1;j<a.length;j++){
+          const b=a[j];
+          const stopHit=dir===1?b.l<=originalStop:b.h>=originalStop;
+          const targetHit=dir===1?b.h>=target:b.l<=target;
+          if(stopHit){outcome="SL";break}
+          if(targetHit){outcome="TP";break}
+        }
+        if(outcome==="TP")missedTP5R++;
+      }
+      trades.push(pos); pos=null;
+    }
+    for(let i=30;i<a.length;i++){
+      const x=a[i], prev=a[i-1], m=sma(a,i,21), mPrev=sma(a,i-1,21), av=atr(a,i,14);
+      if(pos){
+        const target=pos.entry+pos.dir*5*pos.risk;
+        // OHLC candles do not reveal the true tick sequence. If a stop and target
+        // are both inside one candle, use the conservative stop-first assumption.
+        const stopHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
+        const targetHit=pos.dir===1?x.h>=target:x.l<=target;
+        if(stopHit){close(pos.stop,pos.activated?"TRAIL/BE":"SL",i);continue}
+        if(targetHit){close(target,"TP5R",i);continue}
+        if(useTrail && Number.isFinite(av) && av>0){
+          const trigger=pos.entry+pos.dir*pos.risk;
+          const triggerHit=pos.dir===1?x.h>=trigger:x.l<=trigger;
+          if(triggerHit && !pos.activated){
+            pos.activated=true;
+            // Approximate price that covers entry+exit fees and slippage.
+            pos.stop=pos.dir===1
+              ? pos.entry*(1+costRate)/(1-costRate)
+              : pos.entry*(1-costRate)/(1+costRate);
+          }
+          if(pos.activated){
+            if(pos.dir===1){
+              pos.best=Math.max(pos.best,x.h);
+              const trail=pos.best-av*mult;
+              pos.stop=Math.max(pos.stop,trail);
+            }else{
+              pos.best=Math.min(pos.best,x.l);
+              const trail=pos.best+av*mult;
+              pos.stop=Math.min(pos.stop,trail);
+            }
+            // If newly activated/tightened stop lies inside this candle's range,
+            // assume it could have been hit; conservative treatment avoids look-ahead.
+            const tightenedHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
+            if(tightenedHit){close(pos.stop,"TRAIL/BE",i);continue}
+          }
+        }
+        const mark=pos.dir===1?x.l:x.h;
+        const unrealized=(mark-pos.entry)*pos.dir*pos.qty/pos.entry;
+        const exitNotional=mark*pos.qty/pos.entry;
+        const exitCost=(pos.qty+exitNotional)*costRate;
+        const markedEquity=equity+unrealized-exitCost;
+        peak=Math.max(peak,markedEquity);maxDD=Math.max(maxDD,peak-markedEquity);
+        continue;
+      }
+      if(!Number.isFinite(av)||!Number.isFinite(m)||!Number.isFinite(mPrev)||av<=0)continue;
+      const slopeBase=sma(a,i-5,21);
+      const slopeUp=Number.isFinite(slopeBase)&&m>slopeBase;
+      const slopeDown=Number.isFinite(slopeBase)&&m<slopeBase;
+      const long=prev.l<=mPrev&&prev.c>mPrev&&x.c>x.o&&x.c>m&&(filterMode!=="slope"||slopeUp);
+      const short=prev.h>=mPrev&&prev.c<mPrev&&x.c<x.o&&x.c<m&&(filterMode!=="slope"||slopeDown);
+      if(!long&&!short)continue;
+      const dir=long?1:-1, entry=x.c, risk=av*mult;
+      pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,pnl:0,activated:false,best:entry,entryIndex:i};
+    }
+    if(pos)close(a[a.length-1].c,"END",a.length-1);
+    const grossWin=trades.reduce((s,t)=>s+(t.pnl>0?t.pnl:0),0);
+    const grossLoss=trades.reduce((s,t)=>s+(t.pnl<0?Math.abs(t.pnl):0),0);
+    return {trades,net:equity,maxDD,grossWin,grossLoss,grossTotal,feesTotal,slippageTotal,missedTP5R,protectedExits,
+      wins:trades.filter(t=>t.pnl>0).length};
+  }
+  $("btCompareTrail").addEventListener("click",async()=>{
+    const btn=$("btCompareTrail");btn.disabled=true;$("btCompareTrailResults").innerHTML="";
+    $("btStatus").textContent="Сравниваю фиксированный TP 5R и безубыток +1R с ATR-трейлингом…";
+    try{
+      const days=+$("btDays").value,mult=Math.max(.1,+$("btAtr").value||1.5),
+        fee=Math.max(0,+$("btFee").value||0),slip=Math.max(0,+$("btSlip").value||0),filter=$("btFilter").value;
+      const candles=await getCandles(days);
+      if(candles.length<50)throw Error("Недостаточно исторических свечей");
+      const a=runTrail5R(candles,mult,fee,slip,filter,false);
+      const b=runTrail5R(candles,mult,fee,slip,filter,true);
+      const pf=r=>r.grossLoss>0?r.grossWin/r.grossLoss:(r.grossWin>0?Infinity:0);
+      const wr=r=>r.trades.length?100*r.wins/r.trades.length:0;
+      const rows=[
+        ["Закрытые сделки",a.trades.length,b.trades.length],
+        ["Чистый результат, USDT",a.net,b.net],
+        ["Win rate",wr(a),wr(b)],
+        ["Profit Factor",pf(a),pf(b)],
+        ["Макс. просадка, USDT",a.maxDD,b.maxDD],
+        ["Комиссии, USDT",a.feesTotal,b.feesTotal],
+        ["Проскальзывание, USDT",a.slippageTotal,b.slippageTotal],
+        ["Сделки с выходом до 5R",0,b.protectedExits],
+        ["Упущенные TP 5R после защитного выхода",0,b.missedTP5R]
+      ];
+      const show=(v,i)=>i===0||i===7||i===8?String(Math.round(v)):i===2?fmt(v)+"%":i===3?(v===Infinity?"∞":fmt(v)):fmt(v);
+      let html='<div class="small" style="margin-bottom:7px">Один набор закрытых свечей, одинаковые входы SMA21, ATR(14) × '+fmt(mult)+', комиссия '+fmt(fee)+'% и проскальзывание '+fmt(slip)+'% на сторону. Безубыток активируется после +1R; стоп учитывает оценку расходов, затем подтягивается по ATR. Если после защитного выхода цена достигает 5R раньше исходного стопа, сделка учитывается как упущенный TP 5R.</div>';
+      html+='<table class="table"><thead><tr><th>Показатель</th><th>База: фиксированный SL / TP 5R</th><th>BE +1R и ATR-трейлинг</th></tr></thead><tbody>';
+      html+=rows.map((r,i)=>'<tr><td>'+r[0]+'</td><td>'+show(r[1],i)+'</td><td>'+show(r[2],i)+'</td></tr>').join('');
+      html+='</tbody></table><div class="small" style="margin-top:7px">Ограничение данных: минутные OHLC не раскрывают точный порядок тиков внутри свечи. При неоднозначности применяется консервативное правило «стоп раньше тейка»; новые стопы, которые могли быть задеты в той же свече, также считаются сработавшими. Это снижает риск завышения результата, но не заменяет тест по тиковым данным.</div>';
+      $("btCompareTrailResults").innerHTML=html;
+      $("btStatus").textContent="Сравнение 5R и ATR-трейлинга завершено на "+candles.length+" закрытых минутных свечах.";
+    }catch(e){$("btStatus").textContent="Ошибка сравнения трейлинга: "+(e.message||e)}
+    finally{btn.disabled=false}
+  });
+
   $("btCompare").addEventListener("click",async()=>{
     const btn=$("btCompare");btn.disabled=true;
     $("btCompareResults").innerHTML="";
