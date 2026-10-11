@@ -269,7 +269,7 @@
       pos.exit=price; pos.why=why; pos.exitIndex=barIndex;
       grossTotal+=raw; feesTotal+=fees; slippageTotal+=slippage;
       equity+=pnl; peak=Math.max(peak,equity); maxDD=Math.max(maxDD,peak-equity);
-      if(useTrail && why==="TRAIL/BE") {
+      if(useTrail && (why==="TRAIL" || why==="BE")) {
         protectedExits++;
         const target=pos.entry+dir*5*pos.risk;
         const originalStop=pos.entry-dir*pos.risk;
@@ -286,39 +286,44 @@
       trades.push(pos); pos=null;
     }
     for(let i=30;i<a.length;i++){
-      const x=a[i], prev=a[i-1], m=sma(a,i,21), mPrev=sma(a,i-1,21), av=atr(a,i,14);
+      const x=a[i], prev=a[i-1], mPrev=sma(a,i-1,21), avPrev=atr(a,i-1,14);
       if(pos){
         const target=pos.entry+pos.dir*5*pos.risk;
-        // OHLC candles do not reveal the true tick sequence. If a stop and target
-        // are both inside one candle, use the conservative stop-first assumption.
+        // First check levels that were already active before this candle.
+        // If both are crossed in one OHLC candle, the stop is counted first.
         const stopHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
         const targetHit=pos.dir===1?x.h>=target:x.l<=target;
-        if(stopHit){close(pos.stop,pos.activated?"TRAIL/BE":"SL",i);continue}
+        if(stopHit){close(pos.stop,pos.activated?(pos.stopIsBE?"BE":"TRAIL"):"SL",i);continue}
         if(targetHit){close(target,"TP5R",i);continue}
-        if(useTrail && Number.isFinite(av) && av>0){
+        if(useTrail && Number.isFinite(avPrev) && avPrev>0){
           const trigger=pos.entry+pos.dir*pos.risk;
           const triggerHit=pos.dir===1?x.h>=trigger:x.l<=trigger;
-          if(triggerHit && !pos.activated){
+          if(!pos.activated && triggerHit){
             pos.activated=true;
-            // Approximate price that covers entry+exit fees and slippage.
+            pos.stopIsBE=true;
+            // Price adjusted so estimated round-trip fees and slippage are covered.
             pos.stop=pos.dir===1
               ? pos.entry*(1+costRate)/(1-costRate)
               : pos.entry*(1-costRate)/(1+costRate);
-          }
-          if(pos.activated){
-            if(pos.dir===1){
-              pos.best=Math.max(pos.best,x.h);
-              const trail=pos.best-av*mult;
-              pos.stop=Math.max(pos.stop,trail);
-            }else{
-              pos.best=Math.min(pos.best,x.l);
-              const trail=pos.best+av*mult;
-              pos.stop=Math.min(pos.stop,trail);
+            // If +1R and the cost-adjusted BE level are both crossed in this
+            // candle, OHLC cannot reveal order; conservatively count BE exit.
+            const beTouched=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
+            if(beTouched){close(pos.stop,"BE",i);continue}
+          } else if(pos.activated) {
+            const oldBest=pos.best;
+            const trail=pos.dir===1?oldBest-avPrev*mult:oldBest+avPrev*mult;
+            const tighter=pos.dir===1?Math.max(pos.stop,trail):Math.min(pos.stop,trail);
+            if((pos.dir===1 && tighter>pos.stop) || (pos.dir===-1 && tighter<pos.stop)){
+              pos.stop=tighter;
+              pos.stopIsBE=false;
             }
-            // If newly activated/tightened stop lies inside this candle's range,
-            // assume it could have been hit; conservative treatment avoids look-ahead.
-            const tightenedHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
-            if(tightenedHit){close(pos.stop,"TRAIL/BE",i);continue}
+          }
+          // Use this candle's favorable extreme only to calculate the stop for
+          // the NEXT candle. Never test a stop derived from this candle's high/low
+          // against the same candle's opposite extreme (look-ahead bias).
+          if(pos){
+            if(pos.dir===1)pos.best=Math.max(pos.best,x.h);
+            else pos.best=Math.min(pos.best,x.l);
           }
         }
         const mark=pos.dir===1?x.l:x.h;
@@ -329,15 +334,27 @@
         peak=Math.max(peak,markedEquity);maxDD=Math.max(maxDD,peak-markedEquity);
         continue;
       }
-      if(!Number.isFinite(av)||!Number.isFinite(m)||!Number.isFinite(mPrev)||av<=0)continue;
-      const slopeBase=sma(a,i-5,21);
-      const slopeUp=Number.isFinite(slopeBase)&&m>slopeBase;
-      const slopeDown=Number.isFinite(slopeBase)&&m<slopeBase;
-      const long=prev.l<=mPrev&&prev.c>mPrev&&x.c>x.o&&x.c>m&&(filterMode!=="slope"||slopeUp);
-      const short=prev.h>=mPrev&&prev.c<mPrev&&x.c<x.o&&x.c<m&&(filterMode!=="slope"||slopeDown);
+      if(!Number.isFinite(avPrev)||!Number.isFinite(mPrev)||avPrev<=0)continue;
+      // First touch of SMA21 with no candle-colour/close confirmation.
+      // Direction is determined by the side price approached from; indicators
+      // and ATR use only the previous fully closed candle to avoid look-ahead.
+      const approachedFromAbove=prev.c>mPrev && x.l<=mPrev;
+      const approachedFromBelow=prev.c<mPrev && x.h>=mPrev;
+      const slopeBase=sma(a,i-6,21);
+      const slopeUp=Number.isFinite(slopeBase)&&mPrev>slopeBase;
+      const slopeDown=Number.isFinite(slopeBase)&&mPrev<slopeBase;
+      const long=approachedFromAbove&&(filterMode!=="slope"||slopeUp);
+      const short=approachedFromBelow&&(filterMode!=="slope"||slopeDown);
       if(!long&&!short)continue;
-      const dir=long?1:-1, entry=x.c, risk=av*mult;
-      pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,pnl:0,activated:false,best:entry,entryIndex:i};
+      const dir=long?1:-1, entry=mPrev, risk=avPrev*mult;
+      pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,pnl:0,activated:false,best:entry,entryIndex:i,stopIsBE:false};
+      // Entry and exit levels can both occur inside the touch candle. OHLC cannot
+      // identify the sequence, so the original stop takes precedence conservatively.
+      const initialStopHit=dir===1?x.l<=pos.stop:x.h>=pos.stop;
+      const initialTarget=entry+dir*5*risk;
+      const initialTargetHit=dir===1?x.h>=initialTarget:x.l<=initialTarget;
+      if(initialStopHit){close(pos.stop,"SL",i);continue}
+      if(initialTargetHit){close(initialTarget,"TP5R",i);continue}
     }
     if(pos)close(a[a.length-1].c,"END",a.length-1);
     const grossWin=trades.reduce((s,t)=>s+(t.pnl>0?t.pnl:0),0);
@@ -369,7 +386,7 @@
         ["Упущенные TP 5R после защитного выхода",0,b.missedTP5R]
       ];
       const show=(v,i)=>i===0||i===7||i===8?String(Math.round(v)):i===2?fmt(v)+"%":i===3?(v===Infinity?"∞":fmt(v)):fmt(v);
-      let html='<div class="small" style="margin-bottom:7px">Один набор закрытых свечей, одинаковые входы SMA21, ATR(14) × '+fmt(mult)+', комиссия '+fmt(fee)+'% и проскальзывание '+fmt(slip)+'% на сторону. Безубыток активируется после +1R; стоп учитывает оценку расходов, затем подтягивается по ATR. Если после защитного выхода цена достигает 5R раньше исходного стопа, сделка учитывается как упущенный TP 5R.</div>';
+      let html='<div class="small" style="margin-bottom:7px">Один набор закрытых свечей; вход — первое касание SMA21 без подтверждающей свечи, направление определяется стороной подхода. ATR(14) × '+fmt(mult)+', комиссия '+fmt(fee)+'% и проскальзывание '+fmt(slip)+'% на сторону. Безубыток активируется после +1R; стоп учитывает оценку расходов, затем подтягивается по ATR. Если после защитного выхода цена достигает 5R раньше исходного стопа, сделка учитывается как упущенный TP 5R.</div>';
       html+='<table class="table"><thead><tr><th>Показатель</th><th>База: фиксированный SL / TP 5R</th><th>BE +1R и ATR-трейлинг</th></tr></thead><tbody>';
       html+=rows.map((r,i)=>'<tr><td>'+r[0]+'</td><td>'+show(r[1],i)+'</td><td>'+show(r[2],i)+'</td></tr>').join('');
       html+='</tbody></table><div class="small" style="margin-top:7px">Ограничение данных: минутные OHLC не раскрывают точный порядок тиков внутри свечи. При неоднозначности применяется консервативное правило «стоп раньше тейка»; новые стопы, которые могли быть задеты в той же свече, также считаются сработавшими. Это снижает риск завышения результата, но не заменяет тест по тиковым данным.</div>';
