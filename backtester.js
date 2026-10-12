@@ -201,8 +201,8 @@
     }
 
     if(pos) close(a[a.length-1].c,"END",a[a.length-1].ts);
-    const grossWin=trades.reduce((sum,t)=>sum+(t.pnl>0?t.pnl:0),0);
-    const grossLoss=trades.reduce((sum,t)=>sum+(t.pnl<0?Math.abs(t.pnl):0),0);
+    const grossWin=trades.reduce((sum,t)=>sum+(t.gross>0?t.gross:0),0);
+    const grossLoss=trades.reduce((sum,t)=>sum+(t.gross<0?Math.abs(t.gross):0),0);
     const phaseStats={up:{trades:[],net:0},down:{trades:[],net:0},range:{trades:[],net:0}};
     trades.forEach(t=>{const p=phaseStats[t.phase]||phaseStats.range;p.trades.push(t);p.net+=t.pnl||0;});
     return {trades,net:equity,maxDD,wins:trades.filter(t=>t.pnl>0).length,
@@ -416,8 +416,8 @@
       if(initialTargetHit){close(initialTarget,"TP5R",i);continue}
     }
     if(pos)close(a[a.length-1].c,"END",a.length-1);
-    const grossWin=trades.reduce((s,t)=>s+(t.pnl>0?t.pnl:0),0);
-    const grossLoss=trades.reduce((s,t)=>s+(t.pnl<0?Math.abs(t.pnl):0),0);
+    const grossWin=trades.reduce((s,t)=>s+(t.gross>0?t.gross:0),0);
+    const grossLoss=trades.reduce((s,t)=>s+(t.gross<0?Math.abs(t.gross):0),0);
     return {trades,net:equity,maxDD,grossWin,grossLoss,grossTotal,feesTotal,slippageTotal,missedTP5R,protectedExits,
       wins:trades.filter(t=>t.pnl>0).length};
   }
@@ -499,7 +499,7 @@
       const candles=await getCandles(days);
       if(candles.length<50)throw Error("Недостаточно исторических свечей");
       const filterMode=$("btFilter").value; const r=run(candles,mult,fee,slip,filterMode), trades=r.trades;
-      const count=(fn)=>trades.filter(fn).length; const sum=(fn)=>trades.filter(fn).reduce((v,t)=>v+(t.pnl||0),0); const metrics=[["Закрытых сделок",trades.length],["Валовый результат",fmt(r.grossTotal)+" USDT"],["Комиссии",fmt(r.feesTotal)+" USDT"],["Проскальзывание",fmt(r.slippageTotal)+" USDT"],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["TP 5R",count(t=>String(t.why).startsWith("TP"))],["Стоп-лосс",count(t=>t.why==="SL")],["Закрыты по последней свече",count(t=>t.why==="END")],["Результат LONG",fmt(sum(t=>t.dir===1))+" USDT"],["Результат SHORT",fmt(sum(t=>t.dir===-1))+" USDT"],["Свечей",candles.length]];
+      const count=(fn)=>trades.filter(fn).length; const sum=(fn)=>trades.filter(fn).reduce((v,t)=>v+(t.pnl||0),0); const metrics=[["Закрытых сделок",trades.length],["Валовый результат",fmt(r.grossTotal)+" USDT"],["Комиссии",fmt(r.feesTotal)+" USDT"],["Проскальзывание",fmt(r.slippageTotal)+" USDT"],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor (валовый)",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["TP 5R",count(t=>String(t.why).startsWith("TP"))],["Стоп-лосс",count(t=>t.why==="SL")],["Закрыты по последней свече",count(t=>t.why==="END")],["Результат LONG",fmt(sum(t=>t.dir===1))+" USDT"],["Результат SHORT",fmt(sum(t=>t.dir===-1))+" USDT"],["Свечей",candles.length]];
       $("btResults").innerHTML=metrics.map(([k,v])=>'<div class="btmetric"><small>'+k+'</small><b>'+v+'</b></div>').join("");
       $("btTrades").innerHTML=trades.slice(-100).reverse().map(t=>'<tr><td>'+new Date(t.ts).toLocaleString("ru-RU")+'</td><td>'+((PHASE_LABELS[t.phase])||"Боковик")+'</td><td>'+(t.dir===1?"LONG":"SHORT")+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.exit||0)+' ('+t.why+')</td><td>'+fmt(t.pnl||0)+'</td></tr>').join("");
       $("btStatus").textContent="Готово. Загружено "+candles.length+" закрытых свечей (цель: "+days*1440+"). Фильтр: "+(filterMode==="slope"?"наклон SMA21 за 5 свечей":"без фильтра")+". Последние 100 сделок показаны ниже.";
