@@ -172,7 +172,11 @@
       let long=touchedFromBelow&&(entryMode!=="3c"||threeLong)&&(filterMode!=="slope"||slopeUp);
       if(!long&&!short) continue;
 
-      const entry=mPrev;
+      // Confirm the SMA21 touch only after candle x has closed.
+      // Direction follows the approach: from above => SHORT, from below => LONG.
+      // Entry is at x.c; ATR is calculated through this now-closed candle.
+      const entry=x.c, avSignal=atr(a,i,14);
+      if(!Number.isFinite(avSignal)||avSignal<=0)continue;
       if(vpFilter){
         const profile=vpByMinute?.get(x.ts);
         // No profile means no trade: never silently bypass an enabled filter.
@@ -186,7 +190,7 @@
           if((long&&!nearVAL)||(short&&!nearVAH)){continue;}
         }
       }
-      const dir=long?1:-1, risk=avPrev*mult, phase=marketPhase(a,i-1);
+      const dir=long?1:-1, risk=avSignal*mult, phase=marketPhase(a,i);
       const configuredR=phaseExit?(phaseExit[phase]??exitR):exitR;
       const targetR=Number.isFinite(configuredR)&&configuredR>0?configuredR:5;
       pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,targetR,qty:100,phase,pnl:0};
