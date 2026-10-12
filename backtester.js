@@ -405,15 +405,13 @@
       const short=approachedFromAbove&&(filterMode!=="slope"||slopeDown);
       const long=approachedFromBelow&&(filterMode!=="slope"||slopeUp);
       if(!long&&!short)continue;
-      const dir=long?1:-1, entry=mPrev, risk=avPrev*mult;
+      // Signal candle is closed now. Enter at its close and size the stop
+      // from ATR(14) including this closed candle. Earlier extremes occurred
+      // before entry and must not trigger this position.
+      const avSignal=atr(a,i,14);
+      if(!Number.isFinite(avSignal)||avSignal<=0)continue;
+      const dir=long?1:-1, entry=x.c, risk=avSignal*mult;
       pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,pnl:0,activated:false,best:entry,entryIndex:i,stopIsBE:false};
-      // Entry and exit levels can both occur inside the touch candle. OHLC cannot
-      // identify the sequence, so the original stop takes precedence conservatively.
-      const initialStopHit=dir===1?x.l<=pos.stop:x.h>=pos.stop;
-      const initialTarget=entry+dir*5*risk;
-      const initialTargetHit=dir===1?x.h>=initialTarget:x.l<=initialTarget;
-      if(initialStopHit){close(pos.stop,"SL",i);continue}
-      if(initialTargetHit){close(initialTarget,"TP5R",i);continue}
     }
     if(pos)close(a[a.length-1].c,"END",a.length-1);
     const grossWin=trades.reduce((s,t)=>s+(t.gross>0?t.gross:0),0);
