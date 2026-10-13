@@ -1,0 +1,13 @@
+{
+  "name": "okx-signal-telegram-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "24/7 Telegram alert worker for OKX Signal Pro",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
