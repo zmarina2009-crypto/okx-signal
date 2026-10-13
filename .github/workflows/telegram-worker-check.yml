@@ -1,0 +1,25 @@
+name: Telegram worker checks
+
+on:
+  pull_request:
+    paths:
+      - "telegram-worker/**"
+      - ".github/workflows/telegram-worker-check.yml"
+  push:
+    branches: [main, feature/telegram-alerts-24-7]
+    paths:
+      - "telegram-worker/**"
+      - ".github/workflows/telegram-worker-check.yml"
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check worker syntax
+        run: node --check telegram-worker/index.js
+      - name: Check package metadata
+        run: node -e "const p = require('./telegram-worker/package.json'); if (p.type !== 'module' || p.scripts.start !== 'node index.js') process.exit(1); console.log('package.json OK')"
