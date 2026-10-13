@@ -5,7 +5,7 @@ import path from "node:path";
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
-const PAIRS = csv(process.env.OKX_PAIRS || "BTC-USDT");
+const PAIRS = csv(process.env.OKX_PAIRS || "BTC-USDT-SWAP");
 const TIMEFRAMES = csv(process.env.OKX_TIMEFRAMES || "15m");
 const POLL_MS = Math.max(10_000, Number(process.env.POLL_INTERVAL_MS || 20_000));
 const VOLUME_PERIOD = clamp(Number(process.env.VOLUME_PERIOD || 20), 2, 100);
