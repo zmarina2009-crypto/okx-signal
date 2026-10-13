@@ -27,7 +27,7 @@ Create a Railway service from this repository and set the service root directory
 
 ### Optional variables
 
-- `OKX_PAIRS=BTC-USDT,ETH-USDT`
+- `OKX_PAIRS=BTC-USDT-SWAP,ETH-USDT-SWAP`
 - `OKX_TIMEFRAMES=1m,5m,15m,1h,4h`
 - `POLL_INTERVAL_MS=20000` (minimum 10 seconds)
 - `ALERT_SMA=true`, `SMA_PERIOD=21`, `SMA_TOLERANCE_PCT=0`
@@ -36,6 +36,8 @@ Create a Railway service from this repository and set the service root directory
 - `ALERT_COMBO=false`, `COMBO_COUNT=2`, `COMBO_WINDOW_BARS=1`
 - `ALERT_COOLDOWN_SECONDS=180`
 - `ALERT_TIMEZONE=Europe/Berlin`
+
+For OKX perpetual swaps, use instrument IDs ending in `-SWAP` (for example, `BTC-USDT-SWAP`). The default is `BTC-USDT-SWAP`; plain `BTC-USDT` refers to spot, not the perpetual market.
 
 The worker does not need OKX API keys: it uses public market data only. It does not place orders.
 
