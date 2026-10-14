@@ -61,17 +61,25 @@
   }
 
   function setCollapsed(key, panel, collapsed, contents, button) {
+    if (!panel) return;
+    const toggle = button || panel.querySelector('[data-collapse-key="' + key + '"]');
     state[key] = !!collapsed;
     saveState();
-    const body = contents || [];
+
+    // Heading buttons do not pass their content list to this handler.
+    // Infer it from direct children and keep the branch containing the toggle visible.
+    const body = Array.isArray(contents)
+      ? contents
+      : Array.from(panel.children).filter(node => !toggle || !node.contains(toggle));
+
     body.forEach(node => {
       if (!node) return;
+      node.classList.add("collapse-content");
       node.hidden = !!collapsed;
-      node.classList.toggle("collapse-content", true);
     });
     panel.classList.toggle("is-collapsed", !!collapsed);
     panel.classList.toggle("collapsible-panel", true);
-    setButton(button || panel.querySelector('[data-collapse-key="' + key + '"]'), key);
+    setButton(toggle, key);
   }
 
   function setupPanel(panel, key, title, headerNode) {
