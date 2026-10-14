@@ -1,0 +1,37 @@
+name: Recover stale GitHub Pages deployment lock
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/recover-pages-deployment-lock.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  release-stale-deployments:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark stale in-progress Pages deployments inactive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployments="$(gh api "repos/${GITHUB_REPOSITORY}/deployments?environment=github-pages&per_page=100" --jq '.[] | [.id, .sha] | @tsv')"
+          while IFS=$'\t' read -r deployment_id deployment_sha; do
+            [ -n "${deployment_id:-}" ] || continue
+            [ "$deployment_sha" != "$CURRENT_SHA" ] || continue
+            state="$(gh api "repos/${GITHUB_REPOSITORY}/deployments/$deployment_id/statuses?per_page=1" --jq '.[0].state // empty')"
+            if [ "$state" = "in_progress" ]; then
+              echo "Releasing stale Pages deployment $deployment_id ($deployment_sha)"
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/deployments/$deployment_id/statuses" \
+                -f state=inactive \
+                -f description="Marked inactive to release a stale GitHub Pages deployment lock"
+            fi
+          done <<< "$deployments"
