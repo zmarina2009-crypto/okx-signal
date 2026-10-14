@@ -6,37 +6,20 @@ on:
       - main
     paths:
       - ".github/workflows/recover-pages-deployment-lock.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
   pages: write
 
 jobs:
-  refresh-pages-config:
+  request-pages-build:
     runs-on: ubuntu-latest
     steps:
-      - name: Reapply the existing Pages configuration
+      - name: Request a fresh build from the configured main branch
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          site="$(gh api "repos/${GITHUB_REPOSITORY}/pages")"
-          build_type="$(jq -r '.build_type // empty' <<< "$site")"
-          source_branch="$(jq -r '.source.branch // empty' <<< "$site")"
-          source_path="$(jq -r '.source.path // empty' <<< "$site")"
-          echo "Current GitHub Pages build_type=$build_type source=$source_branch:$source_path"
-          if [ "$build_type" = "legacy" ]; then
-            [ -n "$source_branch" ] && [ -n "$source_path" ]
-            gh api --method PUT "repos/${GITHUB_REPOSITORY}/pages" \
-              -f build_type=legacy \
-              -f "source[branch]=$source_branch" \
-              -f "source[path]=$source_path"
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/pages/builds"
-          elif [ "$build_type" = "workflow" ]; then
-            gh api --method PUT "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow
-          else
-            echo "Unexpected Pages build type; refusing to alter the publishing source."
-            exit 1
-          fi
-          gh api "repos/${GITHUB_REPOSITORY}/pages" --jq '{status, build_type, source}'
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/pages/builds"
