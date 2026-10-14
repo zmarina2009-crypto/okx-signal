@@ -169,9 +169,10 @@
     const badge=$("alertsLast");if(badge){badge.textContent=message;badge.className="alerts-last combo"}
   }
   function fire(kind,text,key,marker){
-    const source=marker&&COMBO_SOURCES.includes(kind);
-    // Combo-only mode: individual indicators are evaluated only as inputs to the combo.
-    if(cfg.comboModeActive&&source){observeCombo(kind,marker);return;}
+    const comboSource=marker&&COMBO_SOURCES.includes(kind);
+    const source=comboSource||(marker&&kind==="vp");
+    // Combo-only mode suppresses standalone alerts; VP is not an input to the 3-source combo.
+    if(cfg.comboModeActive&&source){if(comboSource)observeCombo(kind,marker);return;}
     if(!canAlert(key)){
       if(source)observeCombo(kind,marker);
       return;
@@ -212,7 +213,8 @@
         }
       }
     }
-    if(cfg.vp){
+    if(cfg.vp&&(!st.lastVPTf||st.lastVPTf!==tf||st.lastVPTs!==closed.ts)){
+      st.lastVPTf=tf;st.lastVPTs=closed.ts;
       const period=Math.max(20,Math.min(300,+cfg.vpPeriod||60)),profileBars=hist.slice(0,-1).slice(-period);
       if(profileBars.length>=period){
         const levels=volumeProfileLevels(profileBars,cfg.vpRows),prevClose=Number(hist[hist.length-2]?.c),close=Number(closed.c);
@@ -297,7 +299,7 @@
       box.querySelectorAll("input[data-pair]").forEach(el=>el.onchange=()=>{let s=new Set(cfg.selectedPairs||[]);if(el.checked){if(s.size>=20){el.checked=false;return}s.add(el.dataset.pair)}else s.delete(el.dataset.pair);cfg.selectedPairs=[...s];save()});
     }
     ["alertVolume","alertRsi","alertSma"].forEach((id,i)=>{const el=$(id);el.checked=[cfg.volume,cfg.rsi,cfg.sma][i];el.onchange=()=>{if(i===0)cfg.volume=el.checked;if(i===1)cfg.rsi=el.checked;if(i===2)cfg.sma=el.checked;save()}});
-    $("alertVP").checked=!!cfg.vp;$("alertVP").onchange=()=>{cfg.vp=$("alertVP").checked;save()};
+    $("alertVP").checked=!!cfg.vp;$("alertVP").onchange=()=>{cfg.vp=$("alertVP").checked;save()};$("alertVPMode").value=cfg.vpMode;
     $("alertCombo").checked=!!cfg.comboEnabled;
     $("alertCombo").onchange=()=>{cfg.comboEnabled=$("alertCombo").checked;comboSignals=[];comboLastAt={};save()};
     const comboModeButton=$("comboModeToggle"),comboModeStatus=$("comboModeStatus");
@@ -325,7 +327,7 @@
     const bind=(id,key,parse)=>{const el=$(id);el.onchange=()=>{cfg[key]=parse(el.value);comboSignals=[];comboLastAt={};save()}};
     bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");bind("alertComboCount","comboCount",v=>Math.max(2,Math.min(3,+v||2)));bind("alertComboWindow","comboWindow",v=>Math.max(1,Math.min(3,+v||1)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
     $("alertsSound").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("test");$("alertsSound").textContent="🔊 Звук включён";log("sma","Звук включён")}catch{$("alertsSound").textContent="⚠️ Звук недоступен"}};
-    const testSound=async(kind,label)=>{try{await ensureAudio();cfg.sound=true;save();tone(kind);log(kind,"Тест звука: "+label)}catch{}};    $("testVolume").onclick=()=>testSound("volume","Volume");    $("testRsi").onclick=()=>testSound("rsi","RSI");    $("testSma").onclick=()=>testSound("sma","SMA21");    $("testVP").onclick=()=>testSound("vp","Volume Profile");    $("testCombo").onclick=()=>testSound("combo","Combo");    $("testAll").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("volume");setTimeout(()=>tone("rsi"),1100);setTimeout(()=>tone("sma"),2200);log("sma","Тест: Volume → RSI → SMA21")}catch{}};
+    const testSound=async(kind,label)=>{try{await ensureAudio();cfg.sound=true;save();tone(kind);log(kind,"Тест звука: "+label)}catch{}};    $("testVolume").onclick=()=>testSound("volume","Volume");    $("testRsi").onclick=()=>testSound("rsi","RSI");    $("testSma").onclick=()=>testSound("sma","SMA21");    $("testVP").onclick=()=>testSound("vp","Volume Profile");    $("testCombo").onclick=()=>testSound("combo","Combo");    $("testAll").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("volume");setTimeout(()=>tone("rsi"),1100);setTimeout(()=>tone("sma"),2200);setTimeout(()=>tone("vp"),3300);log("vp","Тест звуков: Volume → RSI → SMA21 → Volume Profile")}catch{}};
   }
   function injectCss(){
     if(document.getElementById("alertsCss"))return;
