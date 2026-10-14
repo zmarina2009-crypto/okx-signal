@@ -337,7 +337,7 @@
     const stopHit=long?lo<=Number(t.stop):hi>=Number(t.stop);
     const tp1Hit=long?hi>=Number(t.tp1):lo<=Number(t.tp1),tp2Hit=long?hi>=Number(t.tp2):lo<=Number(t.tp2);
     // Conservative tie-break: an already-active stop wins if the same candle also reaches a target.
-    if(stopHit){finishPortion(t,t.remaining,t.stop,t.tp1Done?"STOP_AFTER_TP1":(t.breakevenMoved?"STOP_BREAKEVEN":"STOP"),ts);return true}
+    if(stopHit){const reason=t.breakevenMoved?(t.tp1Done?"STOP_BREAKEVEN_AFTER_TP1":"STOP_BREAKEVEN"):(t.tp1Done?"STOP_AFTER_TP1":"STOP");finishPortion(t,t.remaining,t.stop,reason,ts);return true}
     const risk=Number(t.risk)>0?Number(t.risk):Math.abs(entry-Number(t.stop));
     const beR=Math.max(.1,Math.min(50,Number(t.breakevenR)||1));
     const bePrice=entry+dir*risk*beR;
