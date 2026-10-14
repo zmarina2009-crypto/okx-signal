@@ -81,24 +81,16 @@
     setButton(toggle, key);
   }
 
-  // A single capture-phase handler avoids broken/overridden listeners on individual panels.
-  // It also lets a saved collapsed panel always be expanded again after reload.
-  function handleCollapseClick(ev) {
-    const target = ev.target;
-    const button = target && typeof target.closest === "function"
-      ? target.closest(".collapse-toggle")
-      : null;
-    if (!button) return;
-    const key = button.dataset.collapseKey;
-    if (!key) return;
-    const summary = key === "signal-summary";
-    const panel = summary ? $("signalPanel") : button.closest(".panel");
-    if (!panel) return;
-    ev.preventDefault();
-    ev.stopPropagation();
-    if (typeof ev.stopImmediatePropagation === "function") ev.stopImmediatePropagation();
-    const nextCollapsed = !Boolean(state[key]);
-    setCollapsed(key, panel, nextCollapsed, summary ? [$("signalBody")] : undefined, button);
+  // Bind each toggle to its exact panel; nested .panel elements must not redirect clicks.
+  function bindToggle(button, key, panel, contentProvider) {
+    if (!button || button.dataset.collapseHandlerReady === "1") return;
+    button.dataset.collapseHandlerReady = "1";
+    button.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const contents = typeof contentProvider === "function" ? contentProvider() : undefined;
+      setCollapsed(key, panel, !Boolean(state[key]), contents, button);
+    });
   }
 
   function setupPanel(panel, key, title, headerNode) {
@@ -124,6 +116,7 @@
     }
     const contents = Array.from(panel.children).filter(node => node !== header);
     setCollapsed(key, panel, !!state[key], contents, button);
+    bindToggle(button, key, panel);
   }
   function setupSignalPanel() {
     const panel = $("signalPanel"), body = $("signalBody"), button = $("signalCollapse");
@@ -136,6 +129,7 @@
     // Clear any legacy property handler; a single delegated handler below owns toggles.
     button.onclick = null;
     setCollapsed("signal-summary", panel, !!state["signal-summary"], [body], button);
+    bindToggle(button, "signal-summary", panel, () => [body]);
   }
 
   function setupFilters() {
@@ -161,7 +155,6 @@
   }
 
   function start() {
-    document.addEventListener("click", handleCollapseClick, true);
     setup();
     // Alerts, tester, paper trading and indicator panels are inserted by separate modules.
     // Observe those insertions rather than changing their own logic or polling timers.
