@@ -44,7 +44,6 @@
     button.className = "collapse-toggle";
     button.dataset.collapseKey = key;
     button.setAttribute("aria-controls", panel.id || ("collapse-" + key));
-    button.addEventListener("click", () => setCollapsed(key, panel, !state[key]));
     heading.appendChild(button);
     heading.classList.add("collapse-heading");
     heading.dataset.collapseReady = "1";
@@ -82,6 +81,26 @@
     setButton(toggle, key);
   }
 
+  // A single capture-phase handler avoids broken/overridden listeners on individual panels.
+  // It also lets a saved collapsed panel always be expanded again after reload.
+  function handleCollapseClick(ev) {
+    const target = ev.target;
+    const button = target && typeof target.closest === "function"
+      ? target.closest(".collapse-toggle")
+      : null;
+    if (!button) return;
+    const key = button.dataset.collapseKey;
+    if (!key) return;
+    const summary = key === "signal-summary";
+    const panel = summary ? $("signalPanel") : button.closest(".panel");
+    if (!panel) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (typeof ev.stopImmediatePropagation === "function") ev.stopImmediatePropagation();
+    const nextCollapsed = !Boolean(state[key]);
+    setCollapsed(key, panel, nextCollapsed, summary ? [$("signalBody")] : undefined, button);
+  }
+
   function setupPanel(panel, key, title, headerNode) {
     if (!panel || panel.dataset.collapsibleReady === "1") return;
     panel.dataset.collapsibleReady = "1";
@@ -114,8 +133,7 @@
     button.dataset.collapseKey = "signal-summary";
     button.dataset.collapseTitle = "Сигналы";
     button.classList.add("collapse-toggle");
-    button.addEventListener("click", () => setCollapsed("signal-summary", panel, !state["signal-summary"], [body], button));
-    // Override the previous non-persistent inline-module handler and restore the saved state.
+    // Clear any legacy property handler; a single delegated handler below owns toggles.
     button.onclick = null;
     setCollapsed("signal-summary", panel, !!state["signal-summary"], [body], button);
   }
@@ -143,6 +161,7 @@
   }
 
   function start() {
+    document.addEventListener("click", handleCollapseClick, true);
     setup();
     // Alerts, tester, paper trading and indicator panels are inserted by separate modules.
     // Observe those insertions rather than changing their own logic or polling timers.
