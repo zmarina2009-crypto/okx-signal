@@ -78,35 +78,26 @@
     if (!panel || panel.dataset.collapsibleReady === "1") return;
     panel.dataset.collapsibleReady = "1";
     if (!panel.id) panel.id = "collapse-" + key;
-    const header = headerNode || panel.querySelector(":scope > h2") || panel.querySelector(":scope > .ci-head");
+    let header = headerNode || panel.querySelector(":scope > h2") || panel.querySelector(":scope > .ci-head");
     if (!header) {
-      panel.dataset.collapsibleReady = "0";
-      return;
-    }
-    let heading = header.matches("h2") ? header : header.querySelector("h2");
-    let button;
-    if (heading) {
-      button = decorateHeading(heading, key, panel);
-      if (button) button.dataset.collapseTitle = title;
-      // If the header already carries a dedicated hint, it remains visible while collapsed.
-    } else {
+      // Blocks such as the working-list controls do not have a heading yet.
       const titleBar = document.createElement("div");
       titleBar.className = "collapse-panel-head";
       const h = document.createElement("h2");
       h.textContent = title;
       titleBar.appendChild(h);
       panel.insertBefore(titleBar, panel.firstChild);
-      button = decorateHeading(h, key, panel);
+      header = titleBar;
+    }
+    const heading = header.matches("h2") ? header : header.querySelector("h2");
+    let button = null;
+    if (heading) {
+      button = decorateHeading(heading, key, panel);
       if (button) button.dataset.collapseTitle = title;
-      // The synthetic titlebar is the sole visible row of this panel in its collapsed state.
-      const contents = Array.from(panel.children).filter(node => node !== titleBar);
-      setCollapsed(key, panel, !!state[key], contents, button);
-      return;
     }
     const contents = Array.from(panel.children).filter(node => node !== header);
     setCollapsed(key, panel, !!state[key], contents, button);
   }
-
   function setupSignalPanel() {
     const panel = $("signalPanel"), body = $("signalBody"), button = $("signalCollapse");
     if (!panel || !body || !button || panel.dataset.collapsibleReady === "1") return;
