@@ -81,6 +81,25 @@
   }
   const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   function readAlertCfg(){return read("okx_alerts_v1",{})||{}}
+  function reconcileStartupConfig(){
+    if(!cfg.enabled)return "";
+    const ac=readAlertCfg();
+    const selectedPairs=Array.isArray(ac.selectedPairs)?ac.selectedPairs.map(p=>String(p).toUpperCase()):[];
+    if(!selectedPairs.includes(String(cfg.pair).toUpperCase())){
+      cfg.enabled=false;saveCfg();
+      return "Paper Trading приостановлен: пара "+cfg.pair+" не выбрана в Alerts. Выбери эту пару и снова запусти тест.";
+    }
+    if(cfg.source==="combo"&&!ac.comboEnabled){
+      cfg.enabled=false;saveCfg();
+      return "Paper Trading приостановлен: в Alerts выключено формирование сигналов COMBO.";
+    }
+    const alertTf=tfNorm(ac.alertTf||"15m");
+    if(TF_MS[alertTf]&&cfg.tf!==alertTf){
+      cfg.tf=alertTf;saveCfg();
+      return "Таймфрейм Paper Trading автоматически синхронизирован с Alerts: "+alertTf+".";
+    }
+    return "";
+  }
   function configMatchesSync(){return !!syncState&&syncState.pair===cfg.pair&&tfNorm(syncState.tf)===tfNorm(cfg.tf)&&syncState.source===cfg.source&&Number.isFinite(Number(syncState.lastTs))}
   async function seedSync(){
     if(configMatchesSync())return;
@@ -530,7 +549,9 @@
   function init(){
     build();
     if(!$("paperTradingPanel"))return;
+    const startupStatus=reconcileStartupConfig();
     syncConfig();wire();render();
+    if(startupStatus)setStatus(startupStatus);
     if(cfg.enabled||trades.some(t=>t.status==="OPEN"))catchUpHistory("startup").catch(()=>{});
     else seedSync().catch(()=>{});
   }
