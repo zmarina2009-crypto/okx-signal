@@ -138,7 +138,9 @@ function recordSignal(pair, tf, kind, direction, ts, closePrice) {
   const directed = chosen.filter(s => s.kind !== "volume");
   if (!directed.length || directed.some(s => s.direction !== directed[0].direction)) return;
   const comboTs = Math.max(...chosen.map(s => s.ts));
-  void emit("combo", pair, tf, directed[0].direction, directed[0].price || closePrice, chosen.map(s => s.kind.toUpperCase()).join(" + "));
+  const comboPrice = directed[0].price || closePrice;
+  recordPerformanceSignal(state, { pair, tf, kind: "combo", direction: directed[0].direction, ts: comboTs, price: comboPrice });
+  void emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.map(s => s.kind.toUpperCase()).join(" + "));
   state.recentSignals = state.recentSignals.filter(s => !(s.pair === pair && s.tf === tf && s.ts <= comboTs));
 }
 async function processPair(pair, tf) {
