@@ -7,8 +7,9 @@ This is a separate Node.js worker. It does not change the browser chart, Live co
 - Polls public OKX market candles from the server, so the phone/browser can be off.
 - Sends Telegram messages for SMA touch, Volume spike, and RSI threshold-cross alerts.
 - Optionally sends Combo alerts.
-- Saves processed candle timestamps and cooldown state to a JSON file to reduce duplicate messages after restarts.
-- Exposes `/health` for a hosting health check.
+- Saves processed candle timestamps, cooldown state, signal history, and signal outcomes to the persistent JSON state file.
+- Measures directional price return, maximum favourable excursion (MFE), and maximum adverse excursion (MAE) 1, 4, and 12 hours after each signal.
+- Exposes `/health` for a hosting health check and `/stats?days=7` for a JSON performance summary (up to 90 days).
 
 ## Important first-stage limitation
 
@@ -39,7 +40,7 @@ Create a Railway service from this repository and set the service root directory
 
 For OKX perpetual swaps, use instrument IDs ending in `-SWAP` (for example, `BTC-USDT-SWAP`). The default is `BTC-USDT-SWAP`; plain `BTC-USDT` refers to spot, not the perpetual market.
 
-The worker does not need OKX API keys: it uses public market data only. It does not place orders.
+The worker does not need OKX API keys: it uses public market data only. It does not place orders. Statistics start accumulating after this version is deployed; earlier alerts cannot be reconstructed automatically. Reported directional returns exclude fees, funding, and slippage. A separate simulated-trade report with defined stop/target rules is a later step.
 
 ## Telegram setup
 
