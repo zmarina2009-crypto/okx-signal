@@ -21,7 +21,7 @@ export function recordPerformanceSignal(state, { pair, tf, kind, direction, ts, 
     entryPrice: price, outcomes: {}
   });
   // Keep a bounded history; the persistent Railway volume survives restarts.
-  state.performanceSignals = state.performanceSignals.slice(-10000);
+  state.performanceSignals = state.performanceSignals.slice(-2500);
 }
 
 export function updatePerformanceOutcomes(state, pair, tf, candles) {
