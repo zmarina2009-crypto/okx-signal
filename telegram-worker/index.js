@@ -1,6 +1,7 @@
 import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { recordPerformanceSignal, updatePerformanceOutcomes, buildPerformanceStats } from "./statistics.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -53,7 +54,7 @@ function tfMs(tf) {
 }
 function price(n) { return Number(n).toLocaleString("en-US", { maximumFractionDigits: 8 }); }
 
-let state = { lastClosed: {}, lastAlertAt: {}, lastSmaTouch: {}, recentSignals: [] };
+let state = { lastClosed: {}, lastAlertAt: {}, lastSmaTouch: {}, recentSignals: [], performanceSignals: [] };
 let busy = false;
 let stopped = false;
 
@@ -118,7 +119,7 @@ async function fetchCandles(pair, tf) {
     c: Number(row[4]), v: Number(row[5]), confirm: String(row[8]) === "1"
   })).filter(c => Number.isFinite(c.ts) && c.c > 0).sort((a, b) => a.ts - b.ts);
 }
-function recordSignal(pair, tf, kind, direction, ts, closePrice) {
+function recordSignal(pair, tf, kind, direction, ts, closePrice) {\n  recordPerformanceSignal(state, { pair, tf, kind, direction, ts, price: closePrice });
   state.recentSignals = state.recentSignals.filter(s => Date.now() - s.ts <= tfMs(tf) * COMBO_WINDOW_BARS * 5);
   const id = [pair, tf, kind, direction, ts].join(":");
   if (!state.recentSignals.some(s => s.id === id)) state.recentSignals.push({ id, pair, tf, kind, direction, ts, price: closePrice });
