@@ -39,14 +39,12 @@ export function updatePerformanceOutcomes(state, pair, tf, candles) {
       if (!target || target.ts + tfMs < targetTime) continue;
       const window = closed.filter(c => c.ts + tfMs > signal.detectedAt && c.ts <= target.ts);
       if (!window.length) continue;
-      const favourable = signal.direction === "LONG"
-        ? Math.max(...window.map(c => c.h)) : Math.max(0, signal.entryPrice - Math.min(...window.map(c => c.l)));
       const adverse = signal.direction === "LONG"
         ? Math.max(0, signal.entryPrice - Math.min(...window.map(c => c.l)))
         : Math.max(...window.map(c => c.h)) - signal.entryPrice;
       const mfePct = signal.direction === "LONG"
-        ? (favourable - signal.entryPrice) / signal.entryPrice * 100
-        : (signal.entryPrice - Math.min(...window.map(c => c.l))) / signal.entryPrice * 100;
+        ? Math.max(0, (Math.max(...window.map(c => c.h)) - signal.entryPrice) / signal.entryPrice * 100)
+        : Math.max(0, (signal.entryPrice - Math.min(...window.map(c => c.l))) / signal.entryPrice * 100);
       const maePct = adverse / signal.entryPrice * 100;
       signal.outcomes[horizon.key] = {
         evaluatedAt: Date.now(),
