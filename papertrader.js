@@ -3,6 +3,7 @@
   const CFG_KEY="okx_paper_cfg_v1", TRADES_KEY="okx_paper_trades_v1", SYNC_KEY="okx_paper_sync_v1", MAX_TRADES=500;
   const TF_MS={"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000};
   const defaults={enabled:false,pair:"BTC-USDT-SWAP",tf:"1m",source:"sma",notional:100,atrPeriod:14,atrMult:1.5,targetR:5,breakevenR:1,fee:.05,slip:.02};
+  const MANAGEMENT_MODE="full-position-be-then-5r", LEGACY_MODE="legacy-half-close-at-1r";
   const read=(key,fallback)=>{try{const v=JSON.parse(localStorage.getItem(key)||"null");return v==null?fallback:v}catch{return fallback}};
   let cfg=Object.assign({},defaults,read(CFG_KEY,{}));
   let trades=read(TRADES_KEY,[]);
@@ -21,23 +22,43 @@
   const stamp=ts=>new Date(Number(ts)||Date.now()).toLocaleString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
   function saveCfg(){try{localStorage.setItem(CFG_KEY,JSON.stringify(cfg))}catch(e){}}
   function saveTrades(){try{trades=trades.slice(-MAX_TRADES);localStorage.setItem(TRADES_KEY,JSON.stringify(trades))}catch(e){setStatus("Не удалось сохранить журнал: возможно, заполнено хранилище браузера.")}}
+
   function applyManagementToOpenTrades(){
     const targetR=Math.max(1,Math.min(50,Number(cfg.targetR)||5));
     const breakevenR=Math.max(.1,Math.min(50,Number(cfg.breakevenR)||1));
     let changed=false;
     for(const t of trades){
+      if(!t.managementMode){t.managementMode=LEGACY_MODE;changed=true}
       if(t.status!=="OPEN")continue;
       const entry=Number(t.entry),dir=t.direction==="LONG"?1:-1;
       const risk=Number(t.risk)>0?Number(t.risk):Math.abs(entry-Number(t.stop));
       if(!(entry>0&&risk>0))continue;
-      const tp2=entry+dir*risk*targetR;
+      if(t.managementMode!==MANAGEMENT_MODE&&t.tp1Done&&Number(t.remaining)<1){
+        const exitIndex=Array.isArray(t.exits)?t.exits.findIndex(e=>e&&e.reason==="TP1"):-1;
+        const e=exitIndex>=0?t.exits[exitIndex]:null;
+        const portion=Math.min(1-Number(t.remaining),Math.max(0,Number(e&&e.portion)||.5));
+        const price=Number(e&&e.price)>0?Number(e.price):Number(t.tp1);
+        if(portion>0&&price>0){
+          const gross=(price-entry)*dir*(Number(t.notional)*portion)/entry;
+          const exitNotional=Number(t.notional)*portion*price/entry;
+          const costs=exitNotional*(Number(t.feePct||0)+Number(t.slipPct||0))/100;
+          const exitPnl=e&&Number.isFinite(Number(e.pnl))?Number(e.pnl):gross-costs;
+          t.pnl=(Number(t.pnl)||0)-exitPnl;
+          t.gross=(Number(t.gross)||0)-gross;
+          t.costs=(Number(t.costs)||0)-costs;
+          t.remaining=Math.min(1,Math.max(0,Number(t.remaining)||0)+portion);
+          if(exitIndex>=0)t.exits.splice(exitIndex,1);
+          t.tp1Done=false;changed=true;
+        }
+      }
+      if(t.managementMode!==MANAGEMENT_MODE){t.managementMode=MANAGEMENT_MODE;changed=true}
+      const beTrigger=entry+dir*risk*breakevenR,target=entry+dir*risk*targetR;
       if(Number(t.targetR)!==targetR){t.targetR=targetR;changed=true}
       if(Number(t.breakevenR)!==breakevenR){t.breakevenR=breakevenR;changed=true}
-      if(Math.abs(Number(t.tp2)-tp2)>Math.max(1,Math.abs(tp2))*1e-10){t.tp2=tp2;changed=true}
-      if(t.tp1Done||t.breakevenMoved){
-        if(Number(t.stop)!==entry){t.stop=entry;changed=true}
-        if(t.breakevenMoved!==true){t.breakevenMoved=true;changed=true}
-      }else if(t.breakevenMoved!==false){t.breakevenMoved=false;changed=true}
+      if(Math.abs(Number(t.tp1)-beTrigger)>Math.max(1,Math.abs(beTrigger))*1e-10){t.tp1=beTrigger;changed=true}
+      if(Math.abs(Number(t.tp2)-target)>Math.max(1,Math.abs(target))*1e-10){t.tp2=target;changed=true}
+      if(t.breakevenMoved){if(Number(t.stop)!==entry){t.stop=entry;changed=true}}
+      else if(t.breakevenMoved!==false){t.breakevenMoved=false;changed=true}
     }
     if(changed)saveTrades();
   }
@@ -203,18 +224,20 @@
   }
   function kindAllowed(kind){return cfg.source==="any"||String(kind||"").toLowerCase()===cfg.source}
   function fmtKind(kind){return ({sma:"SMA",rsi:"RSI",volume:"Volume",combo:"COMBO"})[kind]||String(kind||"ALERT").toUpperCase()}
+
   function render(){
     const el=$("ptEnabledBadge");
     if(el){el.textContent=cfg.enabled?"ВХОДЫ АКТИВНЫ":"ВХОДЫ ПРИОСТАНОВЛЕНЫ";el.className="pt-status-badge "+(cfg.enabled?"active":"paused")}
     const open=trades.filter(t=>t.status==="OPEN"),closed=trades.filter(t=>t.status==="CLOSED");
-    const wins=closed.filter(t=>Number(t.pnl)>0),losses=closed.filter(t=>Number(t.pnl)<0);
-    const net=closed.reduce((s,t)=>s+(Number(t.pnl)||0),0);
-    const grossPnl=closed.reduce((s,t)=>s+(Number(t.gross)||0),0);
-    const totalCosts=closed.reduce((s,t)=>s+(Number(t.costs)||0),0);
-    const expectancy=closed.length?net/closed.length:null;
+    const strategyClosed=closed.filter(t=>t.managementMode===MANAGEMENT_MODE);
+    const wins=strategyClosed.filter(t=>Number(t.pnl)>0),losses=strategyClosed.filter(t=>Number(t.pnl)<0);
+    const net=strategyClosed.reduce((s,t)=>s+(Number(t.pnl)||0),0);
+    const grossPnl=strategyClosed.reduce((s,t)=>s+(Number(t.gross)||0),0);
+    const totalCosts=strategyClosed.reduce((s,t)=>s+(Number(t.costs)||0),0);
+    const expectancy=strategyClosed.length?net/strategyClosed.length:null;
     const grossWin=wins.reduce((s,t)=>s+(Number(t.pnl)||0),0),grossLoss=Math.abs(losses.reduce((s,t)=>s+(Number(t.pnl)||0),0));
-    const pf=grossLoss>0?grossWin/grossLoss:null,wr=closed.length?wins.length/closed.length*100:null;
-    $("ptOpen").textContent=String(open.length);$("ptClosed").textContent=String(closed.length);
+    const pf=grossLoss>0?grossWin/grossLoss:null,wr=strategyClosed.length?wins.length/strategyClosed.length*100:null;
+    $("ptOpen").textContent=String(open.length);$("ptClosed").textContent=String(strategyClosed.length);
     $("ptWinRate").textContent=wr==null?"—":wr.toFixed(1)+"%";
     $("ptNet").textContent=(net>=0?"+":"")+fmt(net)+" USDT";
     if($("ptGross"))$("ptGross").textContent=(grossPnl>=0?"+":"")+fmt(grossPnl)+" USDT";
@@ -225,9 +248,9 @@
     const latest=trades.slice().sort((x,y)=>(Number(y.createdAt)||0)-(Number(x.createdAt)||0)).slice(0,60);
     if(body)body.innerHTML=latest.map(t=>{
       const dir=t.direction==="LONG"?"LONG":"SHORT",color=dir==="LONG"?"#27e58a":"#ff5f68";
-      let status=t.status==="OPEN"?(["Открыта",t.tp1Done?"TP1 ✓":"",t.breakevenMoved?"Стоп БУ":""].filter(Boolean).join(" · ")):((t.closeReason||"CLOSED")+" · "+((Number(t.pnl)>=0?"+":"")+fmt(Number(t.pnl))+" USDT"));
-      const source=fmtKind(t.kind);
-      return '<tr><td>'+esc(stamp(t.createdAt))+'</td><td>'+esc(source)+' / '+esc(tfNorm(t.tf))+'</td><td style="color:'+color+';font-weight:800">'+dir+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.tp1)+' / '+fmt(t.tp2)+'</td><td>'+esc(status)+'</td></tr>';
+      let status=t.status==="OPEN"?([ "Открыта",t.breakevenMoved?"Стоп БУ":"" ].filter(Boolean).join(" · ")):((t.managementMode!==MANAGEMENT_MODE?"ИСТОРИЯ 50% TP1 · ":"")+(t.closeReason||"CLOSED")+" · "+((Number(t.pnl)>=0?"+":"")+fmt(Number(t.pnl))+" USDT"));
+      const source=fmtKind(t.kind)+(t.managementMode!==MANAGEMENT_MODE?" · старая модель":"");
+      return '<tr><td>'+esc(stamp(t.signalTs||t.createdAt))+'</td><td>'+esc(source)+' / '+esc(tfNorm(t.tf))+'</td><td style="color:'+color+';font-weight:800">'+dir+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.tp1)+' / '+fmt(t.tp2)+'</td><td>'+esc(status)+'</td></tr>';
     }).join("")||'<tr><td colspan="7" class="small">Пока нет виртуальных сделок. Включи тест и дождись выбранного алерта.</td></tr>';
     if(!latest.length&&body)body.innerHTML='<tr><td colspan="7" class="small">Пока нет виртуальных сделок. Включи тест и дождись выбранного алерта.</td></tr>';
   }
@@ -254,8 +277,8 @@
       '<div class="pt-buttons"><button id="ptStart" class="primary" type="button">▶ Начать тест</button><button id="ptPause" type="button">Ⅱ Приостановить новые входы</button><button id="ptClear" type="button">Очистить журнал</button><span id="ptEnabledBadge" class="pt-status-badge paused">ВХОДЫ ПРИОСТАНОВЛЕНЫ</span></div>'+
       '<div id="ptStatus" class="pt-status">Для старта выбери ту же пару и таймфрейм в панели Alerts. Приостановка запрещает только новые входы; открытые виртуальные позиции продолжают отслеживаться.</div>'+
       '<div class="pt-metrics"><div><small>Открытых позиций</small><b id="ptOpen">0</b></div><div><small>Закрытых сделок</small><b id="ptClosed">0</b></div><div><small>Доля прибыльных</small><b id="ptWinRate">—</b></div><div><small>Сумма PnL после затрат</small><b id="ptNet">0.00 USDT</b></div><div><small>Profit Factor</small><b id="ptPF">—</b></div><div><small>Валовой PnL</small><b id="ptGross">0.00 USDT</b></div><div><small>Комиссии + проскальзывание</small><b id="ptCosts">0.00 USDT</b></div><div><small>Матожидание / сделку</small><b id="ptExpectancy">—</b></div></div>'+
-      '<div class="small" style="margin:10px 0 6px">Правила: начальный стоп = ATR(14) × множитель; 50% позиции закрывается на +1R, оставшиеся 50% — на финальном тейке (по умолчанию +5R). После достижения +1R стоп оставшейся части переносится на цену входа (БУ; уровень настраивается). Стоп БУ равен цене входа; комиссии и проскальзывание продолжают учитываться в PnL. Если активный стоп и тейк попали в одну свечу, консервативно считается, что первым сработал стоп. Одна открытая виртуальная позиция на пару и TF.</div>'+
-      '<div class="tablewrap"><table class="table"><thead><tr><th>Время</th><th>Источник / TF</th><th>Сторона</th><th>Вход</th><th>Стоп</th><th>TP1 / TP2</th><th>Состояние / PnL</th></tr></thead><tbody id="ptTrades"></tbody></table></div>'+
+      '<div class="small" style="margin:10px 0 6px">Правила: начальный стоп = ATR(14) × множитель; вся позиция остаётся открытой до финального тейка (по умолчанию +5R) или стопа. При достижении заданного уровня (по умолчанию +1R) стоп всей позиции переносится на цену входа (БУ); на +1R часть позиции не закрывается. Стоп БУ стоит на цене входа, поэтому комиссии и проскальзывание могут дать небольшой чистый убыток. Если стоп и тейк попали в одну свечу, консервативно первым считается стоп; если в одной свече достигнут триггер БУ и цена вернулась к входу, консервативно фиксируется БУ. Метрики учитывают только сделки новой модели; старые сделки сохранены в журнале как история. Одна открытая виртуальная позиция на пару и TF.</div>'+
+      '<div class="tablewrap"><table class="table"><thead><tr><th>Время</th><th>Источник / TF</th><th>Сторона</th><th>Вход</th><th>Стоп</th><th>Триггер БУ / TP</th><th>Состояние / PnL</th></tr></thead><tbody id="ptTrades"></tbody></table></div>'+
       '<div class="small" style="margin-top:8px">Журнал хранится локально в браузере, максимум 500 сделок. После открытия приложения тест восстанавливает новые сигналы и проверяет пропущенные стопы/тейки по закрытым историческим свечам. Для теста выбери в Alerts ту же пару, таймфрейм и источник. Эти сделки не являются реальными ордерами и не гарантируют будущую доходность.</div>';
     footer.parentNode.insertBefore(panel,footer);
     const style=document.createElement("style");
@@ -307,7 +330,7 @@
       const now=Date.now(),entryCost=cfg.notional*(cfg.fee+cfg.slip)/100;
       const trade={
         id:"pt-"+now+"-"+Math.random().toString(36).slice(2,8),signalId:id,pair,tf,kind,direction:meta.direction,
-        label:String(meta.label||kind),entry,atr,atrMult:cfg.atrMult,risk,stop:entry-dir*risk,tp1:entry+dir*risk,tp2:entry+dir*risk*cfg.targetR,targetR:cfg.targetR,breakevenR:cfg.breakevenR,breakevenMoved:false,
+        label:String(meta.label||kind),entry,atr,atrMult:cfg.atrMult,risk,stop:entry-dir*risk,tp1:entry+dir*risk*cfg.breakevenR,tp2:entry+dir*risk*cfg.targetR,targetR:cfg.targetR,breakevenR:cfg.breakevenR,breakevenMoved:false,managementMode:MANAGEMENT_MODE,
         notional:cfg.notional,feePct:cfg.fee,slipPct:cfg.slip,pnl:-entryCost,gross:0,costs:entryCost,remaining:1,tp1Done:false,
         status:"OPEN",createdAt:now,signalTs,lastProcessedTs:signalTs,exits:[]
       };
@@ -329,31 +352,40 @@
       t.remaining=0;t.status="CLOSED";t.closeReason=reason;t.finalExit=Number(price);t.closedAt=Date.now();
     }
   }
+
   function processBar(t,b){
     const hi=Number(b.h),lo=Number(b.l),ts=Number(b.ts);
     if(![hi,lo,ts].every(Number.isFinite)||ts<=Number(t.lastProcessedTs||t.signalTs))return false;
     t.lastProcessedTs=ts;
     const long=t.direction==="LONG",dir=long?1:-1,entry=Number(t.entry);
     const stopHit=long?lo<=Number(t.stop):hi>=Number(t.stop);
-    const tp1Hit=long?hi>=Number(t.tp1):lo<=Number(t.tp1),tp2Hit=long?hi>=Number(t.tp2):lo<=Number(t.tp2);
-    // Conservative tie-break: an already-active stop wins if the same candle also reaches a target.
-    if(stopHit){const reason=t.breakevenMoved?(t.tp1Done?"STOP_BREAKEVEN_AFTER_TP1":"STOP_BREAKEVEN"):(t.tp1Done?"STOP_AFTER_TP1":"STOP");finishPortion(t,t.remaining,t.stop,reason,ts);return true}
+    const targetHit=long?hi>=Number(t.tp2):lo<=Number(t.tp2);
+    if(stopHit){
+      const reason=t.breakevenMoved?"STOP_BREAKEVEN":"STOP";
+      finishPortion(t,t.remaining,t.stop,reason,ts);
+      return true;
+    }
     const risk=Number(t.risk)>0?Number(t.risk):Math.abs(entry-Number(t.stop));
     const beR=Math.max(.1,Math.min(50,Number(t.breakevenR)||1));
     const bePrice=entry+dir*risk*beR;
     const beHit=long?hi>=bePrice:lo<=bePrice;
     if(!t.breakevenMoved&&beHit){
-      t.stop=entry;
-      t.breakevenMoved=true;
-      t.breakevenMovedAt=ts;
+      t.stop=entry;t.breakevenMoved=true;t.breakevenMovedAt=ts;
+      const returnedToEntry=long?lo<=entry:hi>=entry;
+      if(returnedToEntry){
+        finishPortion(t,t.remaining,entry,"STOP_BREAKEVEN",ts);
+        return true;
+      }
+      if(targetHit){
+        finishPortion(t,t.remaining,t.tp2,"TP"+(Number(t.targetR)||5)+"R",ts);
+        return true;
+      }
+      return false;
     }
-    if(!t.tp1Done&&tp1Hit){
-      finishPortion(t,Math.min(.5,t.remaining),t.tp1,"TP1",ts);
-      t.tp1Done=true;
-      // At the default +1R trigger, the remaining half is protected at entry after TP1.
-      if(!t.breakevenMoved){t.stop=entry;t.breakevenMoved=true;t.breakevenMovedAt=ts}
+    if(targetHit){
+      finishPortion(t,t.remaining,t.tp2,"TP"+(Number(t.targetR)||5)+"R",ts);
+      return true;
     }
-    if(t.status==="OPEN"&&tp2Hit){finishPortion(t,t.remaining,t.tp2,"TP2",ts);return true}
     return false;
   }
   async function catchUpHistory(reason="periodic"){
