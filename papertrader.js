@@ -488,6 +488,24 @@
     $("ptStart").onclick=async()=>{
       const wasEnabled=cfg.enabled;
       collectConfig();
+      const ac=readAlertCfg();
+      const alertTf=tfNorm(ac.alertTf||"15m");
+      const selectedPairs=Array.isArray(ac.selectedPairs)?ac.selectedPairs.map(p=>String(p).toUpperCase()):[];
+      if(!selectedPairs.length||!selectedPairs.includes(cfg.pair)){
+        cfg.enabled=false;saveCfg();render();
+        setStatus("Тест не запущен: в Alerts нужно выбрать пару "+cfg.pair+". Пока пара не выбрана, сигналы не поступают и сделки не открываются.");
+        return;
+      }
+      if(cfg.source==="combo"&&!ac.comboEnabled){
+        cfg.enabled=false;saveCfg();render();
+        setStatus("Тест не запущен: источник COMBO выбран, но в Alerts выключено формирование комбо-сигналов. Включи COMBO в Alerts и снова нажми «Начать тест».");
+        return;
+      }
+      if(cfg.tf!==alertTf){
+        cfg.tf=alertTf;
+        saveCfg();
+        syncConfig();
+      }
       try{
         await seedSync();
         // When resuming a paused test, skip signals from the paused interval,
@@ -495,8 +513,7 @@
         if(!wasEnabled)await advanceSyncToLatest();
       }catch(e){setStatus("Не удалось запустить тест: "+String(e&&e.message||e));return}
       cfg.enabled=true;saveCfg();render();
-      const ac=readAlertCfg(),selected=(ac.selectedPairs||[]).includes(cfg.pair),tfMatch=tfNorm(ac.alertTf||"15m")===tfNorm(cfg.tf);
-      setStatus("Тест включён. "+(selected&&tfMatch?"Пары и таймфрейм Alerts совпадают.":"Проверь Alerts: нужны та же пара, таймфрейм и выбранный источник.")+" Виртуальные позиции; реальные ордера не отправляются.");
+      setStatus("Тест включён: "+cfg.pair+" / "+cfg.tf+" / источник "+fmtKind(cfg.source)+". Пара и таймфрейм синхронизированы с Alerts. Виртуальные позиции; реальные ордера не отправляются.");
       catchUpHistory("start").catch(()=>{});
     };
     $("ptPause").onclick=async()=>{
