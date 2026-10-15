@@ -415,7 +415,11 @@
       await seedSync();
       const pair=String(cfg.pair||"BTC-USDT-SWAP").toUpperCase(),tf=tfNorm(cfg.tf||"1m");
       const step=TF_MS[tf]||60000,alertCfg=readAlertCfg();
-      const matchingAlerts=String(alertCfg.alertTf||"15m").toLowerCase()===tf&&(alertCfg.selectedPairs||[]).includes(pair);
+      const alertTf=tfNorm(alertCfg.alertTf||"15m");
+      const selectedAlertPairs=Array.isArray(alertCfg.selectedPairs)?alertCfg.selectedPairs.map(x=>String(x).toUpperCase()):[];
+      const pairSelected=selectedAlertPairs.includes(pair),timeframeMatches=alertTf===tf;
+      const comboReady=cfg.source!=="combo"||!!alertCfg.comboEnabled;
+      const matchingAlerts=pairSelected&&timeframeMatches&&comboReady;
       const openMatching=trades.filter(t=>t.status==="OPEN"&&String(t.pair).toUpperCase()===pair&&tfNorm(t.tf)===tf);
       const cursor=Number(syncState.lastTs)||Date.now();
       const indicatorLookback=Math.max(120,Number(alertCfg.volumePeriod)||20,(Number(alertCfg.rsiPeriod)||14)+5,(Number(alertCfg.smaPeriod)||21)+10);
@@ -434,10 +438,12 @@
         setStatus("Нет новых закрытых свечей для синхронизации. Последняя точка: "+stamp(latest)+".");
         return;
       }
-      const events=matchingAlerts?historicalSignals(bars,pair,tf,alertCfg).filter(x=>x.ts>cursor&&kindAllowed(x.kind)).reduce((map,x)=>{
+      const candidateSignals=matchingAlerts?historicalSignals(bars,pair,tf,alertCfg).filter(x=>x.ts>cursor&&kindAllowed(x.kind)):[];
+      const candidateComboCount=candidateSignals.filter(x=>x.kind==="combo").length;
+      const events=candidateSignals.reduce((map,x)=>{
         if(!map.has(x.ts))map.set(x.ts,[]);
         map.get(x.ts).push(x);return map;
-      },new Map()):new Map();
+      },new Map());
       const startReplay=Math.min(cursor,...tradeStarts);
       const replayBars=bars.filter(b=>b.ts>startReplay&&b.ts<=bars.at(-1).ts);
       for(const bar of replayBars){
@@ -484,8 +490,14 @@
       // Persist trades before advancing the cursor; on a crash we can safely replay and deduplicate.
       saveTrades();saveSync();render();
       const closedAfter=trades.filter(t=>t.status==="CLOSED").length;
-      const resultText="Синхронизация завершена: проверено "+barCount+" новых свечей; новых сделок "+created+"; закрыто за восстановление "+Math.max(0,closedAfter-closedBefore)+". Последняя свеча "+stamp(latestTs)+".";
-      setStatus(resultText+(cfg.enabled?" Тест активен; новые сигналы восстановлены по истории.":" Новые входы приостановлены."));
+      const resultText="Синхронизация завершена: проверено "+barCount+" новых свечей; найдено подходящих сигналов "+candidateSignals.length+(cfg.source==="combo"?" (COMBO: "+candidateComboCount+")":"")+"; новых сделок "+created+"; закрыто за восстановление "+Math.max(0,closedAfter-closedBefore)+". Последняя свеча "+stamp(latestTs)+".";
+      let blocker="";
+      if(cfg.enabled&&!pairSelected)blocker="ВХОДЫ ЗАБЛОКИРОВАНЫ: пара "+pair+" не выбрана в Alerts.";
+      else if(cfg.enabled&&!timeframeMatches)blocker="ВХОДЫ ЗАБЛОКИРОВАНЫ: таймфрейм Paper Trading "+tf+" не совпадает с Alerts "+alertTf+".";
+      else if(cfg.enabled&&!comboReady)blocker="ВХОДЫ ЗАБЛОКИРОВАНЫ: в Alerts выключено формирование COMBO.";
+      else if(cfg.enabled&&candidateSignals.length===0)blocker=cfg.source==="combo"?"На новых свечах после точки запуска не найдено подходящих COMBO-сигналов. Старые сигналы до запуска не открываются.":"На новых свечах после точки запуска не найдено сигналов выбранного источника.";
+      else if(cfg.enabled&&candidateSignals.length>0&&created===0)blocker="Сигналы найдены, но новые позиции не открыты. Проверь журнал и наличие уже открытой позиции по этой паре/таймфрейму.";
+      setStatus(resultText+(blocker?" "+blocker:cfg.enabled?" Тест активен.":" Новые входы приостановлены."));
     }catch(e){
       console.warn("Paper Trading history replay",e);
       setStatus("Не удалось восстановить тест по истории: "+String(e&&e.message||e)+". Попробую снова автоматически.");
