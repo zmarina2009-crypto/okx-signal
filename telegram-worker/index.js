@@ -119,7 +119,8 @@ async function fetchCandles(pair, tf) {
     c: Number(row[4]), v: Number(row[5]), confirm: String(row[8]) === "1"
   })).filter(c => Number.isFinite(c.ts) && c.c > 0).sort((a, b) => a.ts - b.ts);
 }
-function recordSignal(pair, tf, kind, direction, ts, closePrice) {\n  recordPerformanceSignal(state, { pair, tf, kind, direction, ts, price: closePrice });
+function recordSignal(pair, tf, kind, direction, ts, closePrice) {
+  recordPerformanceSignal(state, { pair, tf, kind, direction, ts, price: closePrice });
   state.recentSignals = state.recentSignals.filter(s => Date.now() - s.ts <= tfMs(tf) * COMBO_WINDOW_BARS * 5);
   const id = [pair, tf, kind, direction, ts].join(":");
   if (!state.recentSignals.some(s => s.id === id)) state.recentSignals.push({ id, pair, tf, kind, direction, ts, price: closePrice });
@@ -147,6 +148,7 @@ async function processPair(pair, tf) {
   const live = candles.find(c => !c.confirm) || null;
   if (closed.length < 3) return;
   const last = closed.at(-1);
+  updatePerformanceOutcomes(state, pair, tf, closed);
   const candleKey = pair + ":" + tf;
   const lastSeen = state.lastClosed[candleKey] || 0;
 
@@ -215,7 +217,14 @@ async function cycle() {
   }
 }
 const server = http.createServer((req, res) => {
-  if (req.url === "/health") {
+  const requestUrl = new URL(req.url || "/", "http://localhost");
+  if (requestUrl.pathname === "/stats") {
+    const days = requestUrl.searchParams.get("days") || "7";
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    res.end(JSON.stringify(buildPerformanceStats(state, days), null, 2));
+    return;
+  }
+  if (requestUrl.pathname === "/health") {
     res.writeHead(BOT_TOKEN && CHAT_ID ? 200 : 503, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: Boolean(BOT_TOKEN && CHAT_ID), service: "okx-signal-telegram-worker", pairs: PAIRS.length, timeframes: TIMEFRAMES, intervalMs: POLL_MS }));
     return;
