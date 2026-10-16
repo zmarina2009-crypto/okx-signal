@@ -359,9 +359,21 @@ function draw(e){window.candles=candles;window.chartState=chartState;
   function drawUserNotes(){
     chartState.noteHitboxes=[];
     const tf=$("tf")?.value||"15m",indexByTs=new Map(series.map((c,i)=>[Number(c.ts),i]));
-    const notes=readChartNotes().filter(n=>n.pair===currentPair&&n.tf===tf).slice(-100);
+    // Notes use absolute time and price, not the timeframe on which they were created.
+    // Thus a 4H note remains at the same point when viewing 15m, 5m or 1m.
+    const notes=readChartNotes().filter(n=>n.pair===currentPair).slice(-100);
+    const tfMs=({"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1H":3600000,"4H":14400000,"1D":86400000})[tf]||900000;
     notes.forEach(note=>{
-      const gi=indexByTs.get(Number(note.ts));
+      const noteTs=Number(note.ts);
+      let gi=indexByTs.get(noteTs);
+      // If the exact candle open is absent, use the candle interval containing this timestamp.
+      if(gi==null){
+        for(let i=series.length-1;i>=0;i--){
+          const ts=Number(series[i].ts);
+          if(Number.isFinite(ts)&&ts<=noteTs&&noteTs<ts+tfMs){gi=i;break}
+          if(Number.isFinite(ts)&&ts<noteTs-tfMs)break;
+        }
+      }
       if(gi==null||gi<begin||gi>=begin+a.length)return;
       const x=X(gi),anchor=Y(Number(note.price));
       if(!Number.isFinite(x)||!Number.isFinite(anchor)||anchor<p.t+11||anchor>p.t+mainH-11)return;
