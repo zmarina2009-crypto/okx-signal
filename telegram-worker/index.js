@@ -24,6 +24,45 @@ const ENABLE_COMBO = enabled(process.env.ALERT_COMBO, false);
 const COMBO_COUNT = clamp(Number(process.env.COMBO_COUNT || 2), 2, 3);
 const COMBO_WINDOW_BARS = clamp(Number(process.env.COMBO_WINDOW_BARS || 1), 1, 5);
 const STATE_FILE = process.env.STATE_FILE || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "state.json") : "./state.json");
+const ALERT_RULES = loadAlertRules();
+function loadAlertRules() {
+  const raw = process.env.OKX_ALERT_RULES;
+  if (!raw) {
+    return PAIRS.flatMap(pair => TIMEFRAMES.map(tf => ({
+      pair, tf, telegram: true,
+      volume: ENABLE_VOLUME, rsi: ENABLE_RSI, sma: ENABLE_SMA, combo: ENABLE_COMBO
+    })));
+  }
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch { throw new Error("OKX_ALERT_RULES must be valid JSON."); }
+  if (!Array.isArray(parsed) || parsed.length < 1) {
+    throw new Error("OKX_ALERT_RULES must be a non-empty JSON array.");
+  }
+  const validTf = /^\d+(m|h|d|w)$/i;
+  const unique = new Map();
+  for (const item of parsed) {
+    const pair = String(item?.pair || "").trim().toUpperCase();
+    const tf = String(item?.tf || "").trim().toLowerCase();
+    if (!/^[A-Z0-9]+-USDT-SWAP$/.test(pair)) throw new Error("Invalid perpetual pair in OKX_ALERT_RULES: " + pair);
+    if (!validTf.test(tf)) throw new Error("Invalid timeframe in OKX_ALERT_RULES: " + tf);
+    const key = pair + ":" + tf;
+    unique.set(key, {
+      pair, tf,
+      telegram: item.telegram == null ? true : item.telegram === true,
+      volume: item.volume == null ? ENABLE_VOLUME : item.volume === true,
+      rsi: item.rsi == null ? ENABLE_RSI : item.rsi === true,
+      sma: item.sma == null ? ENABLE_SMA : item.sma === true,
+      combo: item.combo == null ? ENABLE_COMBO : item.combo === true
+    });
+  }
+  const rules = [...unique.values()];
+  if (new Set(rules.map(rule => rule.pair)).size > 20) {
+    throw new Error("OKX_ALERT_RULES supports at most 20 distinct pairs.");
+  }
+  if (rules.length > 100) throw new Error("OKX_ALERT_RULES supports at most 100 pair/timeframe rules.");
+  return rules;
+}
 
 function csv(value) { return [...new Set(String(value).split(",").map(s => s.trim()).filter(Boolean))]; }
 function clamp(n, min, max) { return Math.min(max, Math.max(min, Number.isFinite(n) ? n : min)); }
@@ -119,13 +158,13 @@ async function fetchCandles(pair, tf) {
     c: Number(row[4]), v: Number(row[5]), confirm: String(row[8]) === "1"
   })).filter(c => Number.isFinite(c.ts) && c.c > 0).sort((a, b) => a.ts - b.ts);
 }
-function recordSignal(pair, tf, kind, direction, ts, closePrice) {
+function recordSignal(pair, tf, kind, direction, ts, closePrice, rule) {
   recordPerformanceSignal(state, { pair, tf, kind, direction, ts, price: closePrice });
   state.recentSignals = state.recentSignals.filter(s => Date.now() - s.ts <= tfMs(tf) * COMBO_WINDOW_BARS * 5);
   const id = [pair, tf, kind, direction, ts].join(":");
   if (!state.recentSignals.some(s => s.id === id)) state.recentSignals.push({ id, pair, tf, kind, direction, ts, price: closePrice });
   state.recentSignals = state.recentSignals.slice(-500);
-  if (!ENABLE_COMBO) return;
+  if (!rule.combo) return;
   const windowMs = tfMs(tf) * COMBO_WINDOW_BARS;
   const recent = state.recentSignals.filter(s => s.pair === pair && s.tf === tf && Math.abs(ts - s.ts) <= windowMs);
   const byKind = new Map();
@@ -140,10 +179,10 @@ function recordSignal(pair, tf, kind, direction, ts, closePrice) {
   const comboTs = Math.max(...chosen.map(s => s.ts));
   const comboPrice = directed[0].price || closePrice;
   recordPerformanceSignal(state, { pair, tf, kind: "combo", direction: directed[0].direction, ts: comboTs, price: comboPrice });
-  void emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.map(s => s.kind.toUpperCase()).join(" + "));
+  if (rule.telegram) void emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.map(s => s.kind.toUpperCase()).join(" + "));
   state.recentSignals = state.recentSignals.filter(s => !(s.pair === pair && s.tf === tf && s.ts <= comboTs));
 }
-async function processPair(pair, tf) {
+async function processPair(pair, tf, rule) {
   const candles = await fetchCandles(pair, tf);
   if (candles.length < Math.max(SMA_PERIOD, VOLUME_PERIOD, RSI_PERIOD) + 2) return;
   const closed = candles.filter(c => c.confirm);
@@ -157,33 +196,33 @@ async function processPair(pair, tf) {
   if (last.ts > lastSeen) {
     state.lastClosed[candleKey] = last.ts;
     const end = closed.length;
-    if (ENABLE_VOLUME && end >= VOLUME_PERIOD + 1) {
+    if (rule.volume && end >= VOLUME_PERIOD + 1) {
       const base = closed.slice(end - VOLUME_PERIOD - 1, end - 1).map(c => c.v);
       const avg = average(base);
       const multiple = avg > 0 ? last.v / avg : 0;
       if (multiple >= VOLUME_MULT) {
         const direction = last.c >= last.o ? "LONG" : "SHORT";
-        await emit("volume", pair, tf, direction, last.c, `Объём: ×${multiple.toFixed(1)} от среднего`);
-        recordSignal(pair, tf, "volume", direction, last.ts, last.c);
+        if (rule.telegram) await emit("volume", pair, tf, direction, last.c, `Объём: ×${multiple.toFixed(1)} от среднего`);
+        recordSignal(pair, tf, "volume", direction, last.ts, last.c, rule);
       }
     }
-    if (ENABLE_RSI) {
+    if (rule.rsi) {
       const value = rsi(closed, RSI_PERIOD, end);
       const prev = rsi(closed, RSI_PERIOD, end - 1);
       if (value != null && prev != null) {
         if (prev >= RSI_LOW && value < RSI_LOW) {
-          await emit("rsi", pair, tf, "LONG", last.c, `RSI: ${value.toFixed(1)} — выход ниже ${RSI_LOW}`);
-          recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c);
+          if (rule.telegram) await emit("rsi", pair, tf, "LONG", last.c, `RSI: ${value.toFixed(1)} — выход ниже ${RSI_LOW}`);
+          recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c, rule);
         }
         if (prev <= RSI_HIGH && value > RSI_HIGH) {
-          await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`);
-          recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c);
+          if (rule.telegram) await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`);
+          recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c, rule);
         }
       }
     }
   }
 
-  if (ENABLE_SMA && live) {
+  if (rule.sma && live) {
     const m = sma(closed, SMA_PERIOD);
     if (m) {
       const tolerance = SMA_TOLERANCE_PCT / 100;
@@ -194,8 +233,8 @@ async function processPair(pair, tf) {
         const prevClose = closed.at(-1).c;
         const prevSma = sma(closed.slice(0, -1), SMA_PERIOD) || m;
         const direction = prevClose < prevSma ? "LONG" : prevClose > prevSma ? "SHORT" : live.c >= m ? "LONG" : "SHORT";
-        await emit("sma", pair, tf, direction, live.c, `SMA${SMA_PERIOD}: ${price(m)}`);
-        recordSignal(pair, tf, "sma", direction, live.ts, live.c);
+        if (rule.telegram) await emit("sma", pair, tf, direction, live.c, `SMA${SMA_PERIOD}: ${price(m)}`);
+        recordSignal(pair, tf, "sma", direction, live.ts, live.c, rule);
       }
       state.lastSmaTouch[touchKey] = touched;
     }
@@ -206,13 +245,11 @@ async function cycle() {
   if (busy || stopped) return;
   busy = true;
   try {
-    for (const pair of PAIRS) {
-      for (const tf of TIMEFRAMES) {
-        if (stopped) break;
-        try { await processPair(pair, tf); }
-        catch (err) { console.error(`Pair poll failed ${pair} ${tf}:`, err.message); }
-        await new Promise(resolve => setTimeout(resolve, 180));
-      }
+    for (const rule of ALERT_RULES) {
+      if (stopped) break;
+      try { await processPair(rule.pair, rule.tf, rule); }
+      catch (err) { console.error(`Pair poll failed ${rule.pair} ${rule.tf}:`, err.message); }
+      await new Promise(resolve => setTimeout(resolve, 180));
     }
   } finally {
     busy = false;
@@ -226,9 +263,14 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(buildPerformanceStats(state, days), null, 2));
     return;
   }
+  if (requestUrl.pathname === "/config") {
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, volume, rsi, sma, combo }) => ({ pair, tf, telegram, volume, rsi, sma, combo })) }, null, 2));
+    return;
+  }
   if (requestUrl.pathname === "/health") {
     res.writeHead(BOT_TOKEN && CHAT_ID ? 200 : 503, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: Boolean(BOT_TOKEN && CHAT_ID), service: "okx-signal-telegram-worker", pairs: PAIRS.length, timeframes: TIMEFRAMES, intervalMs: POLL_MS }));
+    res.end(JSON.stringify({ ok: Boolean(BOT_TOKEN && CHAT_ID), service: "okx-signal-telegram-worker", pairs: new Set(ALERT_RULES.map(rule => rule.pair)).size, rules: ALERT_RULES.length, timeframes: [...new Set(ALERT_RULES.map(rule => rule.tf))], intervalMs: POLL_MS }));
     return;
   }
   res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
