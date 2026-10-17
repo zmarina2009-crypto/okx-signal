@@ -5,7 +5,7 @@
   const endpointKey="okx_telegram_config_endpoint_v1";
   const tfOptions=["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","1w"];
   let rules=[];
-  function endpoint(){return String($("tgConfigEndpoint").value||"").trim().replace(/\\/+$/,"");}
+  function endpoint(){return String($("tgConfigEndpoint").value||"").trim().replace(/\/+$/,"");}
   function setStatus(message,kind="info"){const el=$("tgConfigStatus");if(!el)return;el.textContent=message;el.className="tg-config-status "+kind;}
   function make(tag,attrs={},text){const el=document.createElement(tag);Object.entries(attrs).forEach(([k,v])=>{if(k==="class")el.className=v;else if(k==="type"||k==="placeholder"||k==="aria-label"||k==="list"||k==="value")el.setAttribute(k,v);else el[k]=v});if(text!=null)el.textContent=text;return el;}
   function normalizeRule(r){return {pair:String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf:String(r.tf||"15m").trim().toLowerCase(),telegram:r.telegram!==false,volume:r.volume===true,rsi:r.rsi===true,sma:r.sma===true,combo:r.combo===true};}
