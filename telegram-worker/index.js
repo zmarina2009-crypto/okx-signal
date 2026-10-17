@@ -194,7 +194,6 @@ async function processPair(pair, tf, rule) {
   const candles = await fetchCandles(pair, tf);
   if (candles.length < Math.max(SMA_PERIOD, VOLUME_PERIOD, RSI_PERIOD) + 2) return;
   const closed = candles.filter(c => c.confirm);
-  const live = candles.find(c => !c.confirm) || null;
   if (closed.length < 3) return;
   const last = closed.at(-1);
   updatePerformanceOutcomes(state, pair, tf, closed);
@@ -307,7 +306,8 @@ const server = http.createServer((req, res) => {
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify({ ok: true, count: ALERT_RULES.length, pairs: new Set(ALERT_RULES.map(rule => rule.pair)).size }));
       } catch (err) {
-        res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
+        const persistenceFailure = String(err.message || "").startsWith("State persistence failed:");
+        res.writeHead(persistenceFailure ? 500 : 400, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify({ error: err.message || "Invalid configuration" }));
       }
     });
