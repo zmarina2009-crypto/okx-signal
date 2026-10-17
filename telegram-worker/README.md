@@ -30,6 +30,9 @@ Create a Railway service from this repository and set the service root directory
 
 - `OKX_PAIRS=BTC-USDT-SWAP,ETH-USDT-SWAP`
 - `OKX_TIMEFRAMES=1m,5m,15m,1h,4h`
+- `OKX_ALERT_RULES` — optional JSON array for independent pair/timeframe rules (overrides the pair/timeframe matrix above). Each item supports `pair`, `tf`, and booleans `telegram`, `volume`, `rsi`, `sma`, `combo`. Up to 20 distinct perpetual pairs and 100 pair/timeframe rules are accepted.
+  Example: `[{"pair":"BTC-USDT-SWAP","tf":"1m","telegram":true,"volume":false,"rsi":true,"sma":true,"combo":true},{"pair":"BTC-USDT-SWAP","tf":"1h","telegram":true,"volume":true,"rsi":false,"sma":false,"combo":false},{"pair":"ETH-USDT-SWAP","tf":"15m","telegram":true,"volume":true,"rsi":true,"sma":false,"combo":true}]`
+- `GET /config` — read-only endpoint showing the active rules without secrets. `GET /health` now reports distinct pair count, rule count, and active timeframes.
 - `POLL_INTERVAL_MS=20000` (minimum 10 seconds)
 - `ALERT_SMA=true`, `SMA_PERIOD=21`, `SMA_TOLERANCE_PCT=0`
 - `ALERT_VOLUME=true`, `VOLUME_PERIOD=20`, `VOLUME_MULT=2`
