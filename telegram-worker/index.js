@@ -108,12 +108,15 @@ async function loadState() {
     }
   } catch {}
 }
-async function saveState() {
+async function saveState(snapshot = state) {
   try {
     await fs.mkdir(path.dirname(path.resolve(STATE_FILE)), { recursive: true });
-    await fs.writeFile(STATE_FILE, JSON.stringify(state), "utf8");
+    const tmpFile = STATE_FILE + ".tmp";
+    await fs.writeFile(tmpFile, JSON.stringify(snapshot), "utf8");
+    await fs.rename(tmpFile, STATE_FILE);
   } catch (err) {
     console.error("Could not persist state:", err.message);
+    throw new Error("State persistence failed: " + err.message, { cause: err });
   }
 }
 async function sendTelegram(text) {
@@ -197,8 +200,9 @@ async function processPair(pair, tf, rule) {
   updatePerformanceOutcomes(state, pair, tf, closed);
   const candleKey = pair + ":" + tf;
   const lastSeen = state.lastClosed[candleKey] || 0;
+  const isNewClosedCandle = last.ts > lastSeen;
 
-  if (last.ts > lastSeen) {
+  if (isNewClosedCandle) {
     state.lastClosed[candleKey] = last.ts;
     const end = closed.length;
     if (rule.volume && end >= VOLUME_PERIOD + 1) {
@@ -227,21 +231,16 @@ async function processPair(pair, tf, rule) {
     }
   }
 
-  if (rule.sma && live) {
+  // SMA touches are evaluated only after a candle is confirmed, avoiding intrabar/repainting alerts.
+  if (rule.sma && isNewClosedCandle) {
     const m = sma(closed, SMA_PERIOD);
-    if (m) {
-      const tolerance = SMA_TOLERANCE_PCT / 100;
-      const touched = live.l <= m && live.h >= m || (tolerance > 0 && Math.abs(live.c - m) / m <= tolerance);
-      const touchKey = candleKey + ":touch";
-      const wasTouched = Boolean(state.lastSmaTouch[touchKey]);
-      if (touched && !wasTouched) {
-        const prevClose = closed.at(-1).c;
-        const prevSma = sma(closed.slice(0, -1), SMA_PERIOD) || m;
-        const direction = prevClose < prevSma ? "LONG" : prevClose > prevSma ? "SHORT" : live.c >= m ? "LONG" : "SHORT";
-        if (rule.telegram) await emit("sma", pair, tf, direction, live.c, `SMA${SMA_PERIOD}: ${price(m)}`);
-        recordSignal(pair, tf, "sma", direction, live.ts, live.c, rule);
-      }
-      state.lastSmaTouch[touchKey] = touched;
+    if (m && last.l <= m && last.h >= m) {
+      const previous = closed.at(-2);
+      const previousSma = sma(closed.slice(0, -1), SMA_PERIOD);
+      // Follow the pre-touch trend: above SMA => LONG; below SMA => SHORT.
+      const direction = previous && previousSma != null && previous.c >= previousSma ? "LONG" : "SHORT";
+      if (rule.telegram) await emit("sma", pair, tf, direction, last.c, `SMA${SMA_PERIOD}: ${price(m)} (закрытая свеча)`);
+      recordSignal(pair, tf, "sma", direction, last.ts, last.c, rule);
     }
   }
   await saveState();
@@ -301,9 +300,10 @@ const server = http.createServer((req, res) => {
         const parsed = JSON.parse(body || "{}");
         const rules = loadAlertRules(JSON.stringify(parsed.rules));
         if (!rules.length) throw new Error("At least one rule is required.");
+        // Persist first; do not acknowledge or activate a config that cannot survive restart.
+        await saveState({ ...state, alertRules: rules });
         ALERT_RULES = rules;
         state.alertRules = rules;
-        await saveState();
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify({ ok: true, count: ALERT_RULES.length, pairs: new Set(ALERT_RULES.map(rule => rule.pair)).size }));
       } catch (err) {
