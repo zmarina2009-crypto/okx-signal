@@ -6,6 +6,8 @@ import { recordPerformanceSignal, updatePerformanceOutcomes, buildPerformanceSta
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
+const CONFIG_API_TOKEN = process.env.CONFIG_API_TOKEN || "";
+const CONFIG_ALLOWED_ORIGIN = process.env.CONFIG_ALLOWED_ORIGIN || "https://zmarina2009-crypto.github.io";
 const PAIRS = csv(process.env.OKX_PAIRS || "BTC-USDT-SWAP");
 const TIMEFRAMES = csv(process.env.OKX_TIMEFRAMES || "15m");
 const POLL_MS = Math.max(10_000, Number(process.env.POLL_INTERVAL_MS || 20_000));
@@ -24,9 +26,8 @@ const ENABLE_COMBO = enabled(process.env.ALERT_COMBO, false);
 const COMBO_COUNT = clamp(Number(process.env.COMBO_COUNT || 2), 2, 3);
 const COMBO_WINDOW_BARS = clamp(Number(process.env.COMBO_WINDOW_BARS || 1), 1, 5);
 const STATE_FILE = process.env.STATE_FILE || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "state.json") : "./state.json");
-const ALERT_RULES = loadAlertRules();
-function loadAlertRules() {
-  const raw = process.env.OKX_ALERT_RULES;
+let ALERT_RULES = loadAlertRules();
+function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
   if (!raw) {
     return PAIRS.flatMap(pair => TIMEFRAMES.map(tf => ({
       pair, tf, telegram: true,
@@ -45,7 +46,7 @@ function loadAlertRules() {
     const pair = String(item?.pair || "").trim().toUpperCase();
     const tf = String(item?.tf || "").trim().toLowerCase();
     if (!/^[A-Z0-9]+-USDT-SWAP$/.test(pair)) throw new Error("Invalid perpetual pair in OKX_ALERT_RULES: " + pair);
-    if (!validTf.test(tf)) throw new Error("Invalid timeframe in OKX_ALERT_RULES: " + tf);
+    if (!validTf.test(tf) || !validTimeframes.has(tf)) throw new Error("Unsupported OKX timeframe in alert rules: " + tf);
     const key = pair + ":" + tf;
     unique.set(key, {
       pair, tf,
@@ -100,7 +101,10 @@ let stopped = false;
 async function loadState() {
   try {
     const parsed = JSON.parse(await fs.readFile(STATE_FILE, "utf8"));
-    if (parsed && typeof parsed === "object") state = { ...state, ...parsed };
+    if (parsed && typeof parsed === "object") {
+      state = { ...state, ...parsed };
+      if (Array.isArray(parsed.alertRules) && parsed.alertRules.length) ALERT_RULES = loadAlertRules(JSON.stringify(parsed.alertRules));
+    }
   } catch {}
 }
 async function saveState() {
@@ -257,15 +261,55 @@ async function cycle() {
 }
 const server = http.createServer((req, res) => {
   const requestUrl = new URL(req.url || "/", "http://localhost");
+  const origin = req.headers.origin || "";
+  if (origin === CONFIG_ALLOWED_ORIGIN) {
+    res.setHeader("access-control-allow-origin", CONFIG_ALLOWED_ORIGIN);
+    res.setHeader("vary", "Origin");
+    res.setHeader("access-control-allow-methods", "GET, PUT, OPTIONS");
+    res.setHeader("access-control-allow-headers", "content-type, authorization");
+  }
+  if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
   if (requestUrl.pathname === "/stats") {
     const days = requestUrl.searchParams.get("days") || "7";
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
     res.end(JSON.stringify(buildPerformanceStats(state, days), null, 2));
     return;
   }
-  if (requestUrl.pathname === "/config") {
+  if (requestUrl.pathname === "/config" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
     res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, volume, rsi, sma, combo }) => ({ pair, tf, telegram, volume, rsi, sma, combo })) }, null, 2));
+    return;
+  }
+  if (requestUrl.pathname === "/config" && req.method === "PUT") {
+    if (!CONFIG_API_TOKEN) {
+      res.writeHead(503, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "Configuration API is disabled; set CONFIG_API_TOKEN." })); return;
+    }
+    const auth = String(req.headers.authorization || "");
+    if (auth !== "Bearer " + CONFIG_API_TOKEN) {
+      res.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "Unauthorized" })); return;
+    }
+    let body = "";
+    req.on("data", chunk => {
+      body += chunk;
+      if (body.length > 100_000) { res.writeHead(413); res.end("Payload too large"); req.destroy(); }
+    });
+    req.on("end", async () => {
+      try {
+        const parsed = JSON.parse(body || "{}");
+        const rules = loadAlertRules(JSON.stringify(parsed.rules));
+        if (!rules.length) throw new Error("At least one rule is required.");
+        ALERT_RULES = rules;
+        state.alertRules = rules;
+        await saveState();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify({ ok: true, count: ALERT_RULES.length, pairs: new Set(ALERT_RULES.map(rule => rule.pair)).size }));
+      } catch (err) {
+        res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ error: err.message || "Invalid configuration" }));
+      }
+    });
     return;
   }
   if (requestUrl.pathname === "/health") {
