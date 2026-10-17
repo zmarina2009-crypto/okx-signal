@@ -40,6 +40,7 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
   if (!Array.isArray(parsed) || parsed.length < 1) {
     throw new Error("OKX_ALERT_RULES must be a non-empty JSON array.");
   }
+  const validTimeframes = new Set(["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","1w"]);
   const validTf = /^\d+(m|h|d|w)$/i;
   const unique = new Map();
   for (const item of parsed) {
