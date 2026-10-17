@@ -15,7 +15,7 @@ This is a separate Node.js worker. It does not change the browser chart, Live co
 
 The worker currently uses environment variables for its watchlist and alert settings. It does **not yet automatically import the browser's saved watchlists/settings**; browser localStorage is private to that browser. A later integration can add authenticated settings sync if desired.
 
-SMA touch uses the current unfinished candle, like the existing app's touch-style alert. Volume and RSI are evaluated on confirmed candles.
+All three indicator families are evaluated on confirmed candles. SMA touch is detected from the completed candle's high/low range against the SMA, so it does not repaint while a candle is still forming. The direction follows the pre-touch trend (price above SMA => LONG; below SMA => SHORT).
 
 ## Deploy on Railway
 
@@ -32,9 +32,10 @@ Create a Railway service from this repository and set the service root directory
 - `OKX_TIMEFRAMES=1m,5m,15m,1h,4h`
 - `OKX_ALERT_RULES` — optional JSON array for independent pair/timeframe rules (overrides the pair/timeframe matrix above). Each item supports `pair`, `tf`, and booleans `telegram`, `volume`, `rsi`, `sma`, `combo`. Up to 20 distinct perpetual pairs and 100 pair/timeframe rules are accepted.
   Example: `[{"pair":"BTC-USDT-SWAP","tf":"1m","telegram":true,"volume":false,"rsi":true,"sma":true,"combo":true},{"pair":"BTC-USDT-SWAP","tf":"1h","telegram":true,"volume":true,"rsi":false,"sma":false,"combo":false},{"pair":"ETH-USDT-SWAP","tf":"15m","telegram":true,"volume":true,"rsi":true,"sma":false,"combo":true}]`
-- `GET /config` — read-only endpoint showing active rules without secrets. `PUT /config` — updates rules at runtime and persists them in `STATE_FILE`; requires `Authorization: Bearer <CONFIG_API_TOKEN>`. Set a long random `CONFIG_API_TOKEN` in Railway before enabling writes. `CONFIG_ALLOWED_ORIGIN` defaults to `https://zmarina2009-crypto.github.io` for browser CORS; override only for your trusted frontend origin. `GET /health` reports distinct pair count, rule count, and active timeframes.
+- `GET /config` — read-only endpoint showing active rules without secrets. `PUT /config` — updates rules at runtime and persists them in `STATE_FILE`; requires `Authorization: Bearer <CONFIG_API_TOKEN>`. Set a long random `CONFIG_API_TOKEN` in Railway before enabling writes. A successful config update is acknowledged only after the state file is written atomically; persistence failures return HTTP 500. `CONFIG_ALLOWED_ORIGIN` defaults to `https://zmarina2009-crypto.github.io` for browser CORS; override only for your trusted frontend origin. `GET /health` reports distinct pair count, rule count, and active timeframes.
 - Saved rules in `state.json` take precedence after restart; if none have been saved, the worker uses `OKX_ALERT_RULES` or the legacy `OKX_PAIRS` + `OKX_TIMEFRAMES` matrix. Supported OKX bars are `1m,3m,5m,15m,30m,1h,2h,4h,6h,12h,1d,1w`.
-- `POLL_INTERVAL_MS=20000` (minimum 10 seconds)
+- `POLL_INTERVAL_MS=20000` (minimum 10 seconds; a full cycle can take longer when many rules are enabled or OKX is slow)
+- `npm test` runs the worker's Node.js test suite.
 - `ALERT_SMA=true`, `SMA_PERIOD=21`, `SMA_TOLERANCE_PCT=0`
 - `ALERT_VOLUME=true`, `VOLUME_PERIOD=20`, `VOLUME_MULT=2`
 - `ALERT_RSI=true`, `RSI_PERIOD=14`, `RSI_LOW=30`, `RSI_HIGH=70`
