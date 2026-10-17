@@ -1,0 +1,28 @@
+name: Telegram worker tests
+
+on:
+  pull_request:
+    paths:
+      - "telegram-worker/**"
+      - ".github/workflows/telegram-worker-tests.yml"
+  push:
+    branches:
+      - "feature/per-pair-timeframe-telegram-rules"
+    paths:
+      - "telegram-worker/**"
+      - ".github/workflows/telegram-worker-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: telegram-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm test
+      - run: node --check index.js
+      - run: node --check statistics.js

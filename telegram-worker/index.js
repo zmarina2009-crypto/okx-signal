@@ -6,6 +6,8 @@ import { recordPerformanceSignal, updatePerformanceOutcomes, buildPerformanceSta
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
+const CONFIG_API_TOKEN = process.env.CONFIG_API_TOKEN || "";
+const CONFIG_ALLOWED_ORIGIN = process.env.CONFIG_ALLOWED_ORIGIN || "https://zmarina2009-crypto.github.io";
 const PAIRS = csv(process.env.OKX_PAIRS || "BTC-USDT-SWAP");
 const TIMEFRAMES = csv(process.env.OKX_TIMEFRAMES || "15m");
 const POLL_MS = Math.max(10_000, Number(process.env.POLL_INTERVAL_MS || 20_000));
@@ -24,6 +26,45 @@ const ENABLE_COMBO = enabled(process.env.ALERT_COMBO, false);
 const COMBO_COUNT = clamp(Number(process.env.COMBO_COUNT || 2), 2, 3);
 const COMBO_WINDOW_BARS = clamp(Number(process.env.COMBO_WINDOW_BARS || 1), 1, 5);
 const STATE_FILE = process.env.STATE_FILE || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "state.json") : "./state.json");
+let ALERT_RULES = loadAlertRules();
+function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
+  if (!raw) {
+    return PAIRS.flatMap(pair => TIMEFRAMES.map(tf => ({
+      pair, tf, telegram: true,
+      volume: ENABLE_VOLUME, rsi: ENABLE_RSI, sma: ENABLE_SMA, combo: ENABLE_COMBO
+    })));
+  }
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch { throw new Error("OKX_ALERT_RULES must be valid JSON."); }
+  if (!Array.isArray(parsed) || parsed.length < 1) {
+    throw new Error("OKX_ALERT_RULES must be a non-empty JSON array.");
+  }
+  const validTimeframes = new Set(["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","1w"]);
+  const validTf = /^\d+(m|h|d|w)$/i;
+  const unique = new Map();
+  for (const item of parsed) {
+    const pair = String(item?.pair || "").trim().toUpperCase();
+    const tf = String(item?.tf || "").trim().toLowerCase();
+    if (!/^[A-Z0-9]+-USDT-SWAP$/.test(pair)) throw new Error("Invalid perpetual pair in OKX_ALERT_RULES: " + pair);
+    if (!validTf.test(tf) || !validTimeframes.has(tf)) throw new Error("Unsupported OKX timeframe in alert rules: " + tf);
+    const key = pair + ":" + tf;
+    unique.set(key, {
+      pair, tf,
+      telegram: item.telegram == null ? true : item.telegram === true,
+      volume: item.volume == null ? ENABLE_VOLUME : item.volume === true,
+      rsi: item.rsi == null ? ENABLE_RSI : item.rsi === true,
+      sma: item.sma == null ? ENABLE_SMA : item.sma === true,
+      combo: item.combo == null ? ENABLE_COMBO : item.combo === true
+    });
+  }
+  const rules = [...unique.values()];
+  if (new Set(rules.map(rule => rule.pair)).size > 20) {
+    throw new Error("OKX_ALERT_RULES supports at most 20 distinct pairs.");
+  }
+  if (rules.length > 100) throw new Error("OKX_ALERT_RULES supports at most 100 pair/timeframe rules.");
+  return rules;
+}
 
 function csv(value) { return [...new Set(String(value).split(",").map(s => s.trim()).filter(Boolean))]; }
 function clamp(n, min, max) { return Math.min(max, Math.max(min, Number.isFinite(n) ? n : min)); }
@@ -61,15 +102,21 @@ let stopped = false;
 async function loadState() {
   try {
     const parsed = JSON.parse(await fs.readFile(STATE_FILE, "utf8"));
-    if (parsed && typeof parsed === "object") state = { ...state, ...parsed };
+    if (parsed && typeof parsed === "object") {
+      state = { ...state, ...parsed };
+      if (Array.isArray(parsed.alertRules) && parsed.alertRules.length) ALERT_RULES = loadAlertRules(JSON.stringify(parsed.alertRules));
+    }
   } catch {}
 }
-async function saveState() {
+async function saveState(snapshot = state) {
   try {
     await fs.mkdir(path.dirname(path.resolve(STATE_FILE)), { recursive: true });
-    await fs.writeFile(STATE_FILE, JSON.stringify(state), "utf8");
+    const tmpFile = STATE_FILE + ".tmp";
+    await fs.writeFile(tmpFile, JSON.stringify(snapshot), "utf8");
+    await fs.rename(tmpFile, STATE_FILE);
   } catch (err) {
     console.error("Could not persist state:", err.message);
+    throw new Error("State persistence failed: " + err.message, { cause: err });
   }
 }
 async function sendTelegram(text) {
@@ -119,13 +166,13 @@ async function fetchCandles(pair, tf) {
     c: Number(row[4]), v: Number(row[5]), confirm: String(row[8]) === "1"
   })).filter(c => Number.isFinite(c.ts) && c.c > 0).sort((a, b) => a.ts - b.ts);
 }
-function recordSignal(pair, tf, kind, direction, ts, closePrice) {
+function recordSignal(pair, tf, kind, direction, ts, closePrice, rule) {
   recordPerformanceSignal(state, { pair, tf, kind, direction, ts, price: closePrice });
   state.recentSignals = state.recentSignals.filter(s => Date.now() - s.ts <= tfMs(tf) * COMBO_WINDOW_BARS * 5);
   const id = [pair, tf, kind, direction, ts].join(":");
   if (!state.recentSignals.some(s => s.id === id)) state.recentSignals.push({ id, pair, tf, kind, direction, ts, price: closePrice });
   state.recentSignals = state.recentSignals.slice(-500);
-  if (!ENABLE_COMBO) return;
+  if (!rule.combo) return;
   const windowMs = tfMs(tf) * COMBO_WINDOW_BARS;
   const recent = state.recentSignals.filter(s => s.pair === pair && s.tf === tf && Math.abs(ts - s.ts) <= windowMs);
   const byKind = new Map();
@@ -140,64 +187,59 @@ function recordSignal(pair, tf, kind, direction, ts, closePrice) {
   const comboTs = Math.max(...chosen.map(s => s.ts));
   const comboPrice = directed[0].price || closePrice;
   recordPerformanceSignal(state, { pair, tf, kind: "combo", direction: directed[0].direction, ts: comboTs, price: comboPrice });
-  void emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.map(s => s.kind.toUpperCase()).join(" + "));
+  if (rule.telegram) void emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.map(s => s.kind.toUpperCase()).join(" + "));
   state.recentSignals = state.recentSignals.filter(s => !(s.pair === pair && s.tf === tf && s.ts <= comboTs));
 }
-async function processPair(pair, tf) {
+async function processPair(pair, tf, rule) {
   const candles = await fetchCandles(pair, tf);
   if (candles.length < Math.max(SMA_PERIOD, VOLUME_PERIOD, RSI_PERIOD) + 2) return;
   const closed = candles.filter(c => c.confirm);
-  const live = candles.find(c => !c.confirm) || null;
   if (closed.length < 3) return;
   const last = closed.at(-1);
   updatePerformanceOutcomes(state, pair, tf, closed);
   const candleKey = pair + ":" + tf;
   const lastSeen = state.lastClosed[candleKey] || 0;
+  const isNewClosedCandle = last.ts > lastSeen;
 
-  if (last.ts > lastSeen) {
+  if (isNewClosedCandle) {
     state.lastClosed[candleKey] = last.ts;
     const end = closed.length;
-    if (ENABLE_VOLUME && end >= VOLUME_PERIOD + 1) {
+    if (rule.volume && end >= VOLUME_PERIOD + 1) {
       const base = closed.slice(end - VOLUME_PERIOD - 1, end - 1).map(c => c.v);
       const avg = average(base);
       const multiple = avg > 0 ? last.v / avg : 0;
       if (multiple >= VOLUME_MULT) {
         const direction = last.c >= last.o ? "LONG" : "SHORT";
-        await emit("volume", pair, tf, direction, last.c, `Объём: ×${multiple.toFixed(1)} от среднего`);
-        recordSignal(pair, tf, "volume", direction, last.ts, last.c);
+        if (rule.telegram) await emit("volume", pair, tf, direction, last.c, `Объём: ×${multiple.toFixed(1)} от среднего`);
+        recordSignal(pair, tf, "volume", direction, last.ts, last.c, rule);
       }
     }
-    if (ENABLE_RSI) {
+    if (rule.rsi) {
       const value = rsi(closed, RSI_PERIOD, end);
       const prev = rsi(closed, RSI_PERIOD, end - 1);
       if (value != null && prev != null) {
         if (prev >= RSI_LOW && value < RSI_LOW) {
-          await emit("rsi", pair, tf, "LONG", last.c, `RSI: ${value.toFixed(1)} — выход ниже ${RSI_LOW}`);
-          recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c);
+          if (rule.telegram) await emit("rsi", pair, tf, "LONG", last.c, `RSI: ${value.toFixed(1)} — выход ниже ${RSI_LOW}`);
+          recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c, rule);
         }
         if (prev <= RSI_HIGH && value > RSI_HIGH) {
-          await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`);
-          recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c);
+          if (rule.telegram) await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`);
+          recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c, rule);
         }
       }
     }
   }
 
-  if (ENABLE_SMA && live) {
+  // SMA touches are evaluated only after a candle is confirmed, avoiding intrabar/repainting alerts.
+  if (rule.sma && isNewClosedCandle) {
     const m = sma(closed, SMA_PERIOD);
-    if (m) {
-      const tolerance = SMA_TOLERANCE_PCT / 100;
-      const touched = live.l <= m && live.h >= m || (tolerance > 0 && Math.abs(live.c - m) / m <= tolerance);
-      const touchKey = candleKey + ":touch";
-      const wasTouched = Boolean(state.lastSmaTouch[touchKey]);
-      if (touched && !wasTouched) {
-        const prevClose = closed.at(-1).c;
-        const prevSma = sma(closed.slice(0, -1), SMA_PERIOD) || m;
-        const direction = prevClose < prevSma ? "LONG" : prevClose > prevSma ? "SHORT" : live.c >= m ? "LONG" : "SHORT";
-        await emit("sma", pair, tf, direction, live.c, `SMA${SMA_PERIOD}: ${price(m)}`);
-        recordSignal(pair, tf, "sma", direction, live.ts, live.c);
-      }
-      state.lastSmaTouch[touchKey] = touched;
+    if (m && last.l <= m && last.h >= m) {
+      const previous = closed.at(-2);
+      const previousSma = sma(closed.slice(0, -1), SMA_PERIOD);
+      // Follow the pre-touch trend: above SMA => LONG; below SMA => SHORT.
+      const direction = previous && previousSma != null && previous.c >= previousSma ? "LONG" : "SHORT";
+      if (rule.telegram) await emit("sma", pair, tf, direction, last.c, `SMA${SMA_PERIOD}: ${price(m)} (закрытая свеча)`);
+      recordSignal(pair, tf, "sma", direction, last.ts, last.c, rule);
     }
   }
   await saveState();
@@ -206,13 +248,11 @@ async function cycle() {
   if (busy || stopped) return;
   busy = true;
   try {
-    for (const pair of PAIRS) {
-      for (const tf of TIMEFRAMES) {
-        if (stopped) break;
-        try { await processPair(pair, tf); }
-        catch (err) { console.error(`Pair poll failed ${pair} ${tf}:`, err.message); }
-        await new Promise(resolve => setTimeout(resolve, 180));
-      }
+    for (const rule of ALERT_RULES) {
+      if (stopped) break;
+      try { await processPair(rule.pair, rule.tf, rule); }
+      catch (err) { console.error(`Pair poll failed ${rule.pair} ${rule.tf}:`, err.message); }
+      await new Promise(resolve => setTimeout(resolve, 180));
     }
   } finally {
     busy = false;
@@ -220,15 +260,62 @@ async function cycle() {
 }
 const server = http.createServer((req, res) => {
   const requestUrl = new URL(req.url || "/", "http://localhost");
+  const origin = req.headers.origin || "";
+  if (origin === CONFIG_ALLOWED_ORIGIN) {
+    res.setHeader("access-control-allow-origin", CONFIG_ALLOWED_ORIGIN);
+    res.setHeader("vary", "Origin");
+    res.setHeader("access-control-allow-methods", "GET, PUT, OPTIONS");
+    res.setHeader("access-control-allow-headers", "content-type, authorization");
+  }
+  if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
   if (requestUrl.pathname === "/stats") {
     const days = requestUrl.searchParams.get("days") || "7";
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
     res.end(JSON.stringify(buildPerformanceStats(state, days), null, 2));
     return;
   }
+  if (requestUrl.pathname === "/config" && req.method === "GET") {
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, volume, rsi, sma, combo }) => ({ pair, tf, telegram, volume, rsi, sma, combo })) }, null, 2));
+    return;
+  }
+  if (requestUrl.pathname === "/config" && req.method === "PUT") {
+    if (!CONFIG_API_TOKEN) {
+      res.writeHead(503, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "Configuration API is disabled; set CONFIG_API_TOKEN." })); return;
+    }
+    const auth = String(req.headers.authorization || "");
+    if (auth !== "Bearer " + CONFIG_API_TOKEN) {
+      res.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "Unauthorized" })); return;
+    }
+    let body = "";
+    req.on("data", chunk => {
+      body += chunk;
+      if (body.length > 100_000) { res.writeHead(413); res.end("Payload too large"); req.destroy(); }
+    });
+    req.on("end", async () => {
+      try {
+        const parsed = JSON.parse(body || "{}");
+        const rules = loadAlertRules(JSON.stringify(parsed.rules));
+        if (!rules.length) throw new Error("At least one rule is required.");
+        // Persist first; do not acknowledge or activate a config that cannot survive restart.
+        await saveState({ ...state, alertRules: rules });
+        ALERT_RULES = rules;
+        state.alertRules = rules;
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify({ ok: true, count: ALERT_RULES.length, pairs: new Set(ALERT_RULES.map(rule => rule.pair)).size }));
+      } catch (err) {
+        const persistenceFailure = String(err.message || "").startsWith("State persistence failed:");
+        res.writeHead(persistenceFailure ? 500 : 400, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify({ error: err.message || "Invalid configuration" }));
+      }
+    });
+    return;
+  }
   if (requestUrl.pathname === "/health") {
     res.writeHead(BOT_TOKEN && CHAT_ID ? 200 : 503, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: Boolean(BOT_TOKEN && CHAT_ID), service: "okx-signal-telegram-worker", pairs: PAIRS.length, timeframes: TIMEFRAMES, intervalMs: POLL_MS }));
+    res.end(JSON.stringify({ ok: Boolean(BOT_TOKEN && CHAT_ID), service: "okx-signal-telegram-worker", pairs: new Set(ALERT_RULES.map(rule => rule.pair)).size, rules: ALERT_RULES.length, timeframes: [...new Set(ALERT_RULES.map(rule => rule.tf))], intervalMs: POLL_MS }));
     return;
   }
   res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });

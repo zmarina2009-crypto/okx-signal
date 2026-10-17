@@ -5,7 +5,8 @@
   "description": "24/7 Telegram alert worker for OKX Signal Pro",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"
