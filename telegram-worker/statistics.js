@@ -57,8 +57,8 @@ export function updatePerformanceOutcomes(state, pair, tf, candles) {
 }
 
 function timeframeMs(tf) {
-  const match = String(tf).toLowerCase().match(/^(\\d+)(m|h|d|w)$/);
-  if (!match) return 15 * 60 * 1000;
+  const match = String(tf).toLowerCase().match(/^(\d+)(m|h|d|w)$/);
+  if (!match) throw new Error("Unsupported timeframe for performance statistics: " + tf);
   return Number(match[1]) * ({ m: 60000, h: 3600000, d: 86400000, w: 604800000 })[match[2]];
 }
 
