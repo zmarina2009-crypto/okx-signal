@@ -26,7 +26,7 @@
   }
   function fillPairOptions(){
     const list=$("tgPairOptions");if(!list)return;list.replaceChildren();
-    const markets=window.OKXSignalApp&&window.OKXSignalApp.getMarkets?window.OKXSignalApp.getMarkets():[];
+    const api=window.OKXSignalApp,markets=api&&typeof api.getAllMarkets==="function"?api.getAllMarkets():(api&&api.getMarkets?api.getMarkets():[]);
     (Array.isArray(markets)?markets:[]).forEach(m=>{if(!m||!m.instId)return;list.append(make("option",{value:m.instId}))});
   }
   async function readConfig(){
