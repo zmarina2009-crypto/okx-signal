@@ -60,6 +60,25 @@
       $("tgConfigToken").value="";
     }catch(e){setStatus("Не удалось сохранить: "+(e.message||e)+". Проверь CONFIG_API_TOKEN и CORS.","error")}
   }
+  async function testTelegram(){
+    if(!endpoint()){setStatus("Укажи адрес Telegram worker в Railway.","warn");return}
+    const token=$("tgConfigToken").value.trim();
+    if(!token){setStatus("Введи CONFIG_API_TOKEN из Railway. Ключ не сохраняется в браузере.","warn");return}
+    const button=$("tgConfigTest"),label=button.textContent;
+    button.disabled=true;button.textContent="Отправляем…";
+    setStatus("Отправляем контрольное сообщение в Telegram…");
+    try{
+      const r=await fetch(endpoint()+"/test-telegram",{method:"POST",headers:{"authorization":"Bearer "+token}});
+      const data=await r.json().catch(()=>({}));
+      if(!r.ok||data.ok!==true)throw Error(data.error||("HTTP "+r.status));
+      setStatus("Тестовое сообщение отправлено. Проверь чат с ботом в Telegram.","ok");
+    }catch(e){
+      setStatus("Не удалось отправить тест: "+(e.message||e)+". Проверь CONFIG_API_TOKEN и настройки Telegram.","error");
+    }finally{
+      $("tgConfigToken").value="";
+      button.disabled=false;button.textContent=label;
+    }
+  }
   function addRule(){
     if(rules.length>=100){setStatus("Достигнут лимит 100 правил.","warn");return}
     const api=window.OKXSignalApp,markets=api&&typeof api.getAllMarkets==="function"?api.getAllMarkets():(api&&api.getMarkets?api.getMarkets():[]);
@@ -73,6 +92,7 @@
     $("tgConfigLoad").addEventListener("click",readConfig);
     $("tgConfigSave").addEventListener("click",saveConfig);
     $("tgConfigAdd").addEventListener("click",addRule);
+    $("tgConfigTest").addEventListener("click",testTelegram);
     fillPairOptions();render();
     window.addEventListener("okx-markets-loaded",fillPairOptions);
     // The public OKX markets arrive asynchronously. Retry while waiting, and

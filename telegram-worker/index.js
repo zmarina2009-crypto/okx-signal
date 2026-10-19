@@ -264,7 +264,7 @@ const server = http.createServer((req, res) => {
   if (origin === CONFIG_ALLOWED_ORIGIN) {
     res.setHeader("access-control-allow-origin", CONFIG_ALLOWED_ORIGIN);
     res.setHeader("vary", "Origin");
-    res.setHeader("access-control-allow-methods", "GET, PUT, OPTIONS");
+    res.setHeader("access-control-allow-methods", "GET, PUT, POST, OPTIONS");
     res.setHeader("access-control-allow-headers", "content-type, authorization");
   }
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
@@ -310,6 +310,38 @@ const server = http.createServer((req, res) => {
         res.writeHead(persistenceFailure ? 500 : 400, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify({ error: err.message || "Invalid configuration" }));
       }
+    });
+    return;
+  }
+  if (requestUrl.pathname === "/test-telegram" && req.method === "POST") {
+    if (!CONFIG_API_TOKEN) {
+      res.writeHead(503, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      res.end(JSON.stringify({ ok: false, error: "Configuration API is disabled; set CONFIG_API_TOKEN." }));
+      return;
+    }
+    const auth = String(req.headers.authorization || "");
+    if (auth !== "Bearer " + CONFIG_API_TOKEN) {
+      res.writeHead(401, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      res.end(JSON.stringify({ ok: false, error: "Unauthorized" }));
+      return;
+    }
+    if (!BOT_TOKEN || !CHAT_ID) {
+      res.writeHead(503, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      res.end(JSON.stringify({ ok: false, error: "Telegram credentials are not configured." }));
+      return;
+    }
+    const testMessage = [
+      "✅ Тестовое сообщение OKX Signal Pro",
+      "Telegram-воркер работает и может отправлять уведомления.",
+      "Время: " + new Date().toLocaleString("ru-RU", { timeZone: process.env.ALERT_TIMEZONE || "Europe/Berlin" })
+    ].join("\n");
+    void sendTelegram(testMessage).then(() => {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      res.end(JSON.stringify({ ok: true, sent: true, message: "Test message sent." }));
+    }).catch(err => {
+      console.error("Telegram test send failed:", err.message);
+      res.writeHead(502, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      res.end(JSON.stringify({ ok: false, error: err.message || "Telegram delivery failed." }));
     });
     return;
   }
