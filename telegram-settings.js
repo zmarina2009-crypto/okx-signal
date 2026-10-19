@@ -25,9 +25,12 @@
     $("tgRulesCount").textContent=rules.length+" / 100 правил";
   }
   function fillPairOptions(){
-    const list=$("tgPairOptions");if(!list)return;list.replaceChildren();
-    const api=window.OKXSignalApp,markets=api&&typeof api.getAllMarkets==="function"?api.getAllMarkets():(api&&api.getMarkets?api.getMarkets():[]);
-    (Array.isArray(markets)?markets:[]).forEach(m=>{if(!m||!m.instId)return;list.append(make("option",{value:m.instId}))});
+    const list=$("tgPairOptions");if(!list)return;
+    const api=window.OKXSignalApp;
+    const markets=api&&typeof api.getAllMarkets==="function"?api.getAllMarkets():(api&&api.getMarkets?api.getMarkets():[]);
+    if(!Array.isArray(markets)||!markets.length)return;
+    list.replaceChildren();
+    markets.forEach(m=>{if(!m||!m.instId)return;list.append(make("option",{value:m.instId}))});
   }
   async function readConfig(){
     if(!endpoint()){setStatus("Укажи адрес Telegram worker в Railway.","warn");return}
@@ -59,7 +62,7 @@
   }
   function addRule(){
     if(rules.length>=100){setStatus("Достигнут лимит 100 правил.","warn");return}
-    const markets=window.OKXSignalApp&&window.OKXSignalApp.getMarkets?window.OKXSignalApp.getMarkets():[];
+    const api=window.OKXSignalApp,markets=api&&typeof api.getAllMarkets==="function"?api.getAllMarkets():(api&&api.getMarkets?api.getMarkets():[]);
     const pair=markets?.[0]?.instId||"BTC-USDT-SWAP";
     rules.push({pair,tf:"15m",telegram:true,volume:true,rsi:true,sma:false,combo:true});render();
   }
@@ -72,8 +75,15 @@
     $("tgConfigAdd").addEventListener("click",addRule);
     fillPairOptions();render();
     window.addEventListener("okx-markets-loaded",fillPairOptions);
-    // Markets load asynchronously; retry once shortly after page initialization.
-    setTimeout(fillPairOptions,1800);
+    // The public OKX markets arrive asynchronously. Retry while waiting, and
+    // refresh once the main app announces that its complete market list is ready.
+    let attempts=0;
+    const retryPairOptions=()=>{
+      fillPairOptions();
+      const list=$("tgPairOptions");
+      if((!list||!list.options.length)&&attempts++<30)setTimeout(retryPairOptions,500);
+    };
+    retryPairOptions();
   }
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init,{once:true});else init();
 })();
