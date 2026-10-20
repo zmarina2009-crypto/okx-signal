@@ -472,8 +472,8 @@ function chartDrawingGeometry(){
   const rg=mx-mn||1,mainH=rect.height-78-18,slotW=(rect.width-58-14)/Math.max(1,v.visible);
   return {
     rect,v,a,mn,mx,rg,mainH,slotW,
-    x(index){return rect.left+58+(index-v.begin+.5)*slotW;},
-    y(price){return rect.top+14+((mx-price)/rg)*mainH;}
+    x(index){return 58+(index-v.begin+.5)*slotW;},
+    y(price){return 14+((mx-price)/rg)*mainH;}
   };
 }
 function distanceToSegment(px,py,x1,y1,x2,y2){
