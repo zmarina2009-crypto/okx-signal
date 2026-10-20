@@ -19,6 +19,8 @@
 
 /* Independent Telegram pair/timeframe settings — isolated from chart and Paper Trading. */
 .tg-config{margin-top:12px}.tg-config-grid{display:grid;grid-template-columns:minmax(180px,1.4fr) minmax(180px,1fr) auto auto;gap:7px;align-items:end}.tg-config-grid label{display:block;color:var(--m);font-size:10px;margin-bottom:4px}.tg-config-grid input{width:100%;min-width:0}.tg-config-status{font-size:11px;margin-top:8px;color:var(--m);overflow-wrap:anywhere}.tg-config-status.ok{color:var(--g)}.tg-config-status.warn{color:var(--y)}.tg-config-status.error{color:var(--r)}.tg-rules-wrap{overflow:auto;margin-top:10px}.tg-rules{border-collapse:collapse;width:100%;font-size:11px;min-width:700px}.tg-rules th,.tg-rules td{padding:6px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}.tg-rules th{color:var(--m);font-weight:600}.tg-rules input[type=text],.tg-rules select{width:150px;max-width:100%;padding:7px}.tg-rules select{width:78px}.tg-check{display:flex;gap:4px;align-items:center;color:var(--m);font-size:10px}.tg-check input{width:auto;margin:0}.tg-delete{padding:6px 8px;font-size:10px;color:var(--r)}.tg-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}.tg-actions button{padding:8px 10px;font-size:11px}.tg-hint{margin-top:7px;color:var(--m);font-size:10px;line-height:1.45}@media(max-width:650px){.tg-config-grid{grid-template-columns:1fr 1fr}.tg-config-grid .tg-token{grid-column:1/-1}.tg-config-grid button{width:100%}}
+
+.tg-saved-rules{margin-top:10px;padding:10px;border:1px solid #263545;border-radius:10px;background:#090e14}.tg-saved-rules-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.tg-saved-rules-head strong{font-size:12px}.tg-saved-rules-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:7px}.tg-saved-empty{font-size:11px;color:var(--m);padding:5px 0}.tg-saved-pair{min-width:0;border:1px solid #1d2835;border-radius:8px;padding:8px;background:#0e141c}.tg-saved-pair-name{font-weight:800;font-size:11px;margin-bottom:6px;overflow-wrap:anywhere}.tg-saved-timeframes{display:flex;flex-direction:column;gap:5px}.tg-saved-rule{display:flex;align-items:flex-start;gap:7px;min-width:0}.tg-saved-tf{flex:0 0 43px;text-align:center;padding:3px 5px;border-radius:5px;border:1px solid #315c83;background:#102238;color:#eaf0f6;font-size:10px;font-weight:800}.tg-saved-rule-info{min-width:0;overflow-wrap:anywhere;color:#aab7c5;font-size:10px;line-height:1.5;padding-top:2px}.tg-saved-rule.is-off .tg-saved-tf{border-color:#543b26;background:#211a12;color:#ffd166}.tg-saved-rule.is-off .tg-saved-rule-info{color:#ffd166}
 </style></head><body><div class="app">
 <div class="top"><div><h1>OKX Signal Pro <span style="font-size:12px;color:#55a8ff">v2.0</span></h1><div class="sub" id="subtitle">15m • SMA + Volume • только закрытые свечи</div></div><div class="actions"><button id="refresh" class="primary">↻ Обновить</button><button id="install" style="display:none">＋ Установить</button></div></div>
 <nav id="quickAccessBar" class="quick-access" aria-label="Быстрый доступ к графику">
@@ -38,6 +40,10 @@
     <button type="button" id="tgConfigLoad">Загрузить</button><button type="button" id="tgConfigSave" class="primary">Сохранить на сервер</button>
   </div>
   <datalist id="tgPairOptions"></datalist>
+  <div class="tg-saved-rules" aria-live="polite" aria-label="Правила уведомлений, сохранённые на сервере">
+    <div class="tg-saved-rules-head"><strong>Уже настроено на отправку в Telegram</strong><span id="tgSavedRulesMeta" class="small">Не загружено</span></div>
+    <div id="tgSavedRulesList" class="tg-saved-rules-list"><div class="tg-saved-empty">Укажите адрес worker и нажмите «Загрузить».</div></div>
+  </div>
   <div class="tg-rules-wrap"><table class="tg-rules"><thead><tr><th>USDT Perpetual</th><th>TF</th><th>Telegram</th><th>Volume</th><th>RSI</th><th>SMA</th><th>COMBO</th><th></th></tr></thead><tbody id="tgRulesRows"></tbody></table></div>
   <div class="tg-actions"><button type="button" id="tgConfigAdd">＋ Добавить пару / таймфрейм</button><button type="button" id="tgConfigTest">✉ Отправить тестовое сообщение</button></div>
   <div id="tgConfigStatus" class="tg-config-status">Перед сохранением укажи URL worker и CONFIG_API_TOKEN из Railway. Настройки Telegram независимы от алертов внутри приложения.</div>
@@ -848,7 +854,7 @@ if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=65",{
     draw(last);
   };
 })();
-</script><script src="./alerts.js?v=17"></script><script src="./telegram-settings.js?v=3"></script><script src="./backtester.js?v=24"></script><script src="./papertrader.js?v=7"></script><script src="./indicators.js?v=1"></script><script src="./collapsible.js?v=4"></script>
+</script><script src="./alerts.js?v=17"></script><script src="./telegram-settings.js?v=4"></script><script src="./backtester.js?v=24"></script><script src="./papertrader.js?v=7"></script><script src="./indicators.js?v=1"></script><script src="./collapsible.js?v=4"></script>
 <script>
 (function(){
   const bar=document.getElementById("quickAccessBar");
