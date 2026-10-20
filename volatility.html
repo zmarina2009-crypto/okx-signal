@@ -31,7 +31,7 @@ async function load(){
   const fresh=[];
   for(let i=0;i<chosen.length;i+=5){
    const batch=chosen.slice(i,i+5);
-   const got=await Promise.all(batch.map(async m=>{const item={...m,vols:{},changes:{}};await Promise.all(bars.map(async ([key,bar])=>{try{const c=await getCandles(m.instId,bar,limit);item.vols[key]=volatility(c);item.changes[key]=change(c)}catch(e){item.vols[key]=null;item.changes[key]=null}}));return item}));
+   const got=await Promise.all(batch.map(async m=>{const item={...m,vols:{},changes:{}};await Promise.all(bars.map(async ([key,bar,candleLimit])=>{try{const c=await getCandles(m.instId,bar,candleLimit);item.vols[key]=volatility(c);item.changes[key]=change(c)}catch(e){item.vols[key]=null;item.changes[key]=null}}));return item}));
    fresh.push(...got);$('status').textContent='Получено '+fresh.length+' из '+chosen.length+' пар…';
    if(i+5<chosen.length)await new Promise(r=>setTimeout(r,180));
   }
