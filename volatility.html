@@ -22,7 +22,9 @@ let markets=[], data=[], period='15m', sort='volatility', loading=false, lastUpd
 const fmtPct=n=>Number.isFinite(n)?(n>0?'+':'')+n.toFixed(2)+'%':'—';
 const fmtVol=n=>n>=1e9?'$'+(n/1e9).toFixed(2)+'B':n>=1e6?'$'+(n/1e6).toFixed(2)+'M':'$'+Math.round(n).toLocaleString('en-US');
 async function getJSON(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);const j=await r.json();if(j.code!=='0')throw Error(j.msg||'Ответ OKX с ошибкой');return j.data||[]}
-function volatility(c){if(!c||!c.length)return null;const ordered=[...c].sort((a,b)=>Number(a[0])-Number(b[0]));const open=Number(ordered[0][1]),high=Math.max(...ordered.map(x=>Number(x[2]))),low=Math.min(...ordered.map(x=>Number(x[3])));return open>0?(high-low)/open*100:null}\nfunction change(c){if(!c||!c.length)return null;const ordered=[...c].sort((a,b)=>Number(a[0])-Number(b[0]));const o=Number(ordered[0][1]),last=Number(ordered[ordered.length-1][4]);return o>0?(last-o)/o*100:null}\nasync function getCandles(instId,bar,limit){return await getJSON(API+'/market/candles?instId='+encodeURIComponent(instId)+'&bar='+bar+'&limit='+limit)}
+function volatility(c){if(!c||!c.length)return null;const ordered=[...c].sort((a,b)=>Number(a[0])-Number(b[0]));const open=Number(ordered[0][1]),high=Math.max(...ordered.map(x=>Number(x[2]))),low=Math.min(...ordered.map(x=>Number(x[3])));return open>0?(high-low)/open*100:null}
+function change(c){if(!c||!c.length)return null;const ordered=[...c].sort((a,b)=>Number(a[0])-Number(b[0]));const o=Number(ordered[0][1]),last=Number(ordered[ordered.length-1][4]);return o>0?(last-o)/o*100:null}
+async function getCandles(instId,bar,limit){return await getJSON(API+'/market/candles?instId='+encodeURIComponent(instId)+'&bar='+bar+'&limit='+limit)}
 async function load(){
  if(loading)return;loading=true;$('refresh').disabled=true;$('status').textContent='Загружаем ликвидные пары и волатильность…';
  try{
