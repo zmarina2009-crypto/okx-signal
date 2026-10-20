@@ -12,7 +12,7 @@
 .quick-access button:active{transform:translateY(1px)}
 #alertsPanel.quick-highlight,#chartPanel.quick-highlight{outline:2px solid #55a8ff;outline-offset:3px;transition:outline-color .25s}
 @media(max-width:520px){
-  .quick-access{position:fixed;left:10px;right:10px;bottom:max(8px,env(safe-area-inset-bottom));top:auto;z-index:120;display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin:0;padding:6px;box-shadow:0 8px 28px rgba(0,0,0,.48)}
+  .quick-access{position:fixed;left:10px;right:10px;bottom:max(8px,env(safe-area-inset-bottom));top:auto;z-index:120;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin:0;padding:6px;box-shadow:0 8px 28px rgba(0,0,0,.48)}
   .quick-access button{min-width:0;padding:10px 4px;font-size:11px;border-radius:8px;flex-direction:column;gap:3px}
   .app{padding-bottom:82px}
 }
@@ -22,6 +22,7 @@
   <button type="button" data-quick-target="coinList">☷ <span>Валюты</span></button>
   <button type="button" data-quick-target="chartPanel" class="quick-main">▥ <span>График</span></button>
   <button type="button" data-quick-target="alertsPanel">♧ <span>Алерты</span></button>
+  <button type="button" onclick="location.href='./volatility.html'">↗ <span>Волатильность</span></button>
 </nav>
 <div class="panel"><div class="controls"><div class="control coins"><label>Рабочий список • нажми на монету, чтобы открыть график</label><div id="coinList" class="coinlist"></div><div id="marketInfo" class="marketInfo">Загрузка списка…</div><div class="watchinput"><input id="customCoins" placeholder="BTC, ETH, SOL" aria-label="Список криптовалют через запятую"><button type="button" id="applyCoins">Применить</button><button type="button" id="allCoins">Все</button></div><div class="watchlists"><select id="watchlistSelect" aria-label="Сохранённые списки"><option value="">Сохранённые списки…</option></select><input id="watchlistName" placeholder="Название списка" aria-label="Название списка"><button type="button" id="saveWatchlist">Сохранить список</button><button type="button" id="deleteWatchlist">Удалить список</button></div></div><div class="control"><label>Сигнал</label><div class="switch" id="direction"><button data-dir="ALL" class="active">Оба</button><button data-dir="LONG">LONG</button><button data-dir="SHORT">SHORT</button></div></div><div class="control"><label>Таймфрейм</label><select id="tf" style="display:none"><option value="1m">1m</option><option value="5m">5m</option><option value="15m" selected>15m</option><option value="30m">30m</option><option value="1H">1H</option><option value="4H">4H</option><option value="1D">1D</option></select></div><div class="control"><label>SMA fast</label><input id="fast" type="number" min="2" value="20"></div><div class="control"><label>SMA slow</label><input id="slow" type="number" min="3" value="60"></div><div class="control"><label>Volume SMA</label><input id="vsma" type="number" min="2" value="20"></div><div class="control"><label>Volume spike ×</label><input id="vth" type="number" min="1" step=".1" value="2"></div><div class="control"><label>1H фильтр</label><select id="trend"><option value="on">Включён</option><option value="off">Выключен</option></select></div></div></div>
 <div id="watchlistWindows" class="watchlist-windows" aria-label="Окна сохранённых списков"></div>
