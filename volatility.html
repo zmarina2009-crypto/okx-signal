@@ -22,18 +22,16 @@ let markets=[], data=[], period='15m', sort='volatility', loading=false, lastUpd
 const fmtPct=n=>Number.isFinite(n)?(n>0?'+':'')+n.toFixed(2)+'%':'—';
 const fmtVol=n=>n>=1e9?'$'+(n/1e9).toFixed(2)+'B':n>=1e6?'$'+(n/1e6).toFixed(2)+'M':'$'+Math.round(n).toLocaleString('en-US');
 async function getJSON(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);const j=await r.json();if(j.code!=='0')throw Error(j.msg||'Ответ OKX с ошибкой');return j.data||[]}
-function volatility(c){if(!c||c.length<1)return null;const open=Number(c[0][1]),high=Number(c[0][2]),low=Number(c[0][3]);return open>0?(high-low)/open*100:null}
-function change(c){if(!c||!c.length)return null;const o=Number(c[0][1]),last=Number(c[0][4]);return o>0?(last-o)/o*100:null}
-async function getCandle(instId,bar){const c=await getJSON(API+'/market/candles?instId='+encodeURIComponent(instId)+'&bar='+bar+'&limit=1');return c[0]||null}
+function volatility(c){if(!c||!c.length)return null;const ordered=[...c].sort((a,b)=>Number(a[0])-Number(b[0]));const open=Number(ordered[0][1]),high=Math.max(...ordered.map(x=>Number(x[2]))),low=Math.min(...ordered.map(x=>Number(x[3])));return open>0?(high-low)/open*100:null}\nfunction change(c){if(!c||!c.length)return null;const ordered=[...c].sort((a,b)=>Number(a[0])-Number(b[0]));const o=Number(ordered[0][1]),last=Number(ordered[ordered.length-1][4]);return o>0?(last-o)/o*100:null}\nasync function getCandles(instId,bar,limit){return await getJSON(API+'/market/candles?instId='+encodeURIComponent(instId)+'&bar='+bar+'&limit='+limit)}
 async function load(){
  if(loading)return;loading=true;$('refresh').disabled=true;$('status').textContent='Загружаем ликвидные пары и волатильность…';
  try{
   if(!markets.length){const [ins,ticks]=await Promise.all([getJSON(API+'/public/instruments?instType=SWAP'),getJSON(API+'/market/tickers?instType=SWAP')]);const tm=new Map(ticks.map(t=>[t.instId,t]));markets=ins.filter(i=>i.state==='live'&&i.settleCcy==='USDT'&&i.instId.endsWith('-USDT-SWAP')).map(i=>{const t=tm.get(i.instId),px=Number(t?.last||0),v=Number(t?.volCcy24h||0)*px;return {instId:i.instId,symbol:i.instId.replace('-USDT-SWAP',''),last:px,change24:Number(t?.sodUtc8||0)>0?(px/Number(t.sodUtc8)-1)*100:null,volume:v}}).filter(m=>m.volume>1000000).sort((a,b)=>b.volume-a.volume)}
-  const count=Number($('limit').value), chosen=markets.slice(0,count), bars=[['4H','4H'],['1H','1H'],['15m','15m'],['5m','5m']];
+  const count=Number($('limit').value), chosen=markets.slice(0,count), bars=[['4H','1H',4],['1H','15m',4],['15m','1m',15],['5m','1m',5]];
   const fresh=[];
   for(let i=0;i<chosen.length;i+=5){
    const batch=chosen.slice(i,i+5);
-   const got=await Promise.all(batch.map(async m=>{const item={...m,vols:{},changes:{}};await Promise.all(bars.map(async ([key,bar])=>{try{const c=await getCandle(m.instId,bar);item.vols[key]=volatility(c);item.changes[key]=change(c)}catch(e){item.vols[key]=null;item.changes[key]=null}}));return item}));
+   const got=await Promise.all(batch.map(async m=>{const item={...m,vols:{},changes:{}};await Promise.all(bars.map(async ([key,bar])=>{try{const c=await getCandles(m.instId,bar,limit);item.vols[key]=volatility(c);item.changes[key]=change(c)}catch(e){item.vols[key]=null;item.changes[key]=null}}));return item}));
    fresh.push(...got);$('status').textContent='Получено '+fresh.length+' из '+chosen.length+' пар…';
    if(i+5<chosen.length)await new Promise(r=>setTimeout(r,180));
   }
