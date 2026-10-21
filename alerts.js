@@ -135,7 +135,7 @@
     try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-500)))}catch{}
     window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:marker}));
   }
-  const COMBO_SOURCES=["volume","rsi","sma"];
+  const COMBO_SOURCES=["volume","rsi","sma","vp"];
   const COMBO_TF_MS={"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000};
   function observeCombo(kind,marker){
     if(!cfg.comboEnabled||!marker||!COMBO_SOURCES.includes(kind)||!cfg[kind])return;
@@ -150,7 +150,7 @@
     matching.forEach(s=>{const old=byKind.get(s.kind);if(!old||Math.abs(ts-s.ts)<Math.abs(ts-old.ts))byKind.set(s.kind,s)});
     const chosen=[...byKind.values()],required=Math.max(2,Math.min(3,Number(cfg.comboCount)||2));
     if(chosen.length<required)return;
-    // Volume confirms activity, but candle body colour does not decide combo direction.
+    // Volume is a non-directional confirmation; RSI, SMA and Volume Profile must agree on direction.
     // RSI and SMA are directional; if both are present, their directions must agree.
     const directed=chosen.filter(s=>s.kind!=="volume");
     if(!directed.length)return;
@@ -163,15 +163,15 @@
     if(!canAlert(alertKey))return;
     comboLastAt[alertKey]=comboTs;
     const kinds=chosen.map(s=>s.kind.toUpperCase());
-    const message="✨ COMBO "+chosen.length+"/3 "+comboDirection+" • "+kinds.join(" + ")+" • "+pair+" • "+tf;
+    const message="✨ COMBO "+chosen.length+"/4 "+comboDirection+" • "+kinds.join(" + ")+" • "+pair+" • "+tf;
     recordAlertMarker({pair,tf,ts:comboTs,price:Number(directionSignal.price)||Number(marker.price)||chosen.at(-1)?.price||0,entryPrice:Number(directionSignal.entryPrice)||Number(marker.entryPrice)||Number(directionSignal.price)||Number(marker.price)||0,direction:comboDirection,label:"COMBO "+kinds.join("+"),kind:"combo"});
     log("combo",message);tone("combo");
     const badge=$("alertsLast");if(badge){badge.textContent=message;badge.className="alerts-last combo"}
   }
   function fire(kind,text,key,marker){
     const comboSource=marker&&COMBO_SOURCES.includes(kind);
-    const source=comboSource||(marker&&kind==="vp");
-    // Combo-only mode suppresses standalone alerts; VP is not an input to the 3-source combo.
+    const source=comboSource;
+    // In COMBO-only mode, all enabled combo sources (including Volume Profile) are collected without standalone alerts.
     if(cfg.comboModeActive&&source){if(comboSource)observeCombo(kind,marker);return;}
     if(!canAlert(key)){
       if(source)observeCombo(kind,marker);
@@ -273,13 +273,13 @@
     layout.appendChild(target);
     const p=document.createElement("div");p.id="alertsPanel";p.className="panel";
     p.innerHTML='<h2>🔔 Alerts</h2>'+
-      '<div class="alerts-note">⚡ Volume = всплеск объёма · 📈/📉 RSI = выход в перекупленность/перепроданность · 🟢/🔴 SMA = пересечение или касание SMA. Каждый сигнал показывает направление, пару и таймфрейм.</div>'+
+      '<div class="alerts-note">⚡ Volume = всплеск объёма · 📈/📉 RSI = выход в перекупленность/перепроданность · 🟢/🔴 SMA = пересечение или касание SMA · ▥ VP = пересечение уровней профиля объёма. Каждый сигнал показывает направление, пару и таймфрейм.</div>'+
       '<div class="alerts-section"><b>⏱️ Таймфрейм оповещений</b><select id="alertTf" class="alerts-tf"><option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option><option value="30m">30m</option><option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option></select><div class="alerts-note">Таймфрейм оповещений независим от таймфрейма графика.</div></div><div class="alerts-section"><b>📋 Пары для оповещений</b><div class="alerts-pair-actions"><button id="alertsPairsAll">Все доступные</button><button id="alertsPairsClear">Очистить</button></div><div id="alertsPairs" class="alerts-pairs"></div><div class="alerts-note">Выбери пары. Максимум 20 одновременно.</div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertVolume" type="checkbox"><span>Volume Spike</span></label><div class="alerts-grid"><label>Период<input id="alertVolPeriod" type="number" min="2" value="'+cfg.volumePeriod+'"></label><label>Порог ×<input id="alertVolMult" type="number" min="1" step=".1" value="'+cfg.volumeMult+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertRsi" type="checkbox"><span>RSI</span></label><div class="alerts-grid"><label>Период<input id="alertRsiPeriod" type="number" min="2" value="'+cfg.rsiPeriod+'"></label><label>Зоны<input id="alertRsiLow" type="number" min="1" max="49" value="'+cfg.rsiLow+'"> / <input id="alertRsiHigh" type="number" min="51" max="99" value="'+cfg.rsiHigh+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertSma" type="checkbox"><span>SMA Touch</span></label><div class="alerts-grid"><label>Период<input id="alertSmaPeriod" type="number" min="2" value="'+cfg.smaPeriod+'"></label><label>Допуск %<input id="alertSmaTol" type="number" min="0" step=".05" value="'+cfg.smaTolerance+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertVP" type="checkbox"><span>Volume Profile</span></label><div class="alerts-grid"><label>История, свечей<input id="alertVPPeriod" type="number" min="20" max="300" value="'+cfg.vpPeriod+'"></label><label>Строк профиля<input id="alertVPRows" type="number" min="10" max="60" value="'+cfg.vpRows+'"></label><label>Сигнал<select id="alertVPMode"><option value="poc">Пересечение POC</option><option value="va">Пробой VAH / VAL</option><option value="all">Все уровни: POC, VAH, VAL</option></select></label></div><div class="alerts-note">Проверка только после закрытия свечи. Профиль рассчитывается по предшествующим свечам.</div></div>'+
-      '<div class="alerts-section"><label class="alerts-check"><input id="alertCombo" type="checkbox"><span>✨ Комбо-алерт</span></label><div class="alerts-grid"><label>Совпадение<select id="alertComboCount"><option value="2">2 из 3 индикаторов</option><option value="3">3 из 3 индикаторов</option></select></label><label>Окно<select id="alertComboWindow"><option value="1">1 свеча</option><option value="2">2 свечи</option><option value="3">3 свечи</option></select></label></div><div class="alerts-note">Сигналы должны совпасть по паре, таймфрейму и окну. Volume подтверждает активность, а направление LONG/SHORT задают RSI и/или SMA. Если RSI и SMA одновременно сработали, их направления должны совпадать. Самостоятельные алерты Volume, RSI и SMA остаются отдельными.</div><button type="button" id="comboModeToggle" class="primary" style="width:100%;margin-top:8px">✨ Включить режим COMBO</button><div id="comboModeStatus" class="alerts-note" style="margin-top:6px">Обычные алерты работают независимо.</div></div>'+
+      '<div class="alerts-section"><label class="alerts-check"><input id="alertCombo" type="checkbox"><span>✨ Комбо-алерт</span></label><div class="alerts-grid"><label>Совпадение<select id="alertComboCount"><option value="2">2 из 4 индикаторов</option><option value="3">3 из 4 индикаторов</option></select></label><label>Окно<select id="alertComboWindow"><option value="1">1 свеча</option><option value="2">2 свечи</option><option value="3">3 свечи</option></select></label></div><div class="alerts-note">Сигналы должны совпасть по паре, таймфрейму и окну. Volume подтверждает активность; направление LONG/SHORT задают RSI, SMA и/или Volume Profile. Направления сработавших RSI, SMA и VP должны совпадать. Комбо собирает минимум 2 или 3 источника из четырёх: Volume, RSI, SMA и VP; если совпали все четыре, они все будут указаны в сообщении. Самостоятельные алерты всех четырёх источников работают отдельно.</div><button type="button" id="comboModeToggle" class="primary" style="width:100%;margin-top:8px">✨ Включить режим COMBO</button><div id="comboModeStatus" class="alerts-note" style="margin-top:6px">Обычные алерты работают независимо.</div></div>'+
       '<div class="alerts-section"><div class="alerts-grid"><label>Громкость<input id="alertVolumeLevel" type="range" min="0" max="1" step=".05" value="'+cfg.volumeLevel+'"></label><label>Антиспам, сек<input id="alertCooldown" type="number" min="1" value="'+cfg.cooldown+'"></label></div><div class="alerts-actions"><button id="alertsSound" class="primary">🔊 Включить звук</button></div><div class="alerts-sound-tests"><button id="testVolume">⚡ Volume</button><button id="testRsi">📈 RSI</button><button id="testSma">〽️ SMA</button><button id="testVP">▥ VP</button><button id="testCombo">✨ Combo</button><button id="testAll">▶ Все сигналы</button></div><div class="alerts-note">Нажми кнопки, чтобы сравнить реальные звуки каждого сигнала.</div></div>'+
       '<div class="alerts-stats"><div><small>Price</small><b id="alertsPriceValue">—</b></div><div><small>SMA</small><b id="alertsSmaValue">—</b></div><div><small>RSI</small><b id="alertsRsiValue">—</b></div></div>'+
       '<div id="alertsLast" class="alerts-last">Ожидание сигнала…</div><div class="alerts-log-head"><b>📚 Журнал алертов · хранение 7 дней</b><button type="button" id="clearAlertsLog">Очистить</button></div><div id="alertsLog" class="alerts-log"></div>';
@@ -308,7 +308,7 @@
       comboModeButton.textContent=cfg.comboModeActive?"■ Выключить режим COMBO":"✨ Включить режим COMBO";
       comboModeButton.classList.toggle("primary",!!cfg.comboModeActive);
       comboModeButton.style.borderColor=cfg.comboModeActive?"#4b3b68":"";
-      comboModeStatus.textContent=cfg.comboModeActive?"COMBO ACTIVE — на графике и в журнале только сигналы выбранного комбо; отдельные алерты и звуки подавлены.":"COMBO OFF — Volume, RSI и SMA работают независимо.";
+      comboModeStatus.textContent=cfg.comboModeActive?"COMBO ACTIVE — на графике и в журнале только сигналы выбранного комбо; отдельные алерты и звуки подавлены.":"COMBO OFF — Volume, RSI, SMA и Volume Profile работают независимо.";
     }
     if(cfg.comboModeActive){cfg.comboEnabled=true;$("alertCombo").checked=true;}
     comboModeButton.onclick=()=>{
