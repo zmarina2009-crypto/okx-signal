@@ -5,10 +5,57 @@
   const endpointKey="okx_telegram_config_endpoint_v1";
   const tfOptions=["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","1w"];
   let rules=[];
+  let serverRules=null;
   function endpoint(){return String($("tgConfigEndpoint").value||"").trim().replace(/\/+$/,"");}
   function setStatus(message,kind="info"){const el=$("tgConfigStatus");if(!el)return;el.textContent=message;el.className="tg-config-status "+kind;}
   function make(tag,attrs={},text){const el=document.createElement(tag);Object.entries(attrs).forEach(([k,v])=>{if(k==="class")el.className=v;else if(k==="type"||k==="placeholder"||k==="aria-label"||k==="list"||k==="value")el.setAttribute(k,v);else el[k]=v});if(text!=null)el.textContent=text;return el;}
   function normalizeRule(r){return {pair:String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf:String(r.tf||"15m").trim().toLowerCase(),telegram:r.telegram!==false,volume:r.volume===true,rsi:r.rsi===true,sma:r.sma===true,combo:r.combo===true};}
+  function renderSavedRules(){
+    const root=$("tgSavedRulesList"),meta=$("tgSavedRulesMeta");
+    if(!root||!meta)return;
+    root.replaceChildren();
+    if(serverRules===null){
+      meta.textContent="Не загружено";
+      root.append(make("div",{class:"tg-saved-empty"},"Нажми «Загрузить», чтобы увидеть пары и таймфреймы, сохранённые на сервере."));
+      return;
+    }
+    const saved=serverRules.map(normalizeRule);
+    if(!saved.length){
+      meta.textContent="0 правил";
+      root.append(make("div",{class:"tg-saved-empty"},"На сервере пока нет сохранённых правил уведомлений."));
+      return;
+    }
+    const grouped=new Map();
+    saved.forEach(rule=>{
+      if(!grouped.has(rule.pair))grouped.set(rule.pair,[]);
+      grouped.get(rule.pair).push(rule);
+    });
+    meta.textContent=saved.length+" правил · "+grouped.size+" пар";
+    [...grouped.entries()].sort(([a],[b])=>a.localeCompare(b)).forEach(([pair,pairRules])=>{
+      const card=make("div",{class:"tg-saved-pair"});
+      card.append(make("div",{class:"tg-saved-pair-name"},pair));
+      const timeframes=make("div",{class:"tg-saved-timeframes"});
+      pairRules.sort((a,b)=>{
+        const ai=tfOptions.indexOf(a.tf),bi=tfOptions.indexOf(b.tf);
+        return (ai<0?999:ai)-(bi<0?999:bi);
+      }).forEach(rule=>{
+        const item=make("div",{class:"tg-saved-rule"+(rule.telegram?"":" is-off")});
+        item.append(make("span",{class:"tg-saved-tf"},rule.tf));
+        const enabled=[];
+        if(rule.volume)enabled.push("Объём");
+        if(rule.rsi)enabled.push("RSI");
+        if(rule.sma)enabled.push("SMA");
+        if(rule.combo)enabled.push("COMBO");
+        const state=rule.telegram?"TG включён":"TG выключен";
+        const channels=enabled.length?enabled.join(" · "):"источники не выбраны";
+        item.append(make("span",{class:"tg-saved-rule-info"},state+" · "+channels));
+        item.title=pair+" · "+rule.tf+" · "+state+" · "+channels;
+        timeframes.append(item);
+      });
+      card.append(timeframes);
+      root.append(card);
+    });
+  }
   function render(){
     const root=$("tgRulesRows");root.replaceChildren();
     rules.forEach((raw,index)=>{
@@ -34,13 +81,14 @@
   }
   async function readConfig(){
     if(!endpoint()){setStatus("Укажи адрес Telegram worker в Railway.","warn");return}
+    serverRules=null;renderSavedRules();
     setStatus("Загружаем серверные настройки…");
     try{
       const r=await fetch(endpoint()+"/config",{cache:"no-store"});
       if(!r.ok)throw Error("HTTP "+r.status);
       const data=await r.json();if(!Array.isArray(data.rules))throw Error("Сервер вернул неверный формат");
-      rules=data.rules.map(normalizeRule);render();setStatus("Загружено с сервера: "+rules.length+" правил.","ok");
-    }catch(e){setStatus("Не удалось загрузить настройки: "+(e.message||e)+". Проверь адрес, CORS и доступность сервера.","error")}
+      rules=data.rules.map(normalizeRule);serverRules=rules.map(normalizeRule);render();renderSavedRules();setStatus("Загружено с сервера: "+rules.length+" правил.","ok");
+    }catch(e){serverRules=null;renderSavedRules();setStatus("Не удалось загрузить настройки: "+(e.message||e)+". Проверь адрес, CORS и доступность сервера.","error")}
   }
   async function saveConfig(){
     if(!endpoint()){setStatus("Укажи адрес Telegram worker в Railway.","warn");return}
@@ -56,7 +104,7 @@
       const r=await fetch(endpoint()+"/config",{method:"PUT",headers:{"content-type":"application/json","authorization":"Bearer "+token},body:JSON.stringify({rules:normalized})});
       const data=await r.json().catch(()=>({}));
       if(!r.ok)throw Error(data.error||("HTTP "+r.status));
-      rules=normalized;render();setStatus("Сохранено на сервере: "+data.count+" правил, "+data.pairs+" пар. Изменения вступили в силу без перезапуска.","ok");
+      rules=normalized;serverRules=normalized.map(normalizeRule);render();renderSavedRules();setStatus("Сохранено на сервере: "+data.count+" правил, "+data.pairs+" пар. Изменения вступили в силу без перезапуска.","ok");
       $("tgConfigToken").value="";
     }catch(e){setStatus("Не удалось сохранить: "+(e.message||e)+". Проверь CONFIG_API_TOKEN и CORS.","error")}
   }
@@ -88,12 +136,12 @@
   function init(){
     const saved=localStorage.getItem(endpointKey)||"";
     $("tgConfigEndpoint").value=saved;
-    $("tgConfigEndpoint").addEventListener("change",()=>localStorage.setItem(endpointKey,endpoint()));
+    $("tgConfigEndpoint").addEventListener("change",()=>{localStorage.setItem(endpointKey,endpoint());serverRules=null;renderSavedRules();});
     $("tgConfigLoad").addEventListener("click",readConfig);
     $("tgConfigSave").addEventListener("click",saveConfig);
     $("tgConfigAdd").addEventListener("click",addRule);
     $("tgConfigTest").addEventListener("click",testTelegram);
-    fillPairOptions();render();
+    fillPairOptions();render();renderSavedRules();
     window.addEventListener("okx-markets-loaded",fillPairOptions);
     // The public OKX markets arrive asynchronously. Retry while waiting, and
     // refresh once the main app announces that its complete market list is ready.
@@ -104,6 +152,7 @@
       if((!list||!list.options.length)&&attempts++<30)setTimeout(retryPairOptions,500);
     };
     retryPairOptions();
+    if(saved.trim())readConfig();
   }
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init,{once:true});else init();
 })();
