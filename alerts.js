@@ -151,7 +151,7 @@
     const chosen=[...byKind.values()],required=Math.max(2,Math.min(3,Number(cfg.comboCount)||2));
     if(chosen.length<required)return;
     // Volume is a non-directional confirmation; RSI, SMA and Volume Profile must agree on direction.
-    // RSI and SMA are directional; if both are present, their directions must agree.
+    // RSI, SMA and VP are directional; all included directional signals must agree.
     const directed=chosen.filter(s=>s.kind!=="volume");
     if(!directed.length)return;
     const comboDirection=directed[0].direction;
