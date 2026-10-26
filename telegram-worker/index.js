@@ -32,7 +32,7 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
     return PAIRS.flatMap(pair => TIMEFRAMES.map(tf => ({
       pair, tf, telegram: true,
       volume: ENABLE_VOLUME, rsi: ENABLE_RSI, sma: ENABLE_SMA, combo: ENABLE_COMBO,
-      chopFilter: false, chopPeriod: 14, chopThreshold: 61.8
+      chopFilter: tf === "1m", chopPeriod: 14, chopThreshold: 61.8
     })));
   }
   let parsed;
@@ -57,7 +57,7 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
       rsi: item.rsi == null ? ENABLE_RSI : item.rsi === true,
       sma: item.sma == null ? ENABLE_SMA : item.sma === true,
       combo: item.combo == null ? ENABLE_COMBO : item.combo === true,
-      chopFilter: item.chopFilter === true,
+      chopFilter: item.chopFilter == null ? tf === "1m" : item.chopFilter === true,
       chopPeriod: clamp(Number(item.chopPeriod || 14), 5, 50),
       chopThreshold: clamp(Number(item.chopThreshold || 61.8), 20, 100)
     });
