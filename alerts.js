@@ -2,7 +2,7 @@
 (function(){
   "use strict";
   const KEY="okx_alerts_v1";
-  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,vp:true,vpPeriod:60,vpRows:30,vpMode:"poc",comboEnabled:false,comboModeActive:false,comboCount:2,comboWindow:1,chopEnabled:false,chopPeriod:14,chopThreshold:61.8,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
+  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,vp:true,vpPeriod:60,vpRows:30,vpMode:"poc",comboEnabled:false,comboModeActive:false,comboCount:2,comboWindow:1,chopEnabled:true,chopPeriod:14,chopThreshold:61.8,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
   let cfg=Object.assign({},defaults,(()=>{try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch{return{}}})());
   if(!Number.isFinite(Number(cfg.smaTolerance))||Number(cfg.smaTolerance)===.15)cfg.smaTolerance=0;
   cfg.vpPeriod=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));cfg.vpRows=Math.max(10,Math.min(60,Math.round(Number(cfg.vpRows)||30)));if(!["poc","va","all"].includes(cfg.vpMode))cfg.vpMode="poc";
