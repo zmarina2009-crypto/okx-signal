@@ -134,7 +134,7 @@
     if(rules.length>=100){setStatus("Достигнут лимит 100 правил.","warn");return}
     const api=window.OKXSignalApp,markets=api&&typeof api.getAllMarkets==="function"?api.getAllMarkets():(api&&api.getMarkets?api.getMarkets():[]);
     const pair=markets?.[0]?.instId||"BTC-USDT-SWAP";
-    rules.push({pair,tf:"1m",telegram:true,volume:true,rsi:true,sma:false,combo:true,chopFilter:false,chopPeriod:14,chopThreshold:61.8});render();
+    rules.push({pair,tf:"1m",telegram:true,volume:true,rsi:true,sma:false,combo:true,chopFilter:true,chopPeriod:14,chopThreshold:61.8});render();
   }
   function init(){
     const saved=localStorage.getItem(endpointKey)||"";
