@@ -2,11 +2,11 @@
 (function(){
   "use strict";
   const KEY="okx_alerts_v1";
-  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,vp:true,vpPeriod:60,vpRows:30,vpMode:"poc",comboEnabled:false,comboModeActive:false,comboCount:2,comboWindow:1,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
+  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,vp:true,vpPeriod:60,vpRows:30,vpMode:"poc",comboEnabled:false,comboModeActive:false,comboCount:2,comboWindow:1,chopEnabled:false,chopPeriod:14,chopThreshold:61.8,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
   let cfg=Object.assign({},defaults,(()=>{try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch{return{}}})());
   if(!Number.isFinite(Number(cfg.smaTolerance))||Number(cfg.smaTolerance)===.15)cfg.smaTolerance=0;
   cfg.vpPeriod=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));cfg.vpRows=Math.max(10,Math.min(60,Math.round(Number(cfg.vpRows)||30)));if(!["poc","va","all"].includes(cfg.vpMode))cfg.vpMode="poc";
-  let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={};
+  let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[];
   const $=id=>document.getElementById(id);
   const esc=s=>String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
   function save(){localStorage.setItem(KEY,JSON.stringify(cfg))}
@@ -52,6 +52,19 @@
     lastAlertAt[key]=t;return true;
   }
   function sma(a,n,field="c"){if(!a||a.length<n)return null;let s=0;for(let i=a.length-n;i<a.length;i++)s+=Number(a[i][field])||0;return s/n}
+  function choppiness(candles,n){
+    const period=Math.max(5,Math.min(50,Math.round(Number(n)||14)));
+    if(!Array.isArray(candles)||candles.length<period+1)return null;
+    const window=candles.slice(-period);let sumTR=0,highest=-Infinity,lowest=Infinity;
+    for(let i=0;i<window.length;i++){
+      const candle=window[i],previous=i===0?candles[candles.length-period-1]:window[i-1];
+      const h=Number(candle.h),l=Number(candle.l),pc=Number(previous.c);
+      if(![h,l,pc].every(Number.isFinite))return null;
+      sumTR+=Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc));highest=Math.max(highest,h);lowest=Math.min(lowest,l);
+    }
+    const span=highest-lowest;if(span<=0||sumTR<=0)return null;
+    return Math.max(0,Math.min(100,100*Math.log10(sumTR/span)/Math.log10(period)));
+  }
   function rsi(a,n){
     if(!a||a.length<n+1)return null;
     let gain=0,loss=0;
@@ -157,6 +170,19 @@
     const comboDirection=directed[0].direction;
     if(directed.some(s=>s.direction!==comboDirection))return;
     const comboTs=Math.max(...chosen.map(s=>Number(s.ts)||0));
+    if(cfg.chopEnabled){
+      const chop=choppiness(currentComboCandles,cfg.chopPeriod),threshold=Math.max(20,Math.min(100,Number(cfg.chopThreshold)||61.8));
+      if(chop==null||chop>=threshold){
+        const blockedKey="combo:"+pair+":"+tf,blockTs=comboTs;
+        if(comboFilterLastAt[blockedKey]!==blockTs){
+          comboFilterLastAt[blockedKey]=blockTs;
+          const detail=chop==null?"недостаточно свечей":"CHOP "+chop.toFixed(1)+" ≥ "+threshold.toFixed(1);
+          const note="⛔ COMBO заблокирован фильтром флета • "+detail+" • "+pair+" • "+tf;
+          log("other",note);const b=$("alertsLast");if(b){b.textContent=note;b.className="alerts-last";}
+        }
+        return;
+      }
+    }
     const directionSignal=[...directed].sort((x,y)=>Math.abs(ts-x.ts)-Math.abs(ts-y.ts))[0];
     const alertKey="combo:"+pair+":"+tf+":"+comboDirection,lastAt=comboLastAt[alertKey]||0;
     if(lastAt&&Math.abs(comboTs-lastAt)<=windowMs)return;
@@ -197,6 +223,7 @@
     const hist=polled?raw.slice(0,-1):raw;
     const live=polled?raw[raw.length-1]:o.live;
     if(hist.length<5)return;
+    currentComboCandles=hist;
     const st=pairState[pair]||(pairState[pair]={lastClosedTs:0,lastTouch:false});
     const closed=hist[hist.length-1];
     if(closed&&closed.ts!==st.lastClosedTs){
@@ -280,6 +307,7 @@
       '<div class="alerts-section"><label class="alerts-check"><input id="alertSma" type="checkbox"><span>SMA Touch</span></label><div class="alerts-grid"><label>Период<input id="alertSmaPeriod" type="number" min="2" value="'+cfg.smaPeriod+'"></label><label>Допуск %<input id="alertSmaTol" type="number" min="0" step=".05" value="'+cfg.smaTolerance+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertVP" type="checkbox"><span>Volume Profile</span></label><div class="alerts-grid"><label>История, свечей<input id="alertVPPeriod" type="number" min="20" max="300" value="'+cfg.vpPeriod+'"></label><label>Строк профиля<input id="alertVPRows" type="number" min="10" max="60" value="'+cfg.vpRows+'"></label><label>Сигнал<select id="alertVPMode"><option value="poc">Пересечение POC</option><option value="va">Пробой VAH / VAL</option><option value="all">Все уровни: POC, VAH, VAL</option></select></label></div><div class="alerts-note">Проверка только после закрытия свечи. Профиль рассчитывается по предшествующим свечам.</div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertCombo" type="checkbox"><span>✨ Комбо-алерт</span></label><div class="alerts-grid"><label>Совпадение<select id="alertComboCount"><option value="2">2 из 3 индикаторов</option><option value="3">3 из 3 индикаторов</option></select></label><label>Окно<select id="alertComboWindow"><option value="1">1 свеча</option><option value="2">2 свечи</option><option value="3">3 свечи</option></select></label></div><div class="alerts-note">Сигналы должны совпасть по паре, таймфрейму и окну. Volume подтверждает активность, а направление LONG/SHORT задают RSI и/или SMA. Если RSI и SMA одновременно сработали, их направления должны совпадать. Самостоятельные алерты Volume, RSI и SMA остаются отдельными.</div><button type="button" id="comboModeToggle" class="primary" style="width:100%;margin-top:8px">✨ Включить режим COMBO</button><div id="comboModeStatus" class="alerts-note" style="margin-top:6px">Обычные алерты работают независимо.</div></div>'+
+      '<div class="alerts-section"><label class="alerts-check"><input id="alertChopFilter" type="checkbox"><span>Фильтр флета CHOP для COMBO</span></label><div class="alerts-grid"><label>Период<input id="alertChopPeriod" type="number" min="5" max="50" step="1" value="'+cfg.chopPeriod+'"></label><label>Блокировать при CHOP ≥<input id="alertChopThreshold" type="number" min="20" max="100" step=".1" value="'+cfg.chopThreshold+'"></label></div><div class="alerts-note">Блокирует только COMBO при высоком CHOP. Отдельные индикаторные сигналы остаются доступными. Работает и на 1m: выбери 1m в таймфрейме оповещений.</div></div>'+
       '<div class="alerts-section"><div class="alerts-grid"><label>Громкость<input id="alertVolumeLevel" type="range" min="0" max="1" step=".05" value="'+cfg.volumeLevel+'"></label><label>Антиспам, сек<input id="alertCooldown" type="number" min="1" value="'+cfg.cooldown+'"></label></div><div class="alerts-actions"><button id="alertsSound" class="primary">🔊 Включить звук</button></div><div class="alerts-sound-tests"><button id="testVolume">⚡ Volume</button><button id="testRsi">📈 RSI</button><button id="testSma">〽️ SMA</button><button id="testVP">▥ VP</button><button id="testCombo">✨ Combo</button><button id="testAll">▶ Все сигналы</button></div><div class="alerts-note">Нажми кнопки, чтобы сравнить реальные звуки каждого сигнала.</div></div>'+
       '<div class="alerts-stats"><div><small>Price</small><b id="alertsPriceValue">—</b></div><div><small>SMA</small><b id="alertsSmaValue">—</b></div><div><small>RSI</small><b id="alertsRsiValue">—</b></div></div>'+
       '<div id="alertsLast" class="alerts-last">Ожидание сигнала…</div><div class="alerts-log-head"><b>📚 Журнал алертов · хранение 7 дней</b><button type="button" id="clearAlertsLog">Очистить</button></div><div id="alertsLog" class="alerts-log"></div>';
@@ -302,6 +330,8 @@
     $("alertVP").checked=!!cfg.vp;$("alertVP").onchange=()=>{cfg.vp=$("alertVP").checked;save()};$("alertVPMode").value=cfg.vpMode;
     $("alertCombo").checked=!!cfg.comboEnabled;
     $("alertCombo").onchange=()=>{cfg.comboEnabled=$("alertCombo").checked;comboSignals=[];comboLastAt={};save()};
+    $("alertChopFilter").checked=!!cfg.chopEnabled;
+    $("alertChopFilter").onchange=()=>{cfg.chopEnabled=$("alertChopFilter").checked;comboSignals=[];comboLastAt={};comboFilterLastAt={};save()};
     const comboModeButton=$("comboModeToggle"),comboModeStatus=$("comboModeStatus");
     function renderComboMode(){
       if(!comboModeButton||!comboModeStatus)return;
@@ -325,7 +355,7 @@
     $("alertComboCount").value=String(cfg.comboCount||2);
     $("alertComboWindow").value=String(cfg.comboWindow||1);
     const bind=(id,key,parse)=>{const el=$(id);el.onchange=()=>{cfg[key]=parse(el.value);comboSignals=[];comboLastAt={};save()}};
-    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");bind("alertComboCount","comboCount",v=>Math.max(2,Math.min(3,+v||2)));bind("alertComboWindow","comboWindow",v=>Math.max(1,Math.min(3,+v||1)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
+    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");bind("alertComboCount","comboCount",v=>Math.max(2,Math.min(3,+v||2)));bind("alertComboWindow","comboWindow",v=>Math.max(1,Math.min(3,+v||1)));bind("alertChopPeriod","chopPeriod",v=>Math.max(5,Math.min(50,+v||14)));bind("alertChopThreshold","chopThreshold",v=>Math.max(20,Math.min(100,+v||61.8)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
     $("alertsSound").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("test");$("alertsSound").textContent="🔊 Звук включён";log("sma","Звук включён")}catch{$("alertsSound").textContent="⚠️ Звук недоступен"}};
     const testSound=async(kind,label)=>{try{await ensureAudio();cfg.sound=true;save();tone(kind);log(kind,"Тест звука: "+label)}catch{}};    $("testVolume").onclick=()=>testSound("volume","Volume");    $("testRsi").onclick=()=>testSound("rsi","RSI");    $("testSma").onclick=()=>testSound("sma","SMA21");    $("testVP").onclick=()=>testSound("vp","Volume Profile");    $("testCombo").onclick=()=>testSound("combo","Combo");    $("testAll").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("volume");setTimeout(()=>tone("rsi"),1100);setTimeout(()=>tone("sma"),2200);setTimeout(()=>tone("vp"),3300);log("vp","Тест звуков: Volume → RSI → SMA21 → Volume Profile")}catch{}};
   }

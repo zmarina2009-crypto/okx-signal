@@ -31,7 +31,8 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
   if (!raw) {
     return PAIRS.flatMap(pair => TIMEFRAMES.map(tf => ({
       pair, tf, telegram: true,
-      volume: ENABLE_VOLUME, rsi: ENABLE_RSI, sma: ENABLE_SMA, combo: ENABLE_COMBO
+      volume: ENABLE_VOLUME, rsi: ENABLE_RSI, sma: ENABLE_SMA, combo: ENABLE_COMBO,
+      chopFilter: false, chopPeriod: 14, chopThreshold: 61.8
     })));
   }
   let parsed;
@@ -55,7 +56,10 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
       volume: item.volume == null ? ENABLE_VOLUME : item.volume === true,
       rsi: item.rsi == null ? ENABLE_RSI : item.rsi === true,
       sma: item.sma == null ? ENABLE_SMA : item.sma === true,
-      combo: item.combo == null ? ENABLE_COMBO : item.combo === true
+      combo: item.combo == null ? ENABLE_COMBO : item.combo === true,
+      chopFilter: item.chopFilter === true,
+      chopPeriod: clamp(Number(item.chopPeriod || 14), 5, 50),
+      chopThreshold: clamp(Number(item.chopThreshold || 61.8), 20, 100)
     });
   }
   const rules = [...unique.values()];
@@ -84,6 +88,24 @@ function rsi(candles, n, end = candles.length) {
   if (!losses) return 100;
   if (!gains) return 0;
   return 100 - 100 / (1 + gains / losses);
+}
+function choppiness(candles, n = 14) {
+  const period = clamp(Math.round(Number(n) || 14), 5, 50);
+  if (!Array.isArray(candles) || candles.length < period + 1) return null;
+  const window = candles.slice(-period);
+  let sumTR = 0, highest = -Infinity, lowest = Infinity;
+  for (let i = 0; i < window.length; i++) {
+    const candle = window[i];
+    const previous = i === 0 ? candles[candles.length - period - 1] : window[i - 1];
+    const high = Number(candle.h), low = Number(candle.l), previousClose = Number(previous.c);
+    if (![high, low, previousClose].every(Number.isFinite)) return null;
+    sumTR += Math.max(high - low, Math.abs(high - previousClose), Math.abs(low - previousClose));
+    highest = Math.max(highest, high);
+    lowest = Math.min(lowest, low);
+  }
+  const span = highest - lowest;
+  if (span <= 0 || sumTR <= 0) return null;
+  return clamp(100 * Math.log10(sumTR / span) / Math.log10(period), 0, 100);
 }
 function barFor(tf) {
   return ({ "1h": "1H", "2h": "2H", "4h": "4H", "6h": "6H", "12h": "12H", "1d": "1D", "1w": "1W" })[tf.toLowerCase()] || tf;
@@ -166,7 +188,7 @@ async function fetchCandles(pair, tf) {
     c: Number(row[4]), v: Number(row[5]), confirm: String(row[8]) === "1"
   })).filter(c => Number.isFinite(c.ts) && c.c > 0).sort((a, b) => a.ts - b.ts);
 }
-function recordSignal(pair, tf, kind, direction, ts, closePrice, rule) {
+function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) {
   recordPerformanceSignal(state, { pair, tf, kind, direction, ts, price: closePrice });
   state.recentSignals = state.recentSignals.filter(s => Date.now() - s.ts <= tfMs(tf) * COMBO_WINDOW_BARS * 5);
   const id = [pair, tf, kind, direction, ts].join(":");
@@ -185,9 +207,19 @@ function recordSignal(pair, tf, kind, direction, ts, closePrice, rule) {
   const directed = chosen.filter(s => s.kind !== "volume");
   if (!directed.length || directed.some(s => s.direction !== directed[0].direction)) return;
   const comboTs = Math.max(...chosen.map(s => s.ts));
+  if (rule.chopFilter) {
+    const chop = choppiness(candles, rule.chopPeriod);
+    const threshold = clamp(Number(rule.chopThreshold) || 61.8, 20, 100);
+    if (chop == null || chop >= threshold) {
+      const detail = chop == null ? "недостаточно свечей" : "CHOP " + chop.toFixed(1) + " >= " + threshold.toFixed(1);
+      console.log("Combo blocked by CHOP:", pair, tf, detail);
+      state.recentSignals = state.recentSignals.filter(s => !(s.pair === pair && s.tf === tf && s.ts <= comboTs));
+      return;
+    }
+  }
   const comboPrice = directed[0].price || closePrice;
   recordPerformanceSignal(state, { pair, tf, kind: "combo", direction: directed[0].direction, ts: comboTs, price: comboPrice });
-  if (rule.telegram) void emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.map(s => s.kind.toUpperCase()).join(" + "));
+  if (rule.telegram) void emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.map(s => s.kind.toUpperCase()).join(" + ") + (rule.chopFilter ? " • CHOP " + (choppiness(candles, rule.chopPeriod) ?? NaN).toFixed(1) : ""));
   state.recentSignals = state.recentSignals.filter(s => !(s.pair === pair && s.tf === tf && s.ts <= comboTs));
 }
 async function processPair(pair, tf, rule) {
@@ -211,7 +243,7 @@ async function processPair(pair, tf, rule) {
       if (multiple >= VOLUME_MULT) {
         const direction = last.c >= last.o ? "LONG" : "SHORT";
         if (rule.telegram) await emit("volume", pair, tf, direction, last.c, `Объём: ×${multiple.toFixed(1)} от среднего`);
-        recordSignal(pair, tf, "volume", direction, last.ts, last.c, rule);
+        recordSignal(pair, tf, "volume", direction, last.ts, last.c, rule, closed);
       }
     }
     if (rule.rsi) {
@@ -220,11 +252,11 @@ async function processPair(pair, tf, rule) {
       if (value != null && prev != null) {
         if (prev >= RSI_LOW && value < RSI_LOW) {
           if (rule.telegram) await emit("rsi", pair, tf, "LONG", last.c, `RSI: ${value.toFixed(1)} — выход ниже ${RSI_LOW}`);
-          recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c, rule);
+          recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c, rule, closed);
         }
         if (prev <= RSI_HIGH && value > RSI_HIGH) {
           if (rule.telegram) await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`);
-          recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c, rule);
+          recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c, rule, closed);
         }
       }
     }
@@ -239,7 +271,7 @@ async function processPair(pair, tf, rule) {
       // Follow the pre-touch trend: above SMA => LONG; below SMA => SHORT.
       const direction = previous && previousSma != null && previous.c >= previousSma ? "LONG" : "SHORT";
       if (rule.telegram) await emit("sma", pair, tf, direction, last.c, `SMA${SMA_PERIOD}: ${price(m)} (закрытая свеча)`);
-      recordSignal(pair, tf, "sma", direction, last.ts, last.c, rule);
+      recordSignal(pair, tf, "sma", direction, last.ts, last.c, rule, closed);
     }
   }
   await saveState();
@@ -276,7 +308,7 @@ const server = http.createServer((req, res) => {
   }
   if (requestUrl.pathname === "/config" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, volume, rsi, sma, combo }) => ({ pair, tf, telegram, volume, rsi, sma, combo })) }, null, 2));
+    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, volume, rsi, sma, combo, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, volume, rsi, sma, combo, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
     return;
   }
   if (requestUrl.pathname === "/config" && req.method === "PUT") {
