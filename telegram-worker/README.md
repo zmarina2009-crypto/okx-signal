@@ -5,8 +5,8 @@ This is a separate Node.js worker. It does not change the browser chart, Live co
 ## What it does
 
 - Polls public OKX market candles from the server, so the phone/browser can be off.
-- Sends Telegram messages for SMA touch, Volume spike, and RSI threshold-cross alerts.
-- Optionally sends Combo alerts.
+- Sends Telegram messages for SMA touch, Volume spike, RSI threshold-cross, and Volume Profile (VP) level-crossing alerts.
+- Optionally sends Combo alerts; when VP is enabled for a rule, it can be one of the directional Combo sources.
 - Saves processed candle timestamps, cooldown state, signal history, and signal outcomes to the persistent JSON state file.
 - Measures directional price return, maximum favourable excursion (MFE), and maximum adverse excursion (MAE) 1, 4, and 12 hours after each signal.
 - Exposes `/health` for a hosting health check and `/stats?days=7` for a JSON performance summary (up to 90 days).
@@ -15,7 +15,9 @@ This is a separate Node.js worker. It does not change the browser chart, Live co
 
 The worker currently uses environment variables for its watchlist and alert settings. It does **not yet automatically import the browser's saved watchlists/settings**; browser localStorage is private to that browser. A later integration can add authenticated settings sync if desired.
 
-All three indicator families are evaluated on confirmed candles. SMA touch is detected from the completed candle's high/low range against the SMA, so it does not repaint while a candle is still forming. The direction follows the pre-touch trend (price above SMA => LONG; below SMA => SHORT).
+Volume Profile is calculated from prior fully closed candles using typical price `(high + low + close) / 3`, 30 volume bins by default, and a 70% value area. VP alerts are generated when a confirmed close crosses the selected POC / value-area level; the signal candle is not included in its own profile. VP can also contribute a directional source to Combo alerts.
+
+All indicator families are evaluated on confirmed candles. SMA touch is detected from the completed candle's high/low range against the SMA, so it does not repaint while a candle is still forming. The direction follows the pre-touch trend (price above SMA => LONG; below SMA => SHORT).
 
 ## Deploy on Railway
 
@@ -30,7 +32,7 @@ Create a Railway service from this repository and set the service root directory
 
 - `OKX_PAIRS=BTC-USDT-SWAP,ETH-USDT-SWAP`
 - `OKX_TIMEFRAMES=1m,5m,15m,1h,4h`
-- `OKX_ALERT_RULES` — optional JSON array for independent pair/timeframe rules (overrides the pair/timeframe matrix above). Each item supports `pair`, `tf`, and booleans `telegram`, `volume`, `rsi`, `sma`, `combo`. Up to 20 distinct perpetual pairs and 100 pair/timeframe rules are accepted.
+- `OKX_ALERT_RULES` — optional JSON array for independent pair/timeframe rules (overrides the pair/timeframe matrix above). Each item supports `pair`, `tf`, and booleans `telegram`, `volume`, `rsi`, `sma`, `vp`, `combo`. Up to 20 distinct perpetual pairs and 100 pair/timeframe rules are accepted.
   Example: `[{"pair":"BTC-USDT-SWAP","tf":"1m","telegram":true,"volume":false,"rsi":true,"sma":true,"combo":true},{"pair":"BTC-USDT-SWAP","tf":"1h","telegram":true,"volume":true,"rsi":false,"sma":false,"combo":false},{"pair":"ETH-USDT-SWAP","tf":"15m","telegram":true,"volume":true,"rsi":true,"sma":false,"combo":true}]`
 - `GET /config` — read-only endpoint showing active rules without secrets. `PUT /config` — updates rules at runtime and persists them in `STATE_FILE`; requires `Authorization: Bearer <CONFIG_API_TOKEN>`. Set a long random `CONFIG_API_TOKEN` in Railway before enabling writes. A successful config update is acknowledged only after the state file is written atomically; persistence failures return HTTP 500. `CONFIG_ALLOWED_ORIGIN` defaults to `https://zmarina2009-crypto.github.io` for browser CORS; override only for your trusted frontend origin. `GET /health` reports distinct pair count, rule count, and active timeframes.
 - Saved rules in `state.json` take precedence after restart; if none have been saved, the worker uses `OKX_ALERT_RULES` or the legacy `OKX_PAIRS` + `OKX_TIMEFRAMES` matrix. Supported OKX bars are `1m,3m,5m,15m,30m,1h,2h,4h,6h,12h,1d,1w`.
@@ -39,6 +41,10 @@ Create a Railway service from this repository and set the service root directory
 - `ALERT_SMA=true`, `SMA_PERIOD=21`, `SMA_TOLERANCE_PCT=0`
 - `ALERT_VOLUME=true`, `VOLUME_PERIOD=20`, `VOLUME_MULT=2`
 - `ALERT_RSI=true`, `RSI_PERIOD=14`, `RSI_LOW=30`, `RSI_HIGH=70`
+- `ALERT_VP=false` — fallback for rules created from legacy environment-only settings; saved per-rule `vp` takes precedence.
+- `VP_PERIOD=60` — number of prior closed candles in the profile (20–90; the signal candle is excluded).
+- `VP_ROWS=30` — volume bins (10–60).
+- `VP_MODE=poc` — `poc`, `va`, or `all` (default is POC crossings; `va` uses VAH-up / VAL-down crossings).
 - `ALERT_COMBO=false`, `COMBO_COUNT=2`, `COMBO_WINDOW_BARS=1`
 - `ALERT_COOLDOWN_SECONDS=180`
 - `ALERT_TIMEZONE=Europe/Berlin`

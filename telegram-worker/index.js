@@ -2,6 +2,7 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { recordPerformanceSignal, updatePerformanceOutcomes, buildPerformanceStats } from "./statistics.js";
+import { volumeProfileCrossings } from "./volume-profile.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -18,10 +19,15 @@ const RSI_LOW = Number(process.env.RSI_LOW || 30);
 const RSI_HIGH = Number(process.env.RSI_HIGH || 70);
 const SMA_PERIOD = clamp(Number(process.env.SMA_PERIOD || 21), 2, 200);
 const SMA_TOLERANCE_PCT = Math.max(0, Number(process.env.SMA_TOLERANCE_PCT || 0));
+const VP_PERIOD = clamp(Number(process.env.VP_PERIOD || 60), 20, 90);
+const VP_ROWS = clamp(Number(process.env.VP_ROWS || 30), 10, 60);
+const VP_MODE_VALUE = String(process.env.VP_MODE || "poc").toLowerCase();
+const VP_MODE = ["poc", "va", "all"].includes(VP_MODE_VALUE) ? VP_MODE_VALUE : "poc";
 const COOLDOWN_MS = Math.max(30_000, Number(process.env.ALERT_COOLDOWN_SECONDS || 180) * 1000);
 const ENABLE_VOLUME = enabled(process.env.ALERT_VOLUME, true);
 const ENABLE_RSI = enabled(process.env.ALERT_RSI, true);
 const ENABLE_SMA = enabled(process.env.ALERT_SMA, true);
+const ENABLE_VP = enabled(process.env.ALERT_VP, false);
 const ENABLE_COMBO = enabled(process.env.ALERT_COMBO, false);
 const COMBO_COUNT = clamp(Number(process.env.COMBO_COUNT || 2), 2, 3);
 const COMBO_WINDOW_BARS = clamp(Number(process.env.COMBO_WINDOW_BARS || 1), 1, 5);
@@ -31,7 +37,7 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
   if (!raw) {
     return PAIRS.flatMap(pair => TIMEFRAMES.map(tf => ({
       pair, tf, telegram: true,
-      volume: ENABLE_VOLUME, rsi: ENABLE_RSI, sma: ENABLE_SMA, combo: ENABLE_COMBO,
+      volume: ENABLE_VOLUME, rsi: ENABLE_RSI, sma: ENABLE_SMA, vp: ENABLE_VP, combo: ENABLE_COMBO,
       chopFilter: tf === "1m", chopPeriod: 14, chopThreshold: 61.8
     })));
   }
@@ -56,6 +62,7 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
       volume: item.volume == null ? ENABLE_VOLUME : item.volume === true,
       rsi: item.rsi == null ? ENABLE_RSI : item.rsi === true,
       sma: item.sma == null ? ENABLE_SMA : item.sma === true,
+      vp: item.vp == null ? ENABLE_VP : item.vp === true,
       combo: item.combo == null ? ENABLE_COMBO : item.combo === true,
       chopFilter: item.chopFilter == null ? tf === "1m" : item.chopFilter === true,
       chopPeriod: clamp(Number(item.chopPeriod || 14), 5, 50),
@@ -204,6 +211,7 @@ function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) 
   }
   const chosen = [...byKind.values()];
   if (chosen.length < COMBO_COUNT) return;
+  // Volume confirms activity; RSI, SMA and Volume Profile contribute direction.
   const directed = chosen.filter(s => s.kind !== "volume");
   if (!directed.length || directed.some(s => s.direction !== directed[0].direction)) return;
   const comboTs = Math.max(...chosen.map(s => s.ts));
@@ -224,7 +232,7 @@ function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) 
 }
 async function processPair(pair, tf, rule) {
   const candles = await fetchCandles(pair, tf);
-  if (candles.length < Math.max(SMA_PERIOD, VOLUME_PERIOD, RSI_PERIOD) + 2) return;
+  if (candles.length < Math.max(SMA_PERIOD, VOLUME_PERIOD, RSI_PERIOD, rule.vp ? VP_PERIOD + 2 : 0) + 2) return;
   const closed = candles.filter(c => c.confirm);
   if (closed.length < 3) return;
   const last = closed.at(-1);
@@ -258,6 +266,17 @@ async function processPair(pair, tf, rule) {
           if (rule.telegram) await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`);
           recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c, rule, closed);
         }
+      }
+    }
+    if (rule.vp && end >= VP_PERIOD + 2) {
+      // The signal candle is excluded from its own profile to avoid look-ahead.
+      const profileBars = closed.slice(0, -1).slice(-VP_PERIOD);
+      const previous = closed.at(-2);
+      const crossings = volumeProfileCrossings(profileBars, previous?.c, last.c, VP_MODE, VP_ROWS);
+      for (const crossing of crossings) {
+        const detail = `Volume Profile ${crossing.level}: пересечение уровня ${price(crossing.price)}; close ${price(last.c)}`;
+        if (rule.telegram) await emit("vp", pair, tf, crossing.direction, last.c, detail);
+        recordSignal(pair, tf, "vp", crossing.direction, last.ts, last.c, rule, closed);
       }
     }
   }
@@ -308,7 +327,7 @@ const server = http.createServer((req, res) => {
   }
   if (requestUrl.pathname === "/config" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, volume, rsi, sma, combo, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, volume, rsi, sma, combo, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
+    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, volume, rsi, sma, vp, combo, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, volume, rsi, sma, vp, combo, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
     return;
   }
   if (requestUrl.pathname === "/config" && req.method === "PUT") {

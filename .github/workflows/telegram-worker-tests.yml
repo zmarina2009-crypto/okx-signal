@@ -26,3 +26,5 @@ jobs:
       - run: npm test
       - run: node --check index.js
       - run: node --check statistics.js
+      - run: node --check volume-profile.js
+      - run: node --check ../telegram-settings.js
