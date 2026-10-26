@@ -106,7 +106,7 @@
   function saveAlertLog(){try{localStorage.setItem(ALERT_LOG_KEY,JSON.stringify(alertLogEntries.slice(-ALERT_LOG_LIMIT)))}catch(e){}}
   function renderAlertLog(){
     const box=$("alertsLog");if(!box)return;
-    const visibleEntries=cfg.comboModeActive?alertLogEntries.filter(entry=>entry.kind==="combo"):alertLogEntries;
+    const visibleEntries=cfg.comboModeActive?alertLogEntries.filter(entry=>entry.kind==="combo"||(entry.kind==="other"&&String(entry.text||"").includes("COMBO заблокирован фильтром флета"))):alertLogEntries;
     box.innerHTML=visibleEntries.slice().reverse().map(entry=>{
       const kind=["volume","rsi","sma","vp","combo"].includes(entry.kind)?entry.kind:"other";
       const stamp=new Date(Number(entry.ts)).toLocaleString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"});
