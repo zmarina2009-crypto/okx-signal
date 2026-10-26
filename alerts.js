@@ -148,7 +148,7 @@
     try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-500)))}catch{}
     window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:marker}));
   }
-  const COMBO_SOURCES=["volume","rsi","sma"];
+  const COMBO_SOURCES=["volume","rsi","sma","vp"];
   const COMBO_TF_MS={"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000};
   function observeCombo(kind,marker){
     if(!cfg.comboEnabled||!marker||!COMBO_SOURCES.includes(kind)||!cfg[kind])return;
