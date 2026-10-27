@@ -161,7 +161,7 @@
     const matching=comboSignals.filter(s=>s.pair===pair&&s.tf===tf&&Math.abs(ts-s.ts)<=windowMs);
     const byKind=new Map();
     matching.forEach(s=>{const old=byKind.get(s.kind);if(!old||Math.abs(ts-s.ts)<Math.abs(ts-old.ts))byKind.set(s.kind,s)});
-    const chosen=[...byKind.values()],required=Math.max(2,Math.min(3,Number(cfg.comboCount)||2));
+    const chosen=[...byKind.values()],required=Math.max(2,Math.min(4,Number(cfg.comboCount)||2));
     if(chosen.length<required)return;
     // Volume confirms activity, but candle body colour does not decide combo direction.
     // RSI and SMA are directional; if both are present, their directions must agree.
