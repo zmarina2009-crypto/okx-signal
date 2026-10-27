@@ -9,7 +9,12 @@
   function endpoint(){return String($("tgConfigEndpoint").value||"").trim().replace(/\/+$/,"");}
   function setStatus(message,kind="info"){const el=$("tgConfigStatus");if(!el)return;el.textContent=message;el.className="tg-config-status "+kind;}
   function make(tag,attrs={},text){const el=document.createElement(tag);Object.entries(attrs).forEach(([k,v])=>{if(k==="class")el.className=v;else if(k==="type"||k==="placeholder"||k==="aria-label"||k==="list"||k==="value")el.setAttribute(k,v);else el[k]=v});if(text!=null)el.textContent=text;return el;}
-  function normalizeRule(r){return {pair:String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf:String(r.tf||"15m").trim().toLowerCase(),telegram:r.telegram!==false,volume:r.volume===true,rsi:r.rsi===true,sma:r.sma===true,vp:r.vp===true,combo:r.combo===true,comboCount:Math.max(2,Math.min(4,Math.round(Number(r.comboCount)||2))),chopFilter:r.chopFilter===true,chopPeriod:Math.max(5,Math.min(50,Math.round(Number(r.chopPeriod)||14))),chopThreshold:Math.max(20,Math.min(100,Number(r.chopThreshold)||61.8))};}
+  function normalizeRule(r){
+    const comboCount=Math.max(2,Math.min(4,Math.round(Number(r.comboCount)||2)));
+    const comboWindowBars=Math.max(1,Math.min(5,Math.round(Number(r.comboWindowBars)||(comboCount===4?3:1))));
+    const allFour=comboCount===4;
+    return {pair:String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf:String(r.tf||"15m").trim().toLowerCase(),telegram:r.telegram!==false,volume:allFour||r.volume===true,rsi:allFour||r.rsi===true,sma:allFour||r.sma===true,vp:allFour||r.vp===true,combo:r.combo===true,comboCount,comboWindowBars,chopFilter:r.chopFilter===true,chopPeriod:Math.max(5,Math.min(50,Math.round(Number(r.chopPeriod)||14))),chopThreshold:Math.max(20,Math.min(100,Number(r.chopThreshold)||61.8))};
+  }
   function renderSavedRules(){
     const root=$("tgSavedRulesList"),meta=$("tgSavedRulesMeta");
     if(!root||!meta)return;
@@ -46,7 +51,7 @@
         if(rule.rsi)enabled.push("RSI");
         if(rule.sma)enabled.push("SMA");
         if(rule.vp)enabled.push("Volume Profile");
-        if(rule.combo)enabled.push("COMBO "+rule.comboCount+"/4");
+        if(rule.combo)enabled.push("COMBO "+rule.comboCount+"/4 · окно "+rule.comboWindowBars+" св.");
         if(rule.chopFilter)enabled.push("CHOP "+rule.chopPeriod+" / "+rule.chopThreshold);
         const state=rule.telegram?"TG включён":"TG выключен";
         const channels=enabled.length?enabled.join(" · "):"источники не выбраны";
@@ -74,12 +79,27 @@
       const tfCell=make("td"),tf=make("select",{"aria-label":"Таймфрейм"});
       tfOptions.forEach(v=>tf.append(make("option",{value:v},v)));tf.value=rule.tf;
       tf.addEventListener("change",()=>{rules[index].tf=tf.value});tfCell.append(tf);tr.append(tfCell);
-      [["telegram","TG"],["volume","VOL"],["rsi","RSI"],["sma","SMA"],["vp","VP"],["combo","COMBO"],["chopFilter","CHOP"]].forEach(([key,label])=>{
-        const td=make("td"),wrap=make("label",{class:"tg-check"}),cb=make("input",{type:"checkbox","aria-label":label});cb.checked=rule[key];cb.addEventListener("change",()=>{rules[index][key]=cb.checked});wrap.append(cb,document.createTextNode(label));td.append(wrap);tr.append(td);
+      [["telegram","TG"],["volume","VOL"],["rsi","RSI"],["sma","SMA"],["vp","VP"],["combo","COMBO"]].forEach(([key,label])=>{
+        const td=make("td"),wrap=make("label",{class:"tg-check"}),cb=make("input",{type:"checkbox","aria-label":label});cb.checked=rule[key];cb.addEventListener("change",()=>{
+          if(rule.comboCount===4&&["volume","rsi","sma","vp"].includes(key)&&!cb.checked){cb.checked=true;rules[index][key]=true;setStatus("Для COMBO 4/4 все четыре источника должны быть включены.","warn");return;}
+          rules[index][key]=cb.checked;
+        });wrap.append(cb,document.createTextNode(label));td.append(wrap);tr.append(td);
       });
       const periodCell=make("td"),period=make("input",{type:"number",value:String(rule.chopPeriod),"aria-label":"CHOP период"});period.min="5";period.max="50";period.step="1";period.addEventListener("change",()=>{rules[index].chopPeriod=Math.max(5,Math.min(50,Math.round(Number(period.value)||14)))});periodCell.append(period);tr.append(periodCell);
       const thresholdCell=make("td"),threshold=make("input",{type:"number",value:String(rule.chopThreshold),"aria-label":"Порог CHOP"});threshold.min="20";threshold.max="100";threshold.step="0.1";threshold.addEventListener("change",()=>{rules[index].chopThreshold=Math.max(20,Math.min(100,Number(threshold.value)||61.8))});thresholdCell.append(threshold);tr.append(thresholdCell);
-      const comboCountCell=make("td"),comboCount=make("select",{"aria-label":"Количество индикаторов COMBO"});[[2,"2 из 4"],[3,"3 из 4"],[4,"Все 4"]].forEach(([value,label])=>comboCount.append(make("option",{value:String(value)},label)));comboCount.value=String(rule.comboCount);comboCount.addEventListener("change",()=>{rules[index].comboCount=Math.max(2,Math.min(4,Number(comboCount.value)||2))});comboCountCell.append(comboCount);tr.append(comboCountCell);
+      const comboCountCell=make("td"),comboCount=make("select",{"aria-label":"Количество индикаторов COMBO"});[[2,"2 из 4"],[3,"3 из 4"],[4,"Все 4"]].forEach(([value,label])=>comboCount.append(make("option",{value:String(value)},label)));comboCount.value=String(rule.comboCount);comboCount.addEventListener("change",()=>{
+        const count=Math.max(2,Math.min(4,Number(comboCount.value)||2));rules[index].comboCount=count;
+        if(count===4){
+          rules[index].combo=true;rules[index].volume=rules[index].rsi=rules[index].sma=rules[index].vp=true;
+          rules[index].comboWindowBars=Math.max(3,Number(rules[index].comboWindowBars)||1);
+          tr.querySelector('input[aria-label="COMBO"]').checked=true;
+          ["VOL","RSI","SMA","VP"].forEach(label=>{const input=tr.querySelector('input[aria-label="'+label+'"]');if(input)input.checked=true;});
+          const windowSelect=tr.querySelector('select[aria-label="Окно COMBO"]');if(windowSelect)windowSelect.value=String(rules[index].comboWindowBars);
+          setStatus("COMBO 4/4 включён: все индикаторы активированы, окно — "+rules[index].comboWindowBars+" свечи. Нажми «Сохранить на сервер».","ok");
+        }
+      });comboCountCell.append(comboCount);tr.append(comboCountCell);
+      const windowCell=make("td"),windowSelect=make("select",{"aria-label":"Окно COMBO"});[[1,"1 свеча"],[2,"2 свечи"],[3,"3 свечи"],[4,"4 свечи"],[5,"5 свечей"]].forEach(([value,label])=>windowSelect.append(make("option",{value:String(value)},label)));windowSelect.value=String(rule.comboWindowBars);windowSelect.addEventListener("change",()=>{rules[index].comboWindowBars=Math.max(1,Math.min(5,Number(windowSelect.value)||1))});windowCell.append(windowSelect);tr.append(windowCell);
+      const chopCell=make("td"),chopWrap=make("label",{class:"tg-check"}),chopCb=make("input",{type:"checkbox","aria-label":"CHOP"});chopCb.checked=rule.chopFilter;chopCb.addEventListener("change",()=>{rules[index].chopFilter=chopCb.checked});chopWrap.append(chopCb,document.createTextNode("CHOP"));chopCell.append(chopWrap);tr.append(chopCell);
       const delCell=make("td"),del=make("button",{type:"button",class:"tg-delete"},"Удалить");del.addEventListener("click",()=>{rules.splice(index,1);render()});delCell.append(del);tr.append(delCell);root.append(tr);
     });
     $("tgRulesCount").textContent=rules.length+" / 100 правил";
@@ -144,7 +164,7 @@
     if(rules.length>=100){setStatus("Достигнут лимит 100 правил.","warn");return}
     const api=window.OKXSignalApp,markets=api&&typeof api.getAllMarkets==="function"?api.getAllMarkets():(api&&api.getMarkets?api.getMarkets():[]);
     const pair=markets?.[0]?.instId||"BTC-USDT-SWAP";
-    rules.push({pair,tf:"1m",telegram:true,volume:true,rsi:true,sma:false,vp:false,combo:true,comboCount:2,chopFilter:true,chopPeriod:14,chopThreshold:61.8});render();
+    rules.push({pair,tf:"1m",telegram:true,volume:true,rsi:true,sma:false,vp:false,combo:true,comboCount:2,comboWindowBars:1,chopFilter:true,chopPeriod:14,chopThreshold:61.8});render();
   }
   function init(){
     const saved=localStorage.getItem(endpointKey)||"";
