@@ -1,5 +1,7 @@
 import { volumeProfileLevels } from "./volume-profile.js";
 
+export function shouldSendStandaloneTelegram(rule) { return Boolean(rule?.telegram) && rule?.comboOnly !== true; }
+
 function clamp(n,min,max) { return Math.min(max,Math.max(min,Number.isFinite(n)?n:min)); }
 function average(values) { return values.length ? values.reduce((sum,n)=>sum+n,0)/values.length : 0; }
 function smaAt(candles,n,end=candles.length) {
