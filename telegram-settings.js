@@ -12,9 +12,9 @@
   function normalizeRule(r){
     const comboCount=Math.max(2,Math.min(4,Math.round(Number(r.comboCount)||2)));
     const requestedWindowBars=Math.max(1,Math.min(5,Math.round(Number(r.comboWindowBars)||(comboCount===4?3:1))));
-    const comboWindowBars=comboCount===4?Math.max(3,requestedWindowBars):requestedWindowBars;
+    const comboWindowBars=comboCount===4?1:requestedWindowBars;
     const allFour=comboCount===4;
-    return {pair:String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf:String(r.tf||"15m").trim().toLowerCase(),telegram:r.telegram!==false,volume:allFour||r.volume===true,rsi:allFour||r.rsi===true,sma:allFour||r.sma===true,vp:allFour||r.vp===true,combo:r.combo===true,comboCount,comboWindowBars,chopFilter:r.chopFilter===true,chopPeriod:Math.max(5,Math.min(50,Math.round(Number(r.chopPeriod)||14))),chopThreshold:Math.max(20,Math.min(100,Number(r.chopThreshold)||61.8))};
+    return {pair:String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf:String(r.tf||"15m").trim().toLowerCase(),telegram:r.telegram!==false,volume:allFour||r.volume===true,rsi:allFour||r.rsi===true,sma:allFour||r.sma===true,vp:allFour||r.vp===true,combo:allFour||r.combo===true,comboCount,comboWindowBars,chopFilter:r.chopFilter===true,chopPeriod:Math.max(5,Math.min(50,Math.round(Number(r.chopPeriod)||14))),chopThreshold:Math.max(20,Math.min(100,Number(r.chopThreshold)||61.8))};
   }
   function renderSavedRules(){
     const root=$("tgSavedRulesList"),meta=$("tgSavedRulesMeta");
@@ -52,7 +52,7 @@
         if(rule.rsi)enabled.push("RSI");
         if(rule.sma)enabled.push("SMA");
         if(rule.vp)enabled.push("Volume Profile");
-        if(rule.combo)enabled.push("COMBO "+rule.comboCount+"/4 · окно "+rule.comboWindowBars+" св.");
+        if(rule.combo)enabled.push(rule.comboCount===4?"COMBO 4/4 · одна закрытая свеча":"COMBO "+rule.comboCount+"/4 · окно "+rule.comboWindowBars+" св.");
         if(rule.chopFilter)enabled.push("CHOP "+rule.chopPeriod+" / "+rule.chopThreshold);
         const state=rule.telegram?"TG включён":"TG выключен";
         const channels=enabled.length?enabled.join(" · "):"источники не выбраны";
@@ -92,14 +92,14 @@
         const count=Math.max(2,Math.min(4,Number(comboCount.value)||2));rules[index].comboCount=count;
         if(count===4){
           rules[index].combo=true;rules[index].volume=rules[index].rsi=rules[index].sma=rules[index].vp=true;
-          rules[index].comboWindowBars=Math.max(3,Number(rules[index].comboWindowBars)||1);
+          rules[index].comboWindowBars=1;
           tr.querySelector('input[aria-label="COMBO"]').checked=true;
           ["VOL","RSI","SMA","VP"].forEach(label=>{const input=tr.querySelector('input[aria-label="'+label+'"]');if(input)input.checked=true;});
-          const windowSelect=tr.querySelector('select[aria-label="Окно COMBO"]');if(windowSelect)windowSelect.value=String(rules[index].comboWindowBars);
-          setStatus("COMBO 4/4 включён: все индикаторы активированы, окно — "+rules[index].comboWindowBars+" свечи. Нажми «Сохранить на сервер».","ok");
-        }
+          const windowSelect=tr.querySelector('select[aria-label="Окно COMBO"]');if(windowSelect){windowSelect.value="1";windowSelect.disabled=true;}
+          setStatus("COMBO 4/4: все четыре индикатора должны сработать на одной закрытой свече. Нажми «Сохранить на сервер».","ok");
+        }else{const windowSelect=tr.querySelector('select[aria-label="Окно COMBO"]');if(windowSelect)windowSelect.disabled=false;}
       });comboCountCell.append(comboCount);tr.append(comboCountCell);
-      const windowCell=make("td"),windowSelect=make("select",{"aria-label":"Окно COMBO"});[[1,"1 свеча"],[2,"2 свечи"],[3,"3 свечи"],[4,"4 свечи"],[5,"5 свечей"]].forEach(([value,label])=>windowSelect.append(make("option",{value:String(value)},label)));windowSelect.value=String(rule.comboWindowBars);windowSelect.addEventListener("change",()=>{const min=rules[index].comboCount===4?3:1;const value=Math.max(min,Math.min(5,Number(windowSelect.value)||min));rules[index].comboWindowBars=value;windowSelect.value=String(value)});windowCell.append(windowSelect);tr.append(windowCell);
+      const windowCell=make("td"),windowSelect=make("select",{"aria-label":"Окно COMBO"});[[1,"1 свеча"],[2,"2 свечи"],[3,"3 свечи"],[4,"4 свечи"],[5,"5 свечей"]].forEach(([value,label])=>windowSelect.append(make("option",{value:String(value)},label)));windowSelect.value=String(rule.comboWindowBars);windowSelect.disabled=rule.comboCount===4;windowSelect.addEventListener("change",()=>{const min=rules[index].comboCount===4?1:1;const value=rules[index].comboCount===4?1:Math.max(min,Math.min(5,Number(windowSelect.value)||min));rules[index].comboWindowBars=value;windowSelect.value=String(value)});windowCell.append(windowSelect);tr.append(windowCell);
       const chopCell=make("td"),chopWrap=make("label",{class:"tg-check"}),chopCb=make("input",{type:"checkbox","aria-label":"CHOP"});chopCb.checked=rule.chopFilter;chopCb.addEventListener("change",()=>{rules[index].chopFilter=chopCb.checked});chopWrap.append(chopCb,document.createTextNode("CHOP"));chopCell.append(chopWrap);tr.append(chopCell);
       const delCell=make("td"),del=make("button",{type:"button",class:"tg-delete"},"Удалить");del.addEventListener("click",()=>{rules.splice(index,1);render()});delCell.append(del);tr.append(delCell);root.append(tr);
     });
