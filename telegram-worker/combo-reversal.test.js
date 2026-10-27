@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { evaluateComboReversal, shouldSendStandaloneTelegram } from "./combo-reversal.js";
+import { diagnoseComboReversal, evaluateComboReversal, shouldSendStandaloneTelegram } from "./combo-reversal.js";
 
 const options={volumePeriod:20,volumeMult:2,rsiPeriod:14,rsiLow:30,rsiHigh:70,smaPeriod:21,vpPeriod:20,vpRows:30};
 
@@ -71,4 +71,19 @@ test("regular Telegram rule still sends individual indicator notifications",()=>
   assert.equal(shouldSendStandaloneTelegram({telegram:true,comboOnly:false}),true);
   assert.equal(shouldSendStandaloneTelegram({telegram:true}),true);
   assert.equal(shouldSendStandaloneTelegram({telegram:false,comboOnly:false}),false);
+});
+
+
+test("reversal diagnostics explain a blocked volume condition",()=>{
+  const candles=candlesFor("LONG");
+  candles.at(-1).v=100;
+  const result=diagnoseComboReversal(candles,options,longProfile);
+  assert.equal(result.signal,null);
+  assert.match(result.reason,/объём/);
+});
+
+test("reversal diagnostics report success when all four conditions match",()=>{
+  const result=diagnoseComboReversal(candlesFor("LONG"),options,longProfile);
+  assert.ok(result.signal);
+  assert.equal(result.reason,null);
 });
