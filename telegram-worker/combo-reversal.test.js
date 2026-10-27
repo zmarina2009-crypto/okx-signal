@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { evaluateComboReversal } from "./combo-reversal.js";
+import { evaluateComboReversal, shouldSendStandaloneTelegram } from "./combo-reversal.js";
 
 const options={volumePeriod:20,volumeMult:2,rsiPeriod:14,rsiLow:30,rsiHigh:70,smaPeriod:21,vpPeriod:20,vpRows:30};
 
@@ -58,4 +58,17 @@ test("no reversal COMBO is returned if price context contradicts the RSI directi
   candles.at(-1).h=199.4;
   candles.at(-1).l=198.6;
   assert.equal(evaluateComboReversal(candles,options,()=>({poc:195,val:199,vah:200})),null);
+});
+
+
+test("COMBO-only rule suppresses standalone Telegram but leaves combo Telegram enabled",()=>{
+  const rule={telegram:true,comboOnly:true};
+  assert.equal(shouldSendStandaloneTelegram(rule),false);
+  assert.equal(rule.telegram,true);
+});
+
+test("regular Telegram rule still sends individual indicator notifications",()=>{
+  assert.equal(shouldSendStandaloneTelegram({telegram:true,comboOnly:false}),true);
+  assert.equal(shouldSendStandaloneTelegram({telegram:true}),true);
+  assert.equal(shouldSendStandaloneTelegram({telegram:false,comboOnly:false}),false);
 });
