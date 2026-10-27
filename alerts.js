@@ -6,6 +6,7 @@
   let cfg=Object.assign({},defaults,(()=>{try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch{return{}}})());
   if(!Number.isFinite(Number(cfg.smaTolerance))||Number(cfg.smaTolerance)===.15)cfg.smaTolerance=0;
   cfg.vpPeriod=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));cfg.vpRows=Math.max(10,Math.min(60,Math.round(Number(cfg.vpRows)||30)));if(!["poc","va","all"].includes(cfg.vpMode))cfg.vpMode="poc";
+  if(Number(cfg.comboCount)===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;}
   let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[];
   const $=id=>document.getElementById(id);
   const esc=s=>String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
@@ -162,13 +163,28 @@
     const byKind=new Map();
     matching.forEach(s=>{const old=byKind.get(s.kind);if(!old||Math.abs(ts-s.ts)<Math.abs(ts-old.ts))byKind.set(s.kind,s)});
     const chosen=[...byKind.values()],required=Math.max(2,Math.min(4,Number(cfg.comboCount)||2));
-    if(chosen.length<required)return;
+    if(chosen.length<required){
+      if(required===4){
+        const names={volume:"Volume",rsi:"RSI",sma:"SMA",vp:"Volume Profile"};
+        const missing=COMBO_SOURCES.filter(source=>!byKind.has(source)).map(source=>names[source]);
+        const badge=$("alertsLast");
+        if(badge){badge.textContent="COMBO 4/4 • получено "+chosen.length+"/4 • ждём: "+missing.join(", ")+" • "+pair+" • "+tf;badge.className="alerts-last combo";}
+      }
+      return;
+    }
     // Volume is a non-directional confirmation; RSI, SMA and Volume Profile must agree on direction.
     // RSI, SMA and VP are directional; all included directional signals must agree.
     const directed=chosen.filter(s=>s.kind!=="volume");
     if(!directed.length)return;
     const comboDirection=directed[0].direction;
-    if(directed.some(s=>s.direction!==comboDirection))return;
+    if(directed.some(s=>s.direction!==comboDirection)){
+      if(required===4){
+        const details=directed.map(s=>s.kind.toUpperCase()+":"+s.direction).join(" · ");
+        const badge=$("alertsLast");
+        if(badge){badge.textContent="COMBO 4/4 • сигналы есть, но направления не совпали • "+details+" • "+pair+" • "+tf;badge.className="alerts-last";}
+      }
+      return;
+    }
     const comboTs=Math.max(...chosen.map(s=>Number(s.ts)||0));
     if(cfg.chopEnabled){
       const chop=choppiness(currentComboCandles,cfg.chopPeriod),threshold=Math.max(20,Math.min(100,Number(cfg.chopThreshold)||61.8));
@@ -326,8 +342,8 @@
       box.innerHTML=ms.slice(0,60).map(m=>{const id=m.instId,short=id.replace("-USDT-SWAP","");return '<label class="alert-pair"><input type="checkbox" data-pair="'+esc(id)+'" '+(sel.has(id)?"checked":"")+'><span>'+esc(short)+'</span></label>'}).join("")||'<span class="small">Список пар появится после загрузки рынка.</span>';
       box.querySelectorAll("input[data-pair]").forEach(el=>el.onchange=()=>{let s=new Set(cfg.selectedPairs||[]);if(el.checked){if(s.size>=20){el.checked=false;return}s.add(el.dataset.pair)}else s.delete(el.dataset.pair);cfg.selectedPairs=[...s];save()});
     }
-    ["alertVolume","alertRsi","alertSma"].forEach((id,i)=>{const el=$(id);el.checked=[cfg.volume,cfg.rsi,cfg.sma][i];el.onchange=()=>{if(i===0)cfg.volume=el.checked;if(i===1)cfg.rsi=el.checked;if(i===2)cfg.sma=el.checked;save()}});
-    $("alertVP").checked=!!cfg.vp;$("alertVP").onchange=()=>{cfg.vp=$("alertVP").checked;save()};$("alertVPMode").value=cfg.vpMode;
+    ["alertVolume","alertRsi","alertSma"].forEach((id,i)=>{const el=$(id);el.checked=[cfg.volume,cfg.rsi,cfg.sma][i];el.onchange=()=>{if(cfg.comboCount===4&&!el.checked){el.checked=true;log("combo","Для COMBO 4/4 нельзя отключить один из четырёх индикаторов.");return;}if(i===0)cfg.volume=el.checked;if(i===1)cfg.rsi=el.checked;if(i===2)cfg.sma=el.checked;save()}});
+    $("alertVP").checked=!!cfg.vp;$("alertVP").onchange=()=>{if(cfg.comboCount===4&&!$("alertVP").checked){$("alertVP").checked=true;log("combo","Для COMBO 4/4 нельзя отключить Volume Profile.");return;}cfg.vp=$("alertVP").checked;save()};$("alertVPMode").value=cfg.vpMode;
     $("alertCombo").checked=!!cfg.comboEnabled;
     $("alertCombo").onchange=()=>{cfg.comboEnabled=$("alertCombo").checked;comboSignals=[];comboLastAt={};save()};
     $("alertChopFilter").checked=!!cfg.chopEnabled;
@@ -355,7 +371,7 @@
     $("alertComboCount").value=String(cfg.comboCount||2);
     $("alertComboWindow").value=String(cfg.comboWindow||1);
     const bind=(id,key,parse)=>{const el=$(id);el.onchange=()=>{cfg[key]=parse(el.value);comboSignals=[];comboLastAt={};save()}};
-    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");bind("alertComboCount","comboCount",v=>Math.max(2,Math.min(4,+v||2)));bind("alertComboWindow","comboWindow",v=>Math.max(1,Math.min(3,+v||1)));bind("alertChopPeriod","chopPeriod",v=>Math.max(5,Math.min(50,+v||14)));bind("alertChopThreshold","chopThreshold",v=>Math.max(20,Math.min(100,+v||61.8)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
+    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");$("alertComboCount").onchange=()=>{cfg.comboCount=Math.max(2,Math.min(4,+$("alertComboCount").value||2));if(cfg.comboCount===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;$("alertVolume").checked=$("alertRsi").checked=$("alertSma").checked=$("alertVP").checked=true;$("alertCombo").checked=true;if(Number(cfg.comboWindow||1)<3){cfg.comboWindow=3;$("alertComboWindow").value="3";}}comboSignals=[];comboLastAt={};save();const badge=$("alertsLast");if(badge&&cfg.comboCount===4){badge.textContent="COMBO 4/4 включён: Volume + RSI + SMA + Volume Profile; окно "+cfg.comboWindow+" свечи";badge.className="alerts-last combo";}};bind("alertComboWindow","comboWindow",v=>Math.max(1,Math.min(3,+v||1)));bind("alertChopPeriod","chopPeriod",v=>Math.max(5,Math.min(50,+v||14)));bind("alertChopThreshold","chopThreshold",v=>Math.max(20,Math.min(100,+v||61.8)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
     $("alertsSound").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("test");$("alertsSound").textContent="🔊 Звук включён";log("sma","Звук включён")}catch{$("alertsSound").textContent="⚠️ Звук недоступен"}};
     const testSound=async(kind,label)=>{try{await ensureAudio();cfg.sound=true;save();tone(kind);log(kind,"Тест звука: "+label)}catch{}};    $("testVolume").onclick=()=>testSound("volume","Volume");    $("testRsi").onclick=()=>testSound("rsi","RSI");    $("testSma").onclick=()=>testSound("sma","SMA21");    $("testVP").onclick=()=>testSound("vp","Volume Profile");    $("testCombo").onclick=()=>testSound("combo","Combo");    $("testAll").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("volume");setTimeout(()=>tone("rsi"),1100);setTimeout(()=>tone("sma"),2200);setTimeout(()=>tone("vp"),3300);log("vp","Тест звуков: Volume → RSI → SMA21 → Volume Profile")}catch{}};
   }
