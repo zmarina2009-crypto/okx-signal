@@ -11,7 +11,8 @@
   function make(tag,attrs={},text){const el=document.createElement(tag);Object.entries(attrs).forEach(([k,v])=>{if(k==="class")el.className=v;else if(k==="type"||k==="placeholder"||k==="aria-label"||k==="list"||k==="value")el.setAttribute(k,v);else el[k]=v});if(text!=null)el.textContent=text;return el;}
   function normalizeRule(r){
     const comboCount=Math.max(2,Math.min(4,Math.round(Number(r.comboCount)||2)));
-    const comboWindowBars=Math.max(1,Math.min(5,Math.round(Number(r.comboWindowBars)||(comboCount===4?3:1))));
+    const requestedWindowBars=Math.max(1,Math.min(5,Math.round(Number(r.comboWindowBars)||(comboCount===4?3:1))));
+    const comboWindowBars=comboCount===4?Math.max(3,requestedWindowBars):requestedWindowBars;
     const allFour=comboCount===4;
     return {pair:String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf:String(r.tf||"15m").trim().toLowerCase(),telegram:r.telegram!==false,volume:allFour||r.volume===true,rsi:allFour||r.rsi===true,sma:allFour||r.sma===true,vp:allFour||r.vp===true,combo:r.combo===true,comboCount,comboWindowBars,chopFilter:r.chopFilter===true,chopPeriod:Math.max(5,Math.min(50,Math.round(Number(r.chopPeriod)||14))),chopThreshold:Math.max(20,Math.min(100,Number(r.chopThreshold)||61.8))};
   }
@@ -98,7 +99,7 @@
           setStatus("COMBO 4/4 включён: все индикаторы активированы, окно — "+rules[index].comboWindowBars+" свечи. Нажми «Сохранить на сервер».","ok");
         }
       });comboCountCell.append(comboCount);tr.append(comboCountCell);
-      const windowCell=make("td"),windowSelect=make("select",{"aria-label":"Окно COMBO"});[[1,"1 свеча"],[2,"2 свечи"],[3,"3 свечи"],[4,"4 свечи"],[5,"5 свечей"]].forEach(([value,label])=>windowSelect.append(make("option",{value:String(value)},label)));windowSelect.value=String(rule.comboWindowBars);windowSelect.addEventListener("change",()=>{rules[index].comboWindowBars=Math.max(1,Math.min(5,Number(windowSelect.value)||1))});windowCell.append(windowSelect);tr.append(windowCell);
+      const windowCell=make("td"),windowSelect=make("select",{"aria-label":"Окно COMBO"});[[1,"1 свеча"],[2,"2 свечи"],[3,"3 свечи"],[4,"4 свечи"],[5,"5 свечей"]].forEach(([value,label])=>windowSelect.append(make("option",{value:String(value)},label)));windowSelect.value=String(rule.comboWindowBars);windowSelect.addEventListener("change",()=>{const min=rules[index].comboCount===4?3:1;const value=Math.max(min,Math.min(5,Number(windowSelect.value)||min));rules[index].comboWindowBars=value;windowSelect.value=String(value)});windowCell.append(windowSelect);tr.append(windowCell);
       const chopCell=make("td"),chopWrap=make("label",{class:"tg-check"}),chopCb=make("input",{type:"checkbox","aria-label":"CHOP"});chopCb.checked=rule.chopFilter;chopCb.addEventListener("change",()=>{rules[index].chopFilter=chopCb.checked});chopWrap.append(chopCb,document.createTextNode("CHOP"));chopCell.append(chopWrap);tr.append(chopCell);
       const delCell=make("td"),del=make("button",{type:"button",class:"tg-delete"},"Удалить");del.addEventListener("click",()=>{rules.splice(index,1);render()});delCell.append(del);tr.append(delCell);root.append(tr);
     });
