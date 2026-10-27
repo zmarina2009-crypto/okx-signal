@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { recordPerformanceSignal, updatePerformanceOutcomes, buildPerformanceStats } from "./statistics.js";
 import { volumeProfileCrossings } from "./volume-profile.js";
+import { evaluateComboReversal } from "./combo-reversal.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -38,7 +39,7 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
     return PAIRS.flatMap(pair => TIMEFRAMES.map(tf => ({
       pair, tf, telegram: true,
       volume: COMBO_COUNT===4||ENABLE_VOLUME, rsi: COMBO_COUNT===4||ENABLE_RSI, sma: COMBO_COUNT===4||ENABLE_SMA, vp: COMBO_COUNT===4||ENABLE_VP, combo: COMBO_COUNT===4||ENABLE_COMBO,
-      comboCount: COMBO_COUNT, comboWindowBars: COMBO_COUNT===4?1:COMBO_WINDOW_BARS,
+      comboCount: COMBO_COUNT, comboWindowBars: COMBO_COUNT===4?1:COMBO_WINDOW_BARS, comboMode: "strict",
       chopFilter: tf === "1m", chopPeriod: 14, chopThreshold: 61.8
     })));
   }
@@ -61,11 +62,12 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
     const requestedComboWindowBars=clamp(Math.round(Number(item.comboWindowBars ?? (comboCount===4?Math.max(3,COMBO_WINDOW_BARS):COMBO_WINDOW_BARS))),1,5);
     const comboWindowBars=comboCount===4?1:requestedComboWindowBars;
     const allFour=comboCount===4;
+    const comboMode=String(item.comboMode||"strict").toLowerCase()==="reversal"?"reversal":"strict";
     unique.set(key, {
       pair, tf,
       telegram: item.telegram == null ? true : item.telegram === true,
       volume: allFour || (item.volume == null ? ENABLE_VOLUME : item.volume === true),
-      comboCount, comboWindowBars,
+      comboCount, comboWindowBars, comboMode,
       rsi: allFour || (item.rsi == null ? ENABLE_RSI : item.rsi === true),
       sma: allFour || (item.sma == null ? ENABLE_SMA : item.sma === true),
       vp: allFour || (item.vp == null ? ENABLE_VP : item.vp === true),
@@ -203,8 +205,11 @@ async function fetchCandles(pair, tf) {
 }
 function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) {
   recordPerformanceSignal(state, { pair, tf, kind, direction, ts, price: closePrice });
-  const comboWindowBars=clamp(Number(rule.comboWindowBars ?? COMBO_WINDOW_BARS),1,5);
   const required=clamp(Number(rule.comboCount ?? COMBO_COUNT),2,4);
+  // In reversal mode, all four inputs are evaluated as closed-candle predicates below;
+  // do not also aggregate the old event-based combo from standalone alerts.
+  if (rule.combo && required===4 && rule.comboMode==="reversal") return;
+  const comboWindowBars=clamp(Number(rule.comboWindowBars ?? COMBO_WINDOW_BARS),1,5);
   state.recentSignals = state.recentSignals.filter(s => Date.now() - s.ts <= tfMs(tf) * comboWindowBars * 5);
   const id = [pair, tf, kind, direction, ts].join(":");
   if (!state.recentSignals.some(s => s.id === id)) state.recentSignals.push({ id, pair, tf, kind, direction, ts, price: closePrice });
@@ -311,6 +316,31 @@ async function processPair(pair, tf, rule) {
       recordSignal(pair, tf, "sma", direction, last.ts, last.c, rule, closed);
     }
   }
+  if (isNewClosedCandle && rule.combo && Number(rule.comboCount)===4 && rule.comboMode==="reversal") {
+    const reversal=evaluateComboReversal(closed, {
+      volumePeriod: VOLUME_PERIOD, volumeMult: VOLUME_MULT,
+      rsiPeriod: RSI_PERIOD, rsiLow: RSI_LOW, rsiHigh: RSI_HIGH,
+      smaPeriod: SMA_PERIOD, vpPeriod: VP_PERIOD, vpRows: VP_ROWS
+    });
+    if (reversal) {
+      let chopValue=null, blocked=false;
+      if (rule.chopFilter) {
+        chopValue=choppiness(closed,rule.chopPeriod);
+        const threshold=clamp(Number(rule.chopThreshold)||61.8,20,100);
+        if (chopValue==null || chopValue>=threshold) {
+          blocked=true;
+          console.log("COMBO 4/4 reversal blocked by CHOP:",pair,tf,chopValue==null?"insufficient candles":("CHOP "+chopValue.toFixed(1)+" >= "+threshold.toFixed(1)));
+        }
+      }
+      if (!blocked) {
+        const vpLabel=reversal.vpLevel==="VAL"?"VAL":"VAH";
+        const detail="Разворот 4/4 • объём ×"+reversal.volumeMultiple.toFixed(1)+" • RSI "+reversal.rsi.toFixed(1)+" • "+(reversal.direction==="LONG"?"цена ниже":"цена выше")+" SMA"+SMA_PERIOD+" "+price(reversal.sma)+" • возле "+vpLabel+" "+price(reversal.vpPrice)+" • одна закрытая свеча"+(rule.chopFilter?" • CHOP "+chopValue.toFixed(1):"");
+        recordPerformanceSignal(state,{pair,tf,kind:"combo",direction:reversal.direction,ts:last.ts,price:last.c});
+        if (rule.telegram) await emit("combo",pair,tf,reversal.direction,last.c,detail);
+        console.log("COMBO 4/4 reversal fired:",pair,tf,reversal.direction,"sameClosedCandle",last.ts);
+      }
+    }
+  }
   await saveState();
 }
 async function cycle() {
@@ -345,7 +375,7 @@ const server = http.createServer((req, res) => {
   }
   if (requestUrl.pathname === "/config" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
+    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
     return;
   }
   if (requestUrl.pathname === "/config" && req.method === "PUT") {
