@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { recordPerformanceSignal, updatePerformanceOutcomes, buildPerformanceStats } from "./statistics.js";
 import { volumeProfileCrossings } from "./volume-profile.js";
-import { evaluateComboReversal } from "./combo-reversal.js";
+import { evaluateComboReversal, shouldSendStandaloneTelegram } from "./combo-reversal.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -38,6 +38,7 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
   if (!raw) {
     return PAIRS.flatMap(pair => TIMEFRAMES.map(tf => ({
       pair, tf, telegram: true,
+      comboOnly: pair === "ZEC-USDT-SWAP" && tf === "1m",
       volume: COMBO_COUNT===4||ENABLE_VOLUME, rsi: COMBO_COUNT===4||ENABLE_RSI, sma: COMBO_COUNT===4||ENABLE_SMA, vp: COMBO_COUNT===4||ENABLE_VP, combo: COMBO_COUNT===4||ENABLE_COMBO,
       comboCount: COMBO_COUNT, comboWindowBars: COMBO_COUNT===4?1:COMBO_WINDOW_BARS, comboMode: "strict",
       chopFilter: tf === "1m", chopPeriod: 14, chopThreshold: 61.8
@@ -63,9 +64,11 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
     const comboWindowBars=comboCount===4?1:requestedComboWindowBars;
     const allFour=comboCount===4;
     const comboMode=String(item.comboMode||"strict").toLowerCase()==="reversal"?"reversal":"strict";
+    const comboOnly=item.comboOnly==null?(pair==="ZEC-USDT-SWAP"&&tf==="1m"):item.comboOnly===true;
     unique.set(key, {
       pair, tf,
       telegram: item.telegram == null ? true : item.telegram === true,
+      comboOnly,
       volume: allFour || (item.volume == null ? ENABLE_VOLUME : item.volume === true),
       comboCount, comboWindowBars, comboMode,
       rsi: allFour || (item.rsi == null ? ENABLE_RSI : item.rsi === true),
@@ -273,7 +276,7 @@ async function processPair(pair, tf, rule) {
       const multiple = avg > 0 ? last.v / avg : 0;
       if (multiple >= VOLUME_MULT) {
         const direction = last.c >= last.o ? "LONG" : "SHORT";
-        if (rule.telegram) await emit("volume", pair, tf, direction, last.c, `Объём: ×${multiple.toFixed(1)} от среднего`);
+        if (shouldSendStandaloneTelegram(rule)) await emit("volume", pair, tf, direction, last.c, `Объём: ×${multiple.toFixed(1)} от среднего`);
         recordSignal(pair, tf, "volume", direction, last.ts, last.c, rule, closed);
       }
     }
@@ -282,11 +285,11 @@ async function processPair(pair, tf, rule) {
       const prev = rsi(closed, RSI_PERIOD, end - 1);
       if (value != null && prev != null) {
         if (prev >= RSI_LOW && value < RSI_LOW) {
-          if (rule.telegram) await emit("rsi", pair, tf, "LONG", last.c, `RSI: ${value.toFixed(1)} — выход ниже ${RSI_LOW}`);
+          if (shouldSendStandaloneTelegram(rule)) await emit("rsi", pair, tf, "LONG", last.c, `RSI: ${value.toFixed(1)} — выход ниже ${RSI_LOW}`);
           recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c, rule, closed);
         }
         if (prev <= RSI_HIGH && value > RSI_HIGH) {
-          if (rule.telegram) await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`);
+          if (shouldSendStandaloneTelegram(rule)) await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`);
           recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c, rule, closed);
         }
       }
@@ -298,7 +301,7 @@ async function processPair(pair, tf, rule) {
       const crossings = volumeProfileCrossings(profileBars, previous?.c, last.c, VP_MODE, VP_ROWS);
       for (const crossing of crossings) {
         const detail = `Volume Profile ${crossing.level}: пересечение уровня ${price(crossing.price)}; close ${price(last.c)}`;
-        if (rule.telegram) await emit("vp", pair, tf, crossing.direction, last.c, detail);
+        if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, crossing.direction, last.c, detail);
         recordSignal(pair, tf, "vp", crossing.direction, last.ts, last.c, rule, closed);
       }
     }
@@ -312,7 +315,7 @@ async function processPair(pair, tf, rule) {
       const previousSma = sma(closed.slice(0, -1), SMA_PERIOD);
       // Follow the pre-touch trend: above SMA => LONG; below SMA => SHORT.
       const direction = previous && previousSma != null && previous.c >= previousSma ? "LONG" : "SHORT";
-      if (rule.telegram) await emit("sma", pair, tf, direction, last.c, `SMA${SMA_PERIOD}: ${price(m)} (закрытая свеча)`);
+      if (shouldSendStandaloneTelegram(rule)) await emit("sma", pair, tf, direction, last.c, `SMA${SMA_PERIOD}: ${price(m)} (закрытая свеча)`);
       recordSignal(pair, tf, "sma", direction, last.ts, last.c, rule, closed);
     }
   }
@@ -375,7 +378,7 @@ const server = http.createServer((req, res) => {
   }
   if (requestUrl.pathname === "/config" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
+    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
     return;
   }
   if (requestUrl.pathname === "/config" && req.method === "PUT") {
