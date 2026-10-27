@@ -37,8 +37,8 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
   if (!raw) {
     return PAIRS.flatMap(pair => TIMEFRAMES.map(tf => ({
       pair, tf, telegram: true,
-      volume: COMBO_COUNT===4||ENABLE_VOLUME, rsi: COMBO_COUNT===4||ENABLE_RSI, sma: COMBO_COUNT===4||ENABLE_SMA, vp: COMBO_COUNT===4||ENABLE_VP, combo: ENABLE_COMBO,
-      comboCount: COMBO_COUNT, comboWindowBars: COMBO_COUNT===4?Math.max(3,COMBO_WINDOW_BARS):COMBO_WINDOW_BARS,
+      volume: COMBO_COUNT===4||ENABLE_VOLUME, rsi: COMBO_COUNT===4||ENABLE_RSI, sma: COMBO_COUNT===4||ENABLE_SMA, vp: COMBO_COUNT===4||ENABLE_VP, combo: COMBO_COUNT===4||ENABLE_COMBO,
+      comboCount: COMBO_COUNT, comboWindowBars: COMBO_COUNT===4?1:COMBO_WINDOW_BARS,
       chopFilter: tf === "1m", chopPeriod: 14, chopThreshold: 61.8
     })));
   }
@@ -59,7 +59,7 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
     const key = pair + ":" + tf;
     const comboCount=clamp(Math.round(Number(item.comboCount ?? COMBO_COUNT)),2,4);
     const requestedComboWindowBars=clamp(Math.round(Number(item.comboWindowBars ?? (comboCount===4?Math.max(3,COMBO_WINDOW_BARS):COMBO_WINDOW_BARS))),1,5);
-    const comboWindowBars=comboCount===4?Math.max(3,requestedComboWindowBars):requestedComboWindowBars;
+    const comboWindowBars=comboCount===4?1:requestedComboWindowBars;
     const allFour=comboCount===4;
     unique.set(key, {
       pair, tf,
@@ -69,7 +69,7 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
       rsi: allFour || (item.rsi == null ? ENABLE_RSI : item.rsi === true),
       sma: allFour || (item.sma == null ? ENABLE_SMA : item.sma === true),
       vp: allFour || (item.vp == null ? ENABLE_VP : item.vp === true),
-      combo: item.combo == null ? ENABLE_COMBO : item.combo === true,
+      combo: allFour || (item.combo == null ? ENABLE_COMBO : item.combo === true),
       chopFilter: item.chopFilter == null ? tf === "1m" : item.chopFilter === true,
       chopPeriod: clamp(Number(item.chopPeriod || 14), 5, 50),
       chopThreshold: clamp(Number(item.chopThreshold || 61.8), 20, 100)
@@ -211,7 +211,7 @@ function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) 
   state.recentSignals = state.recentSignals.slice(-500);
   if (!rule.combo) return;
   const windowMs = tfMs(tf) * comboWindowBars;
-  const recent = state.recentSignals.filter(s => s.pair === pair && s.tf === tf && Math.abs(ts - s.ts) <= windowMs);
+  const recent = state.recentSignals.filter(s => s.pair === pair && s.tf === tf && (required === 4 ? s.ts === ts : Math.abs(ts - s.ts) <= windowMs));
   const byKind = new Map();
   for (const s of recent) {
     const old = byKind.get(s.kind);
@@ -221,14 +221,14 @@ function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) 
   if (chosen.length < required) {
     if(required===4){
       const missing=["volume","rsi","sma","vp"].filter(source=>!byKind.has(source));
-      console.log("COMBO 4/4 waiting:",pair,tf,"received",chosen.length+"/4","missing",missing.join(", ")||"none yet","windowBars",comboWindowBars);
+      console.log("COMBO 4/4 waiting:",pair,tf,"received",chosen.length+"/4","missing",missing.join(", ")||"none yet","sameClosedCandle",true);
     }
     return;
   }
   // Volume confirms activity; RSI, SMA and Volume Profile contribute direction.
   const directed = chosen.filter(s => s.kind !== "volume");
   if (!directed.length || directed.some(s => s.direction !== directed[0].direction)) {
-    if(required===4)console.log("COMBO 4/4 skipped: directional disagreement",pair,tf,chosen.map(x=>x.kind+":"+x.direction).join(", "), "windowBars",comboWindowBars);
+    if(required===4)console.log("COMBO 4/4 skipped: directional disagreement",pair,tf,chosen.map(x=>x.kind+":"+x.direction).join(", "), "sameClosedCandle",true);
     return;
   }
   const comboTs = Math.max(...chosen.map(s => s.ts));
@@ -243,8 +243,9 @@ function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) 
     }
   }
   const comboPrice = directed[0].price || closePrice;
+  const comboWindowDescription = required === 4 ? "одна и та же закрытая свеча" : "окно " + comboWindowBars + " свечи";
   recordPerformanceSignal(state, { pair, tf, kind: "combo", direction: directed[0].direction, ts: comboTs, price: comboPrice });
-  if (rule.telegram) void emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.length+"/4 • "+chosen.map(s => s.kind.toUpperCase()).join(" + ")+" • окно "+comboWindowBars+" свечи"+(rule.chopFilter ? " • CHOP " + (choppiness(candles, rule.chopPeriod) ?? NaN).toFixed(1) : ""));
+  if (rule.telegram) void emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.length+"/4 • "+chosen.map(s => s.kind.toUpperCase()).join(" + ")+" • "+comboWindowDescription+(rule.chopFilter ? " • CHOP " + (choppiness(candles, rule.chopPeriod) ?? NaN).toFixed(1) : ""));
   state.recentSignals = state.recentSignals.filter(s => !(s.pair === pair && s.tf === tf && s.ts <= comboTs));
 }
 async function processPair(pair, tf, rule) {
