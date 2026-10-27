@@ -9,7 +9,7 @@
   function endpoint(){return String($("tgConfigEndpoint").value||"").trim().replace(/\/+$/,"");}
   function setStatus(message,kind="info"){const el=$("tgConfigStatus");if(!el)return;el.textContent=message;el.className="tg-config-status "+kind;}
   function make(tag,attrs={},text){const el=document.createElement(tag);Object.entries(attrs).forEach(([k,v])=>{if(k==="class")el.className=v;else if(k==="type"||k==="placeholder"||k==="aria-label"||k==="list"||k==="value")el.setAttribute(k,v);else el[k]=v});if(text!=null)el.textContent=text;return el;}
-  function normalizeRule(r){return {pair:String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf:String(r.tf||"15m").trim().toLowerCase(),telegram:r.telegram!==false,volume:r.volume===true,rsi:r.rsi===true,sma:r.sma===true,vp:r.vp===true,combo:r.combo===true,chopFilter:r.chopFilter===true,chopPeriod:Math.max(5,Math.min(50,Math.round(Number(r.chopPeriod)||14))),chopThreshold:Math.max(20,Math.min(100,Number(r.chopThreshold)||61.8))};}
+  function normalizeRule(r){return {pair:String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf:String(r.tf||"15m").trim().toLowerCase(),telegram:r.telegram!==false,volume:r.volume===true,rsi:r.rsi===true,sma:r.sma===true,vp:r.vp===true,combo:r.combo===true,comboCount:Math.max(2,Math.min(4,Math.round(Number(r.comboCount)||2))),chopFilter:r.chopFilter===true,chopPeriod:Math.max(5,Math.min(50,Math.round(Number(r.chopPeriod)||14))),chopThreshold:Math.max(20,Math.min(100,Number(r.chopThreshold)||61.8))};}
   function renderSavedRules(){
     const root=$("tgSavedRulesList"),meta=$("tgSavedRulesMeta");
     if(!root||!meta)return;
@@ -46,7 +46,7 @@
         if(rule.rsi)enabled.push("RSI");
         if(rule.sma)enabled.push("SMA");
         if(rule.vp)enabled.push("Volume Profile");
-        if(rule.combo)enabled.push("COMBO");
+        if(rule.combo)enabled.push("COMBO "+rule.comboCount+"/4");
         if(rule.chopFilter)enabled.push("CHOP "+rule.chopPeriod+" / "+rule.chopThreshold);
         const state=rule.telegram?"TG включён":"TG выключен";
         const channels=enabled.length?enabled.join(" · "):"источники не выбраны";
@@ -79,6 +79,7 @@
       });
       const periodCell=make("td"),period=make("input",{type:"number",value:String(rule.chopPeriod),"aria-label":"CHOP период"});period.min="5";period.max="50";period.step="1";period.addEventListener("change",()=>{rules[index].chopPeriod=Math.max(5,Math.min(50,Math.round(Number(period.value)||14)))});periodCell.append(period);tr.append(periodCell);
       const thresholdCell=make("td"),threshold=make("input",{type:"number",value:String(rule.chopThreshold),"aria-label":"Порог CHOP"});threshold.min="20";threshold.max="100";threshold.step="0.1";threshold.addEventListener("change",()=>{rules[index].chopThreshold=Math.max(20,Math.min(100,Number(threshold.value)||61.8))});thresholdCell.append(threshold);tr.append(thresholdCell);
+      const comboCountCell=make("td"),comboCount=make("select",{"aria-label":"Количество индикаторов COMBO"});[[2,"2 из 4"],[3,"3 из 4"],[4,"Все 4"]].forEach(([value,label])=>comboCount.append(make("option",{value:String(value)},label)));comboCount.value=String(rule.comboCount);comboCount.addEventListener("change",()=>{rules[index].comboCount=Math.max(2,Math.min(4,Number(comboCount.value)||2))});comboCountCell.append(comboCount);tr.append(comboCountCell);
       const delCell=make("td"),del=make("button",{type:"button",class:"tg-delete"},"Удалить");del.addEventListener("click",()=>{rules.splice(index,1);render()});delCell.append(del);tr.append(delCell);root.append(tr);
     });
     $("tgRulesCount").textContent=rules.length+" / 100 правил";
@@ -143,7 +144,7 @@
     if(rules.length>=100){setStatus("Достигнут лимит 100 правил.","warn");return}
     const api=window.OKXSignalApp,markets=api&&typeof api.getAllMarkets==="function"?api.getAllMarkets():(api&&api.getMarkets?api.getMarkets():[]);
     const pair=markets?.[0]?.instId||"BTC-USDT-SWAP";
-    rules.push({pair,tf:"1m",telegram:true,volume:true,rsi:true,sma:false,combo:true,chopFilter:true,chopPeriod:14,chopThreshold:61.8});render();
+    rules.push({pair,tf:"1m",telegram:true,volume:true,rsi:true,sma:false,vp:false,combo:true,comboCount:4,chopFilter:true,chopPeriod:14,chopThreshold:61.8});render();
   }
   function init(){
     const saved=localStorage.getItem(endpointKey)||"";
