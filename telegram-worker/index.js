@@ -29,7 +29,7 @@ const ENABLE_RSI = enabled(process.env.ALERT_RSI, true);
 const ENABLE_SMA = enabled(process.env.ALERT_SMA, true);
 const ENABLE_VP = enabled(process.env.ALERT_VP, false);
 const ENABLE_COMBO = enabled(process.env.ALERT_COMBO, false);
-const COMBO_COUNT = clamp(Number(process.env.COMBO_COUNT || 2), 2, 3);
+const COMBO_COUNT = clamp(Number(process.env.COMBO_COUNT || 2), 2, 4);
 const COMBO_WINDOW_BARS = clamp(Number(process.env.COMBO_WINDOW_BARS || 1), 1, 5);
 const STATE_FILE = process.env.STATE_FILE || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "state.json") : "./state.json");
 let ALERT_RULES = loadAlertRules();
@@ -60,6 +60,7 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
       pair, tf,
       telegram: item.telegram == null ? true : item.telegram === true,
       volume: item.volume == null ? ENABLE_VOLUME : item.volume === true,
+      comboCount: clamp(Math.round(Number(item.comboCount ?? COMBO_COUNT)), 2, 4),
       rsi: item.rsi == null ? ENABLE_RSI : item.rsi === true,
       sma: item.sma == null ? ENABLE_SMA : item.sma === true,
       vp: item.vp == null ? ENABLE_VP : item.vp === true,
@@ -210,7 +211,7 @@ function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) 
     if (!old || Math.abs(ts - s.ts) < Math.abs(ts - old.ts)) byKind.set(s.kind, s);
   }
   const chosen = [...byKind.values()];
-  if (chosen.length < COMBO_COUNT) return;
+  if (chosen.length < clamp(Number(rule.comboCount ?? COMBO_COUNT), 2, 4)) return;
   // Volume confirms activity; RSI, SMA and Volume Profile contribute direction.
   const directed = chosen.filter(s => s.kind !== "volume");
   if (!directed.length || directed.some(s => s.direction !== directed[0].direction)) return;
