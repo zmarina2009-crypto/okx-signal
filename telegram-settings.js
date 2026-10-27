@@ -15,7 +15,9 @@
     const comboWindowBars=comboCount===4?1:requestedWindowBars;
     const allFour=comboCount===4;
     const comboMode=String(r.comboMode||"strict").toLowerCase()==="reversal"?"reversal":"strict";
-    return {pair:String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf:String(r.tf||"15m").trim().toLowerCase(),telegram:r.telegram!==false,volume:allFour||r.volume===true,rsi:allFour||r.rsi===true,sma:allFour||r.sma===true,vp:allFour||r.vp===true,combo:allFour||r.combo===true,comboCount,comboWindowBars,comboMode,chopFilter:r.chopFilter===true,chopPeriod:Math.max(5,Math.min(50,Math.round(Number(r.chopPeriod)||14))),chopThreshold:Math.max(20,Math.min(100,Number(r.chopThreshold)||61.8))};
+    const pair=String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf=String(r.tf||"15m").trim().toLowerCase();
+    const comboOnly=r.comboOnly==null?(pair==="ZEC-USDT-SWAP"&&tf==="1m"):r.comboOnly===true;
+    return {pair,tf,telegram:r.telegram!==false,comboOnly,volume:allFour||r.volume===true,rsi:allFour||r.rsi===true,sma:allFour||r.sma===true,vp:allFour||r.vp===true,combo:allFour||r.combo===true,comboCount,comboWindowBars,comboMode,chopFilter:r.chopFilter===true,chopPeriod:Math.max(5,Math.min(50,Math.round(Number(r.chopPeriod)||14))),chopThreshold:Math.max(20,Math.min(100,Number(r.chopThreshold)||61.8))};
   }
   function renderSavedRules(){
     const root=$("tgSavedRulesList"),meta=$("tgSavedRulesMeta");
@@ -54,6 +56,7 @@
         if(rule.sma)enabled.push("SMA");
         if(rule.vp)enabled.push("Volume Profile");
         if(rule.combo)enabled.push(rule.comboCount===4?(rule.comboMode==="reversal"?"COMBO 4/4 · разворот":"COMBO 4/4 · одна закрытая свеча"):"COMBO "+rule.comboCount+"/4 · окно "+rule.comboWindowBars+" св.");
+        if(rule.comboOnly)enabled.push("только COMBO (без одиночных TG)");
         if(rule.chopFilter)enabled.push("CHOP "+rule.chopPeriod+" / "+rule.chopThreshold);
         const state=rule.telegram?"TG включён":"TG выключен";
         const channels=enabled.length?enabled.join(" · "):"источники не выбраны";
@@ -81,7 +84,7 @@
       const tfCell=make("td"),tf=make("select",{"aria-label":"Таймфрейм"});
       tfOptions.forEach(v=>tf.append(make("option",{value:v},v)));tf.value=rule.tf;
       tf.addEventListener("change",()=>{rules[index].tf=tf.value});tfCell.append(tf);tr.append(tfCell);
-      [["telegram","TG"],["volume","VOL"],["rsi","RSI"],["sma","SMA"],["vp","VP"],["combo","COMBO"]].forEach(([key,label])=>{
+      [["telegram","TG"],["comboOnly","Только COMBO"],["volume","VOL"],["rsi","RSI"],["sma","SMA"],["vp","VP"],["combo","COMBO"]].forEach(([key,label])=>{
         const td=make("td"),wrap=make("label",{class:"tg-check"}),cb=make("input",{type:"checkbox","aria-label":label});cb.checked=rule[key];cb.addEventListener("change",()=>{
           if(rule.comboCount===4&&["volume","rsi","sma","vp"].includes(key)&&!cb.checked){cb.checked=true;rules[index][key]=true;setStatus("Для COMBO 4/4 все четыре источника должны быть включены.","warn");return;}
           rules[index][key]=cb.checked;
@@ -172,7 +175,7 @@
     if(rules.length>=100){setStatus("Достигнут лимит 100 правил.","warn");return}
     const api=window.OKXSignalApp,markets=api&&typeof api.getAllMarkets==="function"?api.getAllMarkets():(api&&api.getMarkets?api.getMarkets():[]);
     const pair=markets?.[0]?.instId||"BTC-USDT-SWAP";
-    rules.push({pair,tf:"1m",telegram:true,volume:true,rsi:true,sma:false,vp:false,combo:true,comboCount:2,comboWindowBars:1,comboMode:"strict",chopFilter:true,chopPeriod:14,chopThreshold:61.8});render();
+    rules.push({pair,tf:"1m",telegram:true,comboOnly:pair==="ZEC-USDT-SWAP",volume:true,rsi:true,sma:false,vp:false,combo:true,comboCount:2,comboWindowBars:1,comboMode:"strict",chopFilter:true,chopPeriod:14,chopThreshold:61.8});render();
   }
   function init(){
     const saved=localStorage.getItem(endpointKey)||"";
