@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { recordPerformanceSignal, updatePerformanceOutcomes, buildPerformanceStats } from "./statistics.js";
 import { volumeProfileCrossings } from "./volume-profile.js";
-import { evaluateComboReversal, shouldSendStandaloneTelegram } from "./combo-reversal.js";
+import { diagnoseComboReversal, shouldSendStandaloneTelegram } from "./combo-reversal.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -320,11 +320,13 @@ async function processPair(pair, tf, rule) {
     }
   }
   if (isNewClosedCandle && rule.combo && Number(rule.comboCount)===4 && rule.comboMode==="reversal") {
-    const reversal=evaluateComboReversal(closed, {
+    const diagnosis=diagnoseComboReversal(closed, {
       volumePeriod: VOLUME_PERIOD, volumeMult: VOLUME_MULT,
       rsiPeriod: RSI_PERIOD, rsiLow: RSI_LOW, rsiHigh: RSI_HIGH,
       smaPeriod: SMA_PERIOD, vpPeriod: VP_PERIOD, vpRows: VP_ROWS
     });
+    const reversal=diagnosis.signal;
+    if (!reversal) console.log("COMBO 4/4 reversal waiting:",pair,tf,"candle",last.ts,diagnosis.reason);
     if (reversal) {
       let chopValue=null, blocked=false;
       if (rule.chopFilter) {
