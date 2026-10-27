@@ -2,9 +2,10 @@
 (function(){
   "use strict";
   const KEY="okx_alerts_v1";
-  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,vp:true,vpPeriod:60,vpRows:30,vpMode:"poc",comboEnabled:false,comboModeActive:false,comboCount:2,comboWindow:1,chopEnabled:true,chopPeriod:14,chopThreshold:61.8,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
+  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,vp:true,vpPeriod:60,vpRows:30,vpMode:"poc",comboEnabled:false,comboModeActive:false,comboMode:"strict",comboCount:2,comboWindow:1,chopEnabled:true,chopPeriod:14,chopThreshold:61.8,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
   let cfg=Object.assign({},defaults,(()=>{try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch{return{}}})());
   if(!Number.isFinite(Number(cfg.smaTolerance))||Number(cfg.smaTolerance)===.15)cfg.smaTolerance=0;
+  if(!["strict","reversal"].includes(cfg.comboMode))cfg.comboMode="strict";
   cfg.vpPeriod=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));cfg.vpRows=Math.max(10,Math.min(60,Math.round(Number(cfg.vpRows)||30)));if(!["poc","va","all"].includes(cfg.vpMode))cfg.vpMode="poc";
   if(Number(cfg.comboCount)===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;cfg.comboWindow=1;}
   let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[];
@@ -153,6 +154,7 @@
   const COMBO_TF_MS={"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000};
   function observeCombo(kind,marker){
     if(!cfg.comboEnabled||!marker||!COMBO_SOURCES.includes(kind)||!cfg[kind])return;
+    if(Number(cfg.comboCount)===4&&cfg.comboMode==="reversal")return;
     const pair=marker.pair,tf=String(marker.tf||cfg.alertTf||"15m").toLowerCase(),direction=marker.direction,ts=Number(marker.ts)||now();
     if(!pair||!["LONG","SHORT"].includes(direction)||!Number.isFinite(ts))return;
     const bars=Math.max(1,Math.min(5,Number(cfg.comboWindow)||1)),windowMs=(COMBO_TF_MS[tf]||900000)*bars;
@@ -209,6 +211,58 @@
     recordAlertMarker({pair,tf,ts:comboTs,price:Number(directionSignal.price)||Number(marker.price)||chosen.at(-1)?.price||0,entryPrice:Number(directionSignal.entryPrice)||Number(marker.entryPrice)||Number(directionSignal.price)||Number(marker.price)||0,direction:comboDirection,label:"COMBO "+kinds.join("+"),kind:"combo"});
     log("combo",message);tone("combo");
     const badge=$("alertsLast");if(badge){badge.textContent=message;badge.className="alerts-last combo"}
+  }
+  function evaluateReversalCombo(bars,pair,tf){
+    if(!cfg.comboEnabled||Number(cfg.comboCount)!==4||cfg.comboMode!=="reversal"||!Array.isArray(bars)||!bars.length)return;
+    const last=bars[bars.length-1],length=bars.length;
+    const volumePeriod=Math.max(2,Math.min(100,Math.round(Number(cfg.volumePeriod)||20)));
+    const volumeBase=bars.slice(0,-1).slice(-volumePeriod).map(c=>Math.max(0,Number(c.v)||0));
+    if(volumeBase.length<volumePeriod)return;
+    const avgVolume=volumeBase.reduce((sum,n)=>sum+n,0)/volumeBase.length;
+    const volumeMultiple=avgVolume>0?(Number(last.v)||0)/avgVolume:0;
+    if(volumeMultiple<Math.max(1,Number(cfg.volumeMult)||2))return;
+
+    const rsiPeriod=Math.max(2,Math.min(100,Math.round(Number(cfg.rsiPeriod)||14)));
+    const currentRsi=rsi(bars,rsiPeriod),previousRsi=rsi(bars.slice(0,-1),rsiPeriod);
+    if(currentRsi==null||previousRsi==null)return;
+    let direction=null;
+    if(previousRsi<=Number(cfg.rsiLow)&&currentRsi>Number(cfg.rsiLow))direction="LONG";
+    else if(previousRsi>=Number(cfg.rsiHigh)&&currentRsi<Number(cfg.rsiHigh))direction="SHORT";
+    if(!direction)return;
+
+    const smaPeriod=Math.max(2,Math.min(200,Math.round(Number(cfg.smaPeriod)||21)));
+    const smaValue=sma(bars,smaPeriod),close=Number(last.c);
+    if(smaValue==null||smaValue<=0)return;
+    if(direction==="LONG"&&close>=smaValue)return;
+    if(direction==="SHORT"&&close<=smaValue)return;
+
+    const vpPeriod=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));
+    const profileBars=bars.slice(0,-1).slice(-vpPeriod);
+    if(profileBars.length<vpPeriod)return;
+    const levels=volumeProfileLevels(profileBars,cfg.vpRows);
+    if(!levels)return;
+    const profileHigh=Math.max(...profileBars.map(c=>Number(c.h))),profileLow=Math.min(...profileBars.map(c=>Number(c.l)));
+    const rows=Math.max(10,Math.min(60,Math.floor(Number(cfg.vpRows)||30)));
+    const binWidth=(profileHigh-profileLow)/rows;
+    if(!(binWidth>0))return;
+    const vpLevel=direction==="LONG"?"VAL":"VAH",vpPrice=Number(levels[vpLevel.toLowerCase()]);
+    if(!Number.isFinite(vpPrice)||Math.abs(close-vpPrice)>binWidth*1.5)return;
+
+    if(cfg.chopEnabled){
+      const chop=choppiness(bars,cfg.chopPeriod),threshold=Math.max(20,Math.min(100,Number(cfg.chopThreshold)||61.8));
+      if(chop==null||chop>=threshold){
+        const blockedKey="combo-reversal:"+pair+":"+tf;
+        if(comboFilterLastAt[blockedKey]!==Number(last.ts)){
+          comboFilterLastAt[blockedKey]=Number(last.ts);
+          const note="⛔ COMBO 4/4 · Разворот заблокирован CHOP • "+(chop==null?"недостаточно свечей":"CHOP "+chop.toFixed(1)+" ≥ "+threshold.toFixed(1))+" • "+pair+" • "+tf;
+          log("other",note);const badge=$("alertsLast");if(badge){badge.textContent=note;badge.className="alerts-last";}
+        }
+        return;
+      }
+    }
+
+    const message="✨ COMBO 4/4 · РАЗВОРОТ "+direction+" • Volume ×"+volumeMultiple.toFixed(1)+" • RSI "+previousRsi.toFixed(1)+" → "+currentRsi.toFixed(1)+" • "+(direction==="LONG"?"цена ниже":"цена выше")+" SMA"+smaPeriod+" "+smaValue.toFixed(2)+" • возле "+vpLevel+" "+vpPrice.toFixed(2)+" • одна закрытая свеча • "+pair+" • "+tf;
+    fire("combo",message,"combo-reversal:"+pair+":"+tf,{pair,tf,ts:Number(last.ts)||now(),price:close,entryPrice:close,direction,label:"COMBO 4/4 REVERSAL"});
   }
   function fire(kind,text,key,marker){
     const comboSource=marker&&COMBO_SOURCES.includes(kind);
@@ -267,6 +321,7 @@
           }
         }
       }
+      evaluateReversalCombo(hist,pair,tf);
     }
     if(cfg.vp&&(!st.lastVPTf||st.lastVPTf!==tf||st.lastVPTs!==closed.ts)){
       st.lastVPTf=tf;st.lastVPTs=closed.ts;
@@ -334,7 +389,7 @@
       '<div class="alerts-section"><label class="alerts-check"><input id="alertRsi" type="checkbox"><span>RSI</span></label><div class="alerts-grid"><label>Период<input id="alertRsiPeriod" type="number" min="2" value="'+cfg.rsiPeriod+'"></label><label>Зоны<input id="alertRsiLow" type="number" min="1" max="49" value="'+cfg.rsiLow+'"> / <input id="alertRsiHigh" type="number" min="51" max="99" value="'+cfg.rsiHigh+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertSma" type="checkbox"><span>SMA Touch</span></label><div class="alerts-grid"><label>Период<input id="alertSmaPeriod" type="number" min="2" value="'+cfg.smaPeriod+'"></label><label>Допуск %<input id="alertSmaTol" type="number" min="0" step=".05" value="'+cfg.smaTolerance+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertVP" type="checkbox"><span>Volume Profile</span></label><div class="alerts-grid"><label>История, свечей<input id="alertVPPeriod" type="number" min="20" max="300" value="'+cfg.vpPeriod+'"></label><label>Строк профиля<input id="alertVPRows" type="number" min="10" max="60" value="'+cfg.vpRows+'"></label><label>Сигнал<select id="alertVPMode"><option value="poc">Пересечение POC</option><option value="va">Пробой VAH / VAL</option><option value="all">Все уровни: POC, VAH, VAL</option></select></label></div><div class="alerts-note">Проверка только после закрытия свечи. Профиль рассчитывается по предшествующим свечам.</div></div>'+
-      '<div class="alerts-section"><label class="alerts-check"><input id="alertCombo" type="checkbox"><span>✨ Комбо-алерт</span></label><div class="alerts-grid"><label>Совпадение<select id="alertComboCount"><option value="2">2 из 4 индикаторов</option><option value="3">3 из 4 индикаторов</option><option value="4">Все 4 индикатора</option></select></label><label>Окно<select id="alertComboWindow"><option value="1">1 свеча</option><option value="2">2 свечи</option><option value="3">3 свечи</option></select></label></div><div class="alerts-note">Сигналы должны совпасть по паре, таймфрейму и выбранному окну. Можно выбрать 2 из 4, 3 из 4 или все 4 индикатора: Volume, RSI, SMA и Volume Profile. Для COMBO 4/4 все четыре источника автоматически включаются; Volume подтверждает активность, а направления RSI, SMA и VP должны совпасть. Для COMBO 4/4 все четыре сигнала должны относиться к одной и той же закрытой свече; сигналы с разных свечей не складываются. Фильтр CHOP при включении может отдельно заблокировать COMBO.</div><button type="button" id="comboModeToggle" class="primary" style="width:100%;margin-top:8px">✨ Включить режим COMBO</button><div id="comboModeStatus" class="alerts-note" style="margin-top:6px">Обычные алерты работают независимо.</div></div>'+
+      '<div class="alerts-section"><label class="alerts-check"><input id="alertCombo" type="checkbox"><span>✨ Комбо-алерт</span></label><div class="alerts-grid"><label>Совпадение<select id="alertComboCount"><option value="2">2 из 4 индикаторов</option><option value="3">3 из 4 индикаторов</option><option value="4">Все 4 индикатора</option></select></label><label>Окно<select id="alertComboWindow"><option value="1">1 свеча</option><option value="2">2 свечи</option><option value="3">3 свечи</option></select></label></div><div class="alerts-note">Сигналы должны совпасть по паре, таймфрейму и выбранному окну. Можно выбрать 2 из 4, 3 из 4 или все 4 индикатора: Volume, RSI, SMA и Volume Profile. Для COMBO 4/4 все четыре источника автоматически включаются; Volume подтверждает активность, а направления RSI, SMA и VP должны совпасть. Для COMBO 4/4 все четыре сигнала должны относиться к одной и той же закрытой свече; сигналы с разных свечей не складываются. Фильтр CHOP при включении может отдельно заблокировать COMBO.</div><div class="alerts-subsection"><b>Режим COMBO 4/4</b><label>Метод<select id="alertComboMethod"><option value="strict">Строгий: четыре сигнала</option><option value="reversal">Разворот: сигнал + контекст</option></select></label><div id="alertComboMethodNote" class="alerts-note">Строгий режим: четыре отдельных сигнала на одной закрытой свече.</div></div><button type="button" id="comboModeToggle" class="primary" style="width:100%;margin-top:8px">✨ Включить режим COMBO</button><div id="comboModeStatus" class="alerts-note" style="margin-top:6px">Обычные алерты работают независимо.</div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertChopFilter" type="checkbox"><span>Фильтр флета CHOP для COMBO</span></label><div class="alerts-grid"><label>Период<input id="alertChopPeriod" type="number" min="5" max="50" step="1" value="'+cfg.chopPeriod+'"></label><label>Блокировать при CHOP ≥<input id="alertChopThreshold" type="number" min="20" max="100" step=".1" value="'+cfg.chopThreshold+'"></label></div><div class="alerts-note">Фильтр автоматически включён, можно отключить. Работает по таймфрейму оповещений, включая 1m; фильтрует только COMBO.</div></div>'+
       '<div class="alerts-section"><div class="alerts-grid"><label>Громкость<input id="alertVolumeLevel" type="range" min="0" max="1" step=".05" value="'+cfg.volumeLevel+'"></label><label>Антиспам, сек<input id="alertCooldown" type="number" min="1" value="'+cfg.cooldown+'"></label></div><div class="alerts-actions"><button id="alertsSound" class="primary">🔊 Включить звук</button></div><div class="alerts-sound-tests"><button id="testVolume">⚡ Volume</button><button id="testRsi">📈 RSI</button><button id="testSma">〽️ SMA</button><button id="testVP">▥ VP</button><button id="testCombo">✨ Combo</button><button id="testAll">▶ Все сигналы</button></div><div class="alerts-note">Нажми кнопки, чтобы сравнить реальные звуки каждого сигнала.</div></div>'+
       '<div class="alerts-stats"><div><small>Price</small><b id="alertsPriceValue">—</b></div><div><small>SMA</small><b id="alertsSmaValue">—</b></div><div><small>RSI</small><b id="alertsRsiValue">—</b></div></div>'+
@@ -361,6 +416,16 @@
     $("alertChopFilter").checked=!!cfg.chopEnabled;
     $("alertChopFilter").onchange=()=>{cfg.chopEnabled=$("alertChopFilter").checked;comboSignals=[];comboLastAt={};comboFilterLastAt={};save()};
     const comboModeButton=$("comboModeToggle"),comboModeStatus=$("comboModeStatus");
+    const comboMethod=$("alertComboMethod"),comboMethodNote=$("alertComboMethodNote");
+    function renderComboMethod(){
+      if(comboMethod){comboMethod.value=cfg.comboMode;comboMethod.disabled=Number(cfg.comboCount)!==4;}
+      if(comboMethodNote)comboMethodNote.textContent=cfg.comboMode==="reversal"?"Разворотный режим: Volume ≥ порога; RSI выходит обратно из 30/70; цена ниже SMA21 для LONG или выше для SHORT; цена рядом с VAL/VAH. Все условия проверяются на одной закрытой свече.":"Строгий режим: Volume, RSI, SMA и Volume Profile должны выдать четыре отдельных сигнала на одной закрытой свече.";
+    }
+    if(comboMethod)comboMethod.onchange=()=>{
+      cfg.comboMode=comboMethod.value==="reversal"?"reversal":"strict";
+      comboSignals=[];comboLastAt={};comboFilterLastAt={};save();renderComboMethod();
+      const badge=$("alertsLast");if(badge){badge.textContent=cfg.comboMode==="reversal"?"Выбран COMBO 4/4 · Разворот":"Выбран COMBO 4/4 · Строгий";badge.className="alerts-last combo";}
+    };
     function renderComboMode(){
       if(!comboModeButton||!comboModeStatus)return;
       comboModeButton.textContent=cfg.comboModeActive?"■ Выключить режим COMBO":"✨ Включить режим COMBO";
@@ -380,18 +445,19 @@
     };
     try{localStorage.setItem("okx_combo_mode_active",cfg.comboModeActive?"1":"0")}catch(e){}
     renderComboMode();
+    renderComboMethod();
     if(Number(cfg.comboCount)===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;cfg.comboWindow=1;}
     $("alertComboCount").value=String(cfg.comboCount||2);
     $("alertComboWindow").value=String(cfg.comboCount===4?1:(cfg.comboWindow||1));$("alertComboWindow").disabled=Number(cfg.comboCount)===4;
     if(Number(cfg.comboCount)===4){$("alertVolume").checked=$("alertRsi").checked=$("alertSma").checked=$("alertVP").checked=true;$("alertCombo").checked=true;save();}
     const bind=(id,key,parse)=>{const el=$(id);el.onchange=()=>{cfg[key]=parse(el.value);comboSignals=[];comboLastAt={};save()}};
-    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");$("alertComboCount").onchange=()=>{cfg.comboCount=Math.max(2,Math.min(4,+$("alertComboCount").value||2));if(cfg.comboCount!==4)$("alertComboWindow").disabled=false;if(cfg.comboCount===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;$("alertVolume").checked=$("alertRsi").checked=$("alertSma").checked=$("alertVP").checked=true;$("alertCombo").checked=true;cfg.comboWindow=1;$("alertComboWindow").value="1";$("alertComboWindow").disabled=true;}comboSignals=[];comboLastAt={};save();const badge=$("alertsLast");if(badge&&cfg.comboCount===4){badge.textContent="COMBO 4/4 включён: Volume + RSI + SMA + Volume Profile на одной закрытой свече";badge.className="alerts-last combo";}};bind("alertComboWindow","comboWindow",v=>cfg.comboCount===4?1:Math.max(1,Math.min(3,+v||1)));bind("alertChopPeriod","chopPeriod",v=>Math.max(5,Math.min(50,+v||14)));bind("alertChopThreshold","chopThreshold",v=>Math.max(20,Math.min(100,+v||61.8)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
+    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");$("alertComboCount").onchange=()=>{cfg.comboCount=Math.max(2,Math.min(4,+$("alertComboCount").value||2));renderComboMethod();if(cfg.comboCount!==4)$("alertComboWindow").disabled=false;if(cfg.comboCount===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;$("alertVolume").checked=$("alertRsi").checked=$("alertSma").checked=$("alertVP").checked=true;$("alertCombo").checked=true;cfg.comboWindow=1;$("alertComboWindow").value="1";$("alertComboWindow").disabled=true;}comboSignals=[];comboLastAt={};save();const badge=$("alertsLast");if(badge&&cfg.comboCount===4){badge.textContent="COMBO 4/4 включён: Volume + RSI + SMA + Volume Profile на одной закрытой свече";badge.className="alerts-last combo";}};bind("alertComboWindow","comboWindow",v=>cfg.comboCount===4?1:Math.max(1,Math.min(3,+v||1)));bind("alertChopPeriod","chopPeriod",v=>Math.max(5,Math.min(50,+v||14)));bind("alertChopThreshold","chopThreshold",v=>Math.max(20,Math.min(100,+v||61.8)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
     $("alertsSound").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("test");$("alertsSound").textContent="🔊 Звук включён";log("sma","Звук включён")}catch{$("alertsSound").textContent="⚠️ Звук недоступен"}};
     const testSound=async(kind,label)=>{try{await ensureAudio();cfg.sound=true;save();tone(kind);log(kind,"Тест звука: "+label)}catch{}};    $("testVolume").onclick=()=>testSound("volume","Volume");    $("testRsi").onclick=()=>testSound("rsi","RSI");    $("testSma").onclick=()=>testSound("sma","SMA21");    $("testVP").onclick=()=>testSound("vp","Volume Profile");    $("testCombo").onclick=()=>testSound("combo","Combo");    $("testAll").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("volume");setTimeout(()=>tone("rsi"),1100);setTimeout(()=>tone("sma"),2200);setTimeout(()=>tone("vp"),3300);log("vp","Тест звуков: Volume → RSI → SMA21 → Volume Profile")}catch{}};
   }
   function injectCss(){
     if(document.getElementById("alertsCss"))return;
-    const st=document.createElement("style");st.id="alertsCss";st.textContent='#chartAlertsLayout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:12px;align-items:start}.alerts-tf{width:100%;margin-top:6px;padding:8px}.alerts-note{color:var(--m);font-size:10px;line-height:1.35;margin:-2px 0 9px}.alerts-section{padding:8px 0;border-top:1px solid #1a2530}.alerts-check{display:flex;gap:7px;align-items:center;font-weight:700;font-size:12px}.alerts-check input{width:auto}.alerts-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}.alerts-grid label{color:var(--m);font-size:10px}.alerts-grid input{width:100%;margin-top:3px;padding:7px}.alerts-grid select{width:100%;margin-top:3px;padding:7px}.alerts-grid input[type=range]{padding:0}.alerts-pair-actions{display:flex;gap:6px;margin:7px 0}.alerts-pair-actions button{flex:1;padding:6px;font-size:10px}.alerts-pairs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:150px;overflow:auto;padding:2px 0}.alert-pair{display:flex;gap:4px;align-items:center;background:#101823;border:1px solid #17212d;border-radius:6px;padding:5px;font-size:9px}.alert-pair input{width:auto}.alerts-actions{display:flex;gap:7px;margin-top:8px}.alerts-actions button{flex:1;padding:8px;font-size:11px}.alerts-sound-tests{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:7px}.alerts-sound-tests button{padding:7px 4px;font-size:10px}.alerts-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.alerts-stats>div{background:var(--p2);border:1px solid #17212d;border-radius:8px;padding:7px}.alerts-stats small{display:block;color:var(--m);font-size:9px}.alerts-stats b{display:block;margin-top:2px;font-size:11px}.alerts-last{margin-top:8px;padding:8px;border-radius:8px;background:#111923;color:var(--m);font-size:10px}.alerts-last.volume{color:var(--y);border:1px solid #4b3e15}.alerts-last.rsi{color:#55a8ff;border:1px solid #25496c}.alerts-last.sma{color:var(--g);border:1px solid #205f45}.alerts-last.combo{color:#c5a3ff;border:1px solid #4b3b68}.alerts-log{margin-top:6px;max-height:280px;overflow:auto}.alerts-log-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;color:var(--m);font-size:10px}.alerts-log-head button{padding:5px 8px;font-size:10px;color:var(--m)}.alertlogrow{display:grid;grid-template-columns:8px 100px minmax(0,1fr);gap:6px;align-items:start;padding:5px 0;border-bottom:1px solid #17212d;font-size:9px}.alertlogrow b{font-size:9px;overflow-wrap:anywhere;white-space:normal}.alertdot{width:7px;height:7px;border-radius:50%;background:#8290a0}.alertdot.volume{background:#ffd166}.alertdot.rsi{background:#55a8ff}.alertdot.sma{background:#27e58a}.alertdot.vp{background:#ff9f43}.alertdot.combo{background:#c5a3ff}@media(max-width:900px){#chartAlertsLayout{grid-template-columns:1fr}.alerts-grid{grid-template-columns:1fr 1fr}}';
+    const st=document.createElement("style");st.id="alertsCss";st.textContent='#chartAlertsLayout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:12px;align-items:start}.alerts-tf{width:100%;margin-top:6px;padding:8px}.alerts-note{color:var(--m);font-size:10px;line-height:1.35;margin:-2px 0 9px}.alerts-section{padding:8px 0;border-top:1px solid #1a2530}.alerts-subsection{margin-top:8px;padding:8px;border:1px solid #263447;border-radius:7px;background:rgba(120,140,165,.05)}.alerts-subsection>b{display:block;font-size:11px;margin-bottom:6px}.alerts-subsection label{display:block;color:var(--m);font-size:10px}.alerts-subsection select{width:100%;margin-top:4px;padding:7px}.alerts-check{display:flex;gap:7px;align-items:center;font-weight:700;font-size:12px}.alerts-check input{width:auto}.alerts-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}.alerts-grid label{color:var(--m);font-size:10px}.alerts-grid input{width:100%;margin-top:3px;padding:7px}.alerts-grid select{width:100%;margin-top:3px;padding:7px}.alerts-grid input[type=range]{padding:0}.alerts-pair-actions{display:flex;gap:6px;margin:7px 0}.alerts-pair-actions button{flex:1;padding:6px;font-size:10px}.alerts-pairs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:150px;overflow:auto;padding:2px 0}.alert-pair{display:flex;gap:4px;align-items:center;background:#101823;border:1px solid #17212d;border-radius:6px;padding:5px;font-size:9px}.alert-pair input{width:auto}.alerts-actions{display:flex;gap:7px;margin-top:8px}.alerts-actions button{flex:1;padding:8px;font-size:11px}.alerts-sound-tests{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:7px}.alerts-sound-tests button{padding:7px 4px;font-size:10px}.alerts-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.alerts-stats>div{background:var(--p2);border:1px solid #17212d;border-radius:8px;padding:7px}.alerts-stats small{display:block;color:var(--m);font-size:9px}.alerts-stats b{display:block;margin-top:2px;font-size:11px}.alerts-last{margin-top:8px;padding:8px;border-radius:8px;background:#111923;color:var(--m);font-size:10px}.alerts-last.volume{color:var(--y);border:1px solid #4b3e15}.alerts-last.rsi{color:#55a8ff;border:1px solid #25496c}.alerts-last.sma{color:var(--g);border:1px solid #205f45}.alerts-last.combo{color:#c5a3ff;border:1px solid #4b3b68}.alerts-log{margin-top:6px;max-height:280px;overflow:auto}.alerts-log-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;color:var(--m);font-size:10px}.alerts-log-head button{padding:5px 8px;font-size:10px;color:var(--m)}.alertlogrow{display:grid;grid-template-columns:8px 100px minmax(0,1fr);gap:6px;align-items:start;padding:5px 0;border-bottom:1px solid #17212d;font-size:9px}.alertlogrow b{font-size:9px;overflow-wrap:anywhere;white-space:normal}.alertdot{width:7px;height:7px;border-radius:50%;background:#8290a0}.alertdot.volume{background:#ffd166}.alertdot.rsi{background:#55a8ff}.alertdot.sma{background:#27e58a}.alertdot.vp{background:#ff9f43}.alertdot.combo{background:#c5a3ff}@media(max-width:900px){#chartAlertsLayout{grid-template-columns:1fr}.alerts-grid{grid-template-columns:1fr 1fr}}';
     document.head.appendChild(st);
   }
   injectCss();build();
