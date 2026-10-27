@@ -189,7 +189,7 @@
     if(!canAlert(alertKey))return;
     comboLastAt[alertKey]=comboTs;
     const kinds=chosen.map(s=>s.kind.toUpperCase());
-    const message="✨ COMBO "+chosen.length+"/3 "+comboDirection+" • "+kinds.join(" + ")+" • "+pair+" • "+tf;
+    const message="✨ COMBO "+chosen.length+"/4 "+comboDirection+" • "+kinds.join(" + ")+" • "+pair+" • "+tf;
     recordAlertMarker({pair,tf,ts:comboTs,price:Number(directionSignal.price)||Number(marker.price)||chosen.at(-1)?.price||0,entryPrice:Number(directionSignal.entryPrice)||Number(marker.entryPrice)||Number(directionSignal.price)||Number(marker.price)||0,direction:comboDirection,label:"COMBO "+kinds.join("+"),kind:"combo"});
     log("combo",message);tone("combo");
     const badge=$("alertsLast");if(badge){badge.textContent=message;badge.className="alerts-last combo"}
