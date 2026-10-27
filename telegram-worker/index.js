@@ -58,7 +58,8 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
     if (!validTf.test(tf) || !validTimeframes.has(tf)) throw new Error("Unsupported OKX timeframe in alert rules: " + tf);
     const key = pair + ":" + tf;
     const comboCount=clamp(Math.round(Number(item.comboCount ?? COMBO_COUNT)),2,4);
-    const comboWindowBars=clamp(Math.round(Number(item.comboWindowBars ?? (comboCount===4?Math.max(3,COMBO_WINDOW_BARS):COMBO_WINDOW_BARS))),1,5);
+    const requestedComboWindowBars=clamp(Math.round(Number(item.comboWindowBars ?? (comboCount===4?Math.max(3,COMBO_WINDOW_BARS):COMBO_WINDOW_BARS))),1,5);
+    const comboWindowBars=comboCount===4?Math.max(3,requestedComboWindowBars):requestedComboWindowBars;
     const allFour=comboCount===4;
     unique.set(key, {
       pair, tf,
@@ -343,7 +344,7 @@ const server = http.createServer((req, res) => {
   }
   if (requestUrl.pathname === "/config" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, volume, rsi, sma, vp, combo, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, volume, rsi, sma, vp, combo, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
+    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
     return;
   }
   if (requestUrl.pathname === "/config" && req.method === "PUT") {
