@@ -213,56 +213,60 @@
     const badge=$("alertsLast");if(badge){badge.textContent=message;badge.className="alerts-last combo"}
   }
   function evaluateReversalCombo(bars,pair,tf){
-    if(!cfg.comboEnabled||Number(cfg.comboCount)!==4||cfg.comboMode!=="reversal"||!Array.isArray(bars)||!bars.length)return;
-    const last=bars[bars.length-1],length=bars.length;
+    if(Number(cfg.comboCount)!==4||cfg.comboMode!=="reversal")return false;
+    const diagnosis=$("alertComboDiagnostic");
+    const wait=reason=>{
+      if(diagnosis)diagnosis.textContent="COMBO 4/4 · ожидание: "+reason+" • "+pair+" • "+tf;
+      return false;
+    };
+    if(!cfg.comboEnabled)return wait("включи «Комбо-алерт»");
+    if(!Array.isArray(bars)||!bars.length)return wait("нет свечей для расчёта");
+    const last=bars[bars.length-1];
     const volumePeriod=Math.max(2,Math.min(100,Math.round(Number(cfg.volumePeriod)||20)));
     const volumeBase=bars.slice(0,-1).slice(-volumePeriod).map(c=>Math.max(0,Number(c.v)||0));
-    if(volumeBase.length<volumePeriod)return;
+    if(volumeBase.length<volumePeriod)return wait("недостаточно истории для среднего объёма");
     const avgVolume=volumeBase.reduce((sum,n)=>sum+n,0)/volumeBase.length;
     const volumeMultiple=avgVolume>0?(Number(last.v)||0)/avgVolume:0;
-    if(volumeMultiple<Math.max(1,Number(cfg.volumeMult)||2))return;
+    const volumeThreshold=Math.max(1,Number(cfg.volumeMult)||2);
+    if(volumeMultiple<volumeThreshold)return wait("объём ×"+volumeMultiple.toFixed(2)+" ниже порога ×"+volumeThreshold.toFixed(2));
 
     const rsiPeriod=Math.max(2,Math.min(100,Math.round(Number(cfg.rsiPeriod)||14)));
     const currentRsi=rsi(bars,rsiPeriod),previousRsi=rsi(bars.slice(0,-1),rsiPeriod);
-    if(currentRsi==null||previousRsi==null)return;
+    if(currentRsi==null||previousRsi==null)return wait("недостаточно истории для RSI");
     let direction=null;
     if(previousRsi<=Number(cfg.rsiLow)&&currentRsi>Number(cfg.rsiLow))direction="LONG";
     else if(previousRsi>=Number(cfg.rsiHigh)&&currentRsi<Number(cfg.rsiHigh))direction="SHORT";
-    if(!direction)return;
+    if(!direction)return wait("RSI не пересёк уровень разворота (пред. "+previousRsi.toFixed(1)+", сейчас "+currentRsi.toFixed(1)+")");
 
     const smaPeriod=Math.max(2,Math.min(200,Math.round(Number(cfg.smaPeriod)||21)));
     const smaValue=sma(bars,smaPeriod),close=Number(last.c);
-    if(smaValue==null||smaValue<=0)return;
-    if(direction==="LONG"&&close>=smaValue)return;
-    if(direction==="SHORT"&&close<=smaValue)return;
+    if(smaValue==null||smaValue<=0)return wait("недостаточно истории для SMA"+smaPeriod);
+    if(direction==="LONG"&&close>=smaValue)return wait("LONG: цена не ниже SMA"+smaPeriod+" ("+close.toFixed(4)+" ≥ "+smaValue.toFixed(4)+")");
+    if(direction==="SHORT"&&close<=smaValue)return wait("SHORT: цена не выше SMA"+smaPeriod+" ("+close.toFixed(4)+" ≤ "+smaValue.toFixed(4)+")");
 
     const vpPeriod=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));
     const profileBars=bars.slice(0,-1).slice(-vpPeriod);
-    if(profileBars.length<vpPeriod)return;
+    if(profileBars.length<vpPeriod)return wait("недостаточно истории для Volume Profile "+profileBars.length+"/"+vpPeriod);
     const levels=volumeProfileLevels(profileBars,cfg.vpRows);
-    if(!levels)return;
+    if(!levels)return wait("Volume Profile не смог рассчитать уровни");
     const profileHigh=Math.max(...profileBars.map(c=>Number(c.h))),profileLow=Math.min(...profileBars.map(c=>Number(c.l)));
     const rows=Math.max(10,Math.min(60,Math.floor(Number(cfg.vpRows)||30)));
     const binWidth=(profileHigh-profileLow)/rows;
-    if(!(binWidth>0))return;
+    if(!(binWidth>0))return wait("нулевой диапазон Volume Profile");
     const vpLevel=direction==="LONG"?"VAL":"VAH",vpPrice=Number(levels[vpLevel.toLowerCase()]);
-    if(!Number.isFinite(vpPrice)||Math.abs(close-vpPrice)>binWidth*1.5)return;
+    if(!Number.isFinite(vpPrice))return wait("Volume Profile не рассчитал "+vpLevel);
+    const vpDistance=Math.abs(close-vpPrice);
+    if(vpDistance>binWidth*1.5)return wait("цена далеко от "+vpLevel+": "+(vpDistance/binWidth).toFixed(2)+" bin, максимум 1.50");
 
     if(cfg.chopEnabled){
       const chop=choppiness(bars,cfg.chopPeriod),threshold=Math.max(20,Math.min(100,Number(cfg.chopThreshold)||61.8));
-      if(chop==null||chop>=threshold){
-        const blockedKey="combo-reversal:"+pair+":"+tf;
-        if(comboFilterLastAt[blockedKey]!==Number(last.ts)){
-          comboFilterLastAt[blockedKey]=Number(last.ts);
-          const note="⛔ COMBO 4/4 · Разворот заблокирован CHOP • "+(chop==null?"недостаточно свечей":"CHOP "+chop.toFixed(1)+" ≥ "+threshold.toFixed(1))+" • "+pair+" • "+tf;
-          log("other",note);const badge=$("alertsLast");if(badge){badge.textContent=note;badge.className="alerts-last";}
-        }
-        return;
-      }
+      if(chop==null||chop>=threshold)return wait(chop==null?"недостаточно свечей для CHOP":"CHOP "+chop.toFixed(1)+" ≥ "+threshold.toFixed(1));
     }
 
     const message="✨ COMBO 4/4 · РАЗВОРОТ "+direction+" • Volume ×"+volumeMultiple.toFixed(1)+" • RSI "+previousRsi.toFixed(1)+" → "+currentRsi.toFixed(1)+" • "+(direction==="LONG"?"цена ниже":"цена выше")+" SMA"+smaPeriod+" "+smaValue.toFixed(2)+" • возле "+vpLevel+" "+vpPrice.toFixed(2)+" • одна закрытая свеча • "+pair+" • "+tf;
     fire("combo",message,"combo-reversal:"+pair+":"+tf,{pair,tf,ts:Number(last.ts)||now(),price:close,entryPrice:close,direction,label:"COMBO 4/4 REVERSAL"});
+    if(diagnosis)diagnosis.textContent="Последний сигнал: "+message;
+    return true;
   }
   function fire(kind,text,key,marker){
     const comboSource=marker&&COMBO_SOURCES.includes(kind);
