@@ -26,8 +26,9 @@ function rsiAt(candles,n,end=candles.length) {
  * SMA and VP are context filters, not separate events/crossings.
  * profileBuilder is injectable only to make edge cases deterministic in tests.
  */
-export function evaluateComboReversal(candles, options={}, profileBuilder=volumeProfileLevels) {
-  if(!Array.isArray(candles)||!candles.length) return null;
+export function diagnoseComboReversal(candles, options={}, profileBuilder=volumeProfileLevels) {
+  const blocked = reason => ({ signal: null, reason });
+  if(!Array.isArray(candles)||!candles.length) return blocked("нет свечей");
   const volumePeriod=clamp(Math.round(Number(options.volumePeriod)||20),2,100);
   const volumeMult=Math.max(1,Number(options.volumeMult)||2);
   const rsiPeriod=clamp(Math.round(Number(options.rsiPeriod)||14),2,100);
@@ -37,46 +38,56 @@ export function evaluateComboReversal(candles, options={}, profileBuilder=volume
   const vpPeriod=clamp(Math.round(Number(options.vpPeriod)||60),20,300);
   const vpRows=clamp(Math.floor(Number(options.vpRows)||30),10,60);
   const length=candles.length;
-  if(length<Math.max(volumePeriod+1,rsiPeriod+2,smaPeriod,vpPeriod+1)) return null;
+  const requiredLength=Math.max(volumePeriod+1,rsiPeriod+2,smaPeriod,vpPeriod+1);
+  if(length<requiredLength) return blocked("недостаточно истории: "+length+"/"+requiredLength+" свечей");
   const last=candles[length-1];
-  if(!last||![Number(last.c),Number(last.v)].every(Number.isFinite)) return null;
+  if(!last||![Number(last.c),Number(last.v)].every(Number.isFinite)) return blocked("в последней свече нет цены или объёма");
 
   const priorVolumes=candles.slice(length-volumePeriod-1,length-1).map(c=>Math.max(0,Number(c.v)||0));
-  if(priorVolumes.length!==volumePeriod) return null;
+  if(priorVolumes.length!==volumePeriod) return blocked("недостаточно свечей для среднего объёма");
   const avgVolume=average(priorVolumes);
   const volumeMultiple=avgVolume>0?Number(last.v)/avgVolume:0;
-  if(volumeMultiple<volumeMult) return null;
+  if(volumeMultiple<volumeMult) return blocked("объём ×"+volumeMultiple.toFixed(2)+" ниже порога ×"+volumeMult.toFixed(2));
 
   const currentRsi=rsiAt(candles,rsiPeriod,length);
   const previousRsi=rsiAt(candles,rsiPeriod,length-1);
-  if(currentRsi==null||previousRsi==null) return null;
+  if(currentRsi==null||previousRsi==null) return blocked("недостаточно данных для RSI");
   let direction=null;
   if(previousRsi<=rsiLow&&currentRsi>rsiLow) direction="LONG";
   else if(previousRsi>=rsiHigh&&currentRsi<rsiHigh) direction="SHORT";
-  if(!direction) return null;
+  if(!direction) return blocked("RSI не пересёк уровень разворота (пред. "+previousRsi.toFixed(1)+", сейчас "+currentRsi.toFixed(1)+")");
 
   const smaValue=smaAt(candles,smaPeriod,length);
-  if(smaValue==null||smaValue<=0) return null;
-  if(direction==="LONG"&&Number(last.c)>=smaValue) return null;
-  if(direction==="SHORT"&&Number(last.c)<=smaValue) return null;
+  if(smaValue==null||smaValue<=0) return blocked("недостаточно данных для SMA"+smaPeriod);
+  if(direction==="LONG"&&Number(last.c)>=smaValue) return blocked("LONG: цена "+Number(last.c).toFixed(4)+" не ниже SMA"+smaPeriod+" "+smaValue.toFixed(4));
+  if(direction==="SHORT"&&Number(last.c)<=smaValue) return blocked("SHORT: цена "+Number(last.c).toFixed(4)+" не выше SMA"+smaPeriod+" "+smaValue.toFixed(4));
 
   const profileBars=candles.slice(0,-1).slice(-vpPeriod);
-  if(profileBars.length<vpPeriod) return null;
+  if(profileBars.length<vpPeriod) return blocked("недостаточно свечей для Volume Profile "+profileBars.length+"/"+vpPeriod);
   const levels=profileBuilder(profileBars,vpRows);
-  if(!levels) return null;
+  if(!levels) return blocked("Volume Profile не смог рассчитать уровни");
   const highs=profileBars.map(c=>Number(c.h)).filter(Number.isFinite);
   const lows=profileBars.map(c=>Number(c.l)).filter(Number.isFinite);
-  if(!highs.length||!lows.length) return null;
+  if(!highs.length||!lows.length) return blocked("в истории VP отсутствуют high/low");
   const range=Math.max(...highs)-Math.min(...lows);
-  if(!(range>0)) return null;
+  if(!(range>0)) return blocked("нулевой диапазон Volume Profile");
   const binWidth=range/vpRows;
   const vpLevel=direction==="LONG"?"VAL":"VAH";
   const vpPrice=Number(levels[vpLevel.toLowerCase()]);
-  if(!Number.isFinite(vpPrice)||Math.abs(Number(last.c)-vpPrice)>binWidth*1.5) return null;
+  if(!Number.isFinite(vpPrice)) return blocked("Volume Profile не рассчитал "+vpLevel);
+  const vpDistance=Math.abs(Number(last.c)-vpPrice);
+  if(vpDistance>binWidth*1.5) return blocked("цена далеко от "+vpLevel+": "+(vpDistance/binWidth).toFixed(2)+" bin, максимум 1.50");
 
   return {
-    direction, ts:Number(last.ts)||0, price:Number(last.c),
-    volumeMultiple, rsi:currentRsi, previousRsi, sma:smaValue,
-    vpLevel, vpPrice, vpDistance:Math.abs(Number(last.c)-vpPrice), vpBinWidth:binWidth
+    signal: {
+      direction, ts:Number(last.ts)||0, price:Number(last.c),
+      volumeMultiple, rsi:currentRsi, previousRsi, sma:smaValue,
+      vpLevel, vpPrice, vpDistance, vpBinWidth:binWidth
+    },
+    reason: null
   };
+}
+
+export function evaluateComboReversal(candles, options={}, profileBuilder=volumeProfileLevels) {
+  return diagnoseComboReversal(candles, options, profileBuilder).signal;
 }
