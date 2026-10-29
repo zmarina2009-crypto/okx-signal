@@ -211,13 +211,10 @@
       if(!(Number.isFinite(qty)&&qty>0))continue;
       pos={ts:x.ts,dir,entry,stop,risk,targetR,qty,phase,pnl:0,riskBudget};
 
-      // Entry and exit levels can both be crossed during the touch candle.
-      // OHLC does not reveal sequence, so an initial stop takes precedence.
-      const initialStopHit=dir===1?x.l<=pos.stop:x.h>=pos.stop;
-      if(initialStopHit) { close(pos.stop,"SL",x.ts); continue; }
-      const initialTarget=entry+dir*targetR*risk;
-      const initialTargetHit=dir===1?x.h>=initialTarget:x.l<=initialTarget;
-      if(initialTargetHit) { close(initialTarget,"TP"+targetR+"R",x.ts); continue; }
+      // The signal is confirmed only after candle x closes, and entry is x.c.
+      // Do not inspect x.high/x.low for exits after this entry: those extremes
+      // happened before (or in unknown order relative to) the close-price entry.
+      // The first eligible stop/target check is the next candle, i + 1.
     }
 
     if(pos) close(a[a.length-1].c,"END",a[a.length-1].ts);
