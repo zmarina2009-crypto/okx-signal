@@ -121,6 +121,14 @@
   }
   // Shared fixed-target backtest engine. Default exit is 5R; optional comparisons
   // may override the target R or choose a target by the market phase at entry.
+  async function loadComparisonContext(days) {
+    const pair=$("btPair").value;
+    const capital=Math.max(10,+$("btCapital").value||1000), riskPct=0.5, vpFilter=$("btVpFilter").value;
+    const candles=await getCandles(days,"1m",pair), vpCandles=await getCandles(Math.min(15,days+1),"15m",pair);
+    if(candles.length<50)throw Error("Недостаточно исторических минутных свечей");
+    if(vpCandles.length<100)throw Error("Недостаточно 15m свечей для обязательного Volume Profile");
+    return {candles,vpByMinute:buildVPByMinute(candles,vpCandles),vpFilter,riskPct,capital,pair,vpCandles};
+  }
   function run(a, mult, feePct, slipPct, filterMode, entryMode="current", exitR=null, phaseExit=null, vpFilter=null, vpByMinute=null, riskPct=0.5, initialCapital=(Number($("btCapital")?.value)||1000)) {
     const trades=[];
     riskPct=Math.max(0.01,Math.min(5,Number(riskPct)||0.5));
@@ -231,11 +239,10 @@
     $("btStatus").textContent="Сравниваю два варианта входа на одном наборе свечей…";
     try{
       const days=+$("btDays").value, mult=Math.max(.1,+$("btAtr").value||1.5), fee=Math.max(0,+$("btFee").value||0), slip=Math.max(0,+$("btSlip").value||0);
-      const candles=await getCandles(days);
-      if(candles.length<50)throw Error("Недостаточно исторических свечей");
+      const ctx=await loadComparisonContext(days), {candles,vpByMinute,vpFilter,riskPct,capital}=ctx;
       const filter=$("btFilter").value;
-      const a=run(candles,mult,fee,slip,filter,"current");
-      const b=run(candles,mult,fee,slip,filter,"3c");
+      const a=run(candles,mult,fee,slip,filter,"current",null,null,vpFilter,vpByMinute,riskPct,capital);
+      const b=run(candles,mult,fee,slip,filter,"3c",null,null,vpFilter,vpByMinute,riskPct,capital);
       const pf=r=>r.grossLoss>0?r.grossWin/r.grossLoss:(r.grossWin>0?Infinity:0);
       const wr=r=>r.trades.length?100*r.wins/r.trades.length:0;
       const rows=[
@@ -258,7 +265,7 @@
     $("btStatus").textContent="Сравниваю адаптивные выходы по фазам рынка…";
     try{
       const days=+$("btDays").value,mult=Math.max(.1,+$("btAtr").value||1.5),fee=Math.max(0,+$("btFee").value||0),slip=Math.max(0,+$("btSlip").value||0),filter=$("btFilter").value;
-      const candles=await getCandles(days); if(candles.length<50)throw Error("Недостаточно исторических свечей");
+      const ctx=await loadComparisonContext(days), {candles,vpByMinute,vpFilter,riskPct,capital}=ctx;
       const configs=[
         {name:"A: 1:2 / 1:2",up:2,down:2,range:2},
         {name:"B: 1:3 / 1:2",up:3,down:3,range:2},
@@ -269,8 +276,8 @@
       const wr=r=>r.trades.length?100*r.wins/r.trades.length:0;
       const rows=[];
       for(const c of configs){
-        const a=run(candles,mult,fee,slip,filter,"current",null,c);
-        const b=run(candles,mult,fee,slip,filter,"3c",null,c);
+        const a=run(candles,mult,fee,slip,filter,"current",null,c,vpFilter,vpByMinute,riskPct,capital);
+        const b=run(candles,mult,fee,slip,filter,"3c",null,c,vpFilter,vpByMinute,riskPct,capital);
         rows.push({name:c.name,a,b});
       }
       let html='<div class="small" style="margin-bottom:6px">Тренд ↑/↓ получает одинаковый TP, боковик — отдельный TP. Все варианты используют один и тот же набор свечей, ATR(14), комиссию и проскальзывание. Выход целиком на TP; частичная фиксация 50%/50% не меняется.</div>';
@@ -290,8 +297,8 @@
     $("btStatus").textContent="Определяю фазу рынка и сравниваю результаты…";
     try{
       const days=+$("btDays").value,mult=Math.max(.1,+$("btAtr").value||1.5),fee=Math.max(0,+$("btFee").value||0),slip=Math.max(0,+$("btSlip").value||0),filter=$("btFilter").value;
-      const candles=await getCandles(days); if(candles.length<50)throw Error("Недостаточно исторических свечей");
-      const a=run(candles,mult,fee,slip,filter,"current"),b=run(candles,mult,fee,slip,filter,"3c");
+      const ctx=await loadComparisonContext(days), {candles,vpByMinute,vpFilter,riskPct,capital}=ctx;
+      const a=run(candles,mult,fee,slip,filter,"current",null,null,vpFilter,vpByMinute,riskPct,capital),b=run(candles,mult,fee,slip,filter,"3c",null,null,vpFilter,vpByMinute,riskPct,capital);
       const phases=["up","down","range"];
       const stats=p=>{const t=p.trades,w=t.filter(x=>x.pnl>0).length,g=t.reduce((s,x)=>s+(x.pnl>0?x.pnl:0),0),l=t.reduce((s,x)=>s+(x.pnl<0?Math.abs(x.pnl):0),0);return{n:t.length,net:p.net,wr:t.length?100*w/t.length:0,pf:l?g/l:(g?Infinity:0),dd:calcPhaseDD(t)}};
       function calcPhaseDD(t){
@@ -313,10 +320,9 @@
     $("btStatus").textContent="Сравниваю варианты выхода 1:1, 1:2, 1:3 и 1:5 на одном наборе свечей…";
     try{
       const days=+$("btDays").value, mult=Math.max(.1,+$("btAtr").value||1.5), fee=Math.max(0,+$("btFee").value||0), slip=Math.max(0,+$("btSlip").value||0);
-      const candles=await getCandles(days);
-      if(candles.length<50)throw Error("Недостаточно исторических свечей");
+      const ctx=await loadComparisonContext(days), {candles,vpByMinute,vpFilter,riskPct,capital}=ctx;
       const ratios=[1,2,3,5], filter=$("btFilter").value;
-      const results=ratios.map(ratio=>({ratio,current:run(candles,mult,fee,slip,filter,"current",ratio),three:run(candles,mult,fee,slip,filter,"3c",ratio)}));
+      const results=ratios.map(ratio=>({ratio,current:run(candles,mult,fee,slip,filter,"current",ratio,null,vpFilter,vpByMinute,riskPct,capital),three:run(candles,mult,fee,slip,filter,"3c",ratio,null,vpFilter,vpByMinute,riskPct,capital)}));
       const stats=r=>({trades:r.trades.length,net:r.net,wr:r.trades.length?100*r.wins/r.trades.length:0,pf:r.grossLoss>0?r.grossWin/r.grossLoss:(r.grossWin>0?Infinity:0),dd:r.maxDD});
       const rows=[];
       results.forEach(x=>{const a=stats(x.current),b=stats(x.three);rows.push(["1:"+x.ratio,a,b]);});
@@ -332,8 +338,10 @@
   });
 
   // Separate TP 5R exit comparison. The chart and Live modules are not touched.
-  function runTrail5R(a, mult, feePct, slipPct, filterMode, useTrail) {
+  function runTrail5R(a, mult, feePct, slipPct, filterMode, useTrail, vpFilter, vpByMinute, riskPct=0.5, initialCapital=(Number($("btCapital")?.value)||1000)) {
     const trades=[]; let pos=null, equity=0, peak=0, maxDD=0, grossTotal=0, feesTotal=0, slippageTotal=0;
+    riskPct=Math.max(0.01,Math.min(5,Number(riskPct)||0.5));
+    initialCapital=Math.max(10,Number(initialCapital)||1000);
     let missedTP5R=0, protectedExits=0;
     const feeRate=feePct/100, slipRate=slipPct/100, costRate=feeRate+slipRate;
     function close(price, why, barIndex) {
@@ -428,7 +436,20 @@
       const avSignal=atr(a,i,14);
       if(!Number.isFinite(avSignal)||avSignal<=0)continue;
       const dir=long?1:-1, entry=x.c, risk=avSignal*mult;
-      pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,qty:100,pnl:0,activated:false,best:entry,entryIndex:i,stopIsBE:false};
+      if(vpFilter){
+        const profile=vpByMinute?.get(x.ts);
+        if(!profile)continue;
+        const nearPOC=Math.abs(entry-profile.poc)<=profile.binWidth, nearVAL=Math.abs(entry-profile.val)<=profile.binWidth, nearVAH=Math.abs(entry-profile.vah)<=profile.binWidth;
+        if(vpFilter==="poc" && (nearPOC || (long&&entry<=profile.poc) || (short&&entry>=profile.poc)))continue;
+        if(vpFilter==="value-area" && ((long&&!nearVAL)||(short&&!nearVAH)))continue;
+      }
+      const capitalNow=Math.max(0,initialCapital+equity);
+      if(!(capitalNow>0))continue;
+      const riskBudget=capitalNow*riskPct/100, stop=entry-dir*risk;
+      const lossPerNotional=risk/entry+(1+stop/entry)*costRate;
+      const qty=Math.min(capitalNow,riskBudget/lossPerNotional);
+      if(!(Number.isFinite(qty)&&qty>0))continue;
+      pos={ts:x.ts,dir,entry,stop,risk,qty,pnl:0,activated:false,best:entry,entryIndex:i,stopIsBE:false};
     }
     if(pos)close(a[a.length-1].c,"END",a.length-1);
     const grossWin=trades.reduce((s,t)=>s+(t.gross>0?t.gross:0),0);
@@ -442,10 +463,9 @@
     try{
       const days=+$("btDays").value,mult=Math.max(.1,+$("btAtr").value||1.5),
         fee=Math.max(0,+$("btFee").value||0),slip=Math.max(0,+$("btSlip").value||0),filter=$("btFilter").value;
-      const candles=await getCandles(days);
-      if(candles.length<50)throw Error("Недостаточно исторических свечей");
-      const a=runTrail5R(candles,mult,fee,slip,filter,false);
-      const b=runTrail5R(candles,mult,fee,slip,filter,true);
+      const ctx=await loadComparisonContext(days), {candles,vpByMinute,vpFilter,riskPct,capital}=ctx;
+      const a=runTrail5R(candles,mult,fee,slip,filter,false,vpFilter,vpByMinute,riskPct,capital);
+      const b=runTrail5R(candles,mult,fee,slip,filter,true,vpFilter,vpByMinute,riskPct,capital);
       const pf=r=>r.grossLoss>0?r.grossWin/r.grossLoss:(r.grossWin>0?Infinity:0);
       const wr=r=>r.trades.length?100*r.wins/r.trades.length:0;
       const rows=[
@@ -460,7 +480,7 @@
         ["Упущенные TP 5R после защитного выхода",0,b.missedTP5R]
       ];
       const show=(v,i)=>i===0||i===7||i===8?String(Math.round(v)):i===2?fmt(v)+"%":i===3?(v===Infinity?"∞":fmt(v)):fmt(v);
-      let html='<div class="small" style="margin-bottom:7px">Один набор закрытых свечей; вход — первое касание SMA21 без подтверждающей свечи, направление определяется стороной подхода. ATR(14) × '+fmt(mult)+', комиссия '+fmt(fee)+'% и проскальзывание '+fmt(slip)+'% на сторону. Безубыток активируется после +1R; стоп учитывает оценку расходов, затем подтягивается по ATR. Если после защитного выхода цена достигает 5R раньше исходного стопа, сделка учитывается как упущенный TP 5R.</div>';
+      let html='<div class="small" style="margin-bottom:7px">Один набор закрытых свечей 1m и обязательный VP-фильтр ('+(vpFilter==="poc"?"направление от POC":"отскок от VAL/VAH")+') по закрытым 15m данным. Риск 0,5% текущего капитала на сделку, стартовый капитал '+fmt(capital)+' USDT; размер позиции ограничен капиталом без плеча. ATR(14) × '+fmt(mult)+', комиссия '+fmt(fee)+'% и проскальзывание '+fmt(slip)+'% на сторону. Безубыток активируется после +1R; стоп учитывает оценку расходов, затем подтягивается по ATR. Если после защитного выхода цена достигает 5R раньше исходного стопа, сделка учитывается как упущенный TP 5R.</div>';
       html+='<table class="table"><thead><tr><th>Показатель</th><th>База: фиксированный SL / TP 5R</th><th>BE +1R и ATR-трейлинг</th></tr></thead><tbody>';
       html+=rows.map((r,i)=>'<tr><td>'+r[0]+'</td><td>'+show(r[1],i)+'</td><td>'+show(r[2],i)+'</td></tr>').join('');
       html+='</tbody></table><div class="small" style="margin-top:7px">Ограничение данных: минутные OHLC не раскрывают точный порядок тиков внутри свечи. При неоднозначности применяется консервативное правило «стоп раньше тейка»; новые стопы, которые могли быть задеты в той же свече, также считаются сработавшими. Это снижает риск завышения результата, но не заменяет тест по тиковым данным.</div>';
@@ -477,9 +497,10 @@
     try{
       const days=+$("btDays").value, mult=Math.max(.1,+$("btAtr").value||1.5),
         fee=Math.max(0,+$("btFee").value||0), slip=Math.max(0,+$("btSlip").value||0);
-      const candles=await getCandles(days,"1m");
+      const pair=$("btPair").value;
+      const candles=await getCandles(days,"1m",pair);
       // One extra day provides a complete 24h profile before the first tested minute.
-      const vpCandles=await getCandles(Math.min(15,days+1),"15m");
+      const vpCandles=await getCandles(Math.min(15,days+1),"15m",pair);
       if(candles.length<50)throw Error("Недостаточно минутных свечей");
       if(vpCandles.length<100)throw Error("Недостаточно 15m свечей для построения Volume Profile");
       const vpByMinute=buildVPByMinute(candles,vpCandles);
