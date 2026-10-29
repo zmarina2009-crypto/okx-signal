@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  const CFG_KEY="okx_paper_cfg_v1", TRADES_KEY="okx_paper_trades_v1", SYNC_KEY="okx_paper_sync_v1", MAX_TRADES=500;
+  const CFG_KEY="okx_paper_cfg_v1", TRADES_KEY="okx_paper_trades_v1", SYNC_KEY="okx_paper_sync_v1", PENDING_KEY="okx_paper_pending_v1", MAX_TRADES=500;
   const TF_MS={"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000};
   const defaults={enabled:false,pair:"BTC-USDT-SWAP",tf:"1m",source:"sma",notional:100,atrPeriod:14,atrMult:1.5,targetR:5,breakevenR:1,fee:.05,slip:.02};
   const MANAGEMENT_MODE="full-position-be-then-5r", LEGACY_MODE="legacy-half-close-at-1r";
@@ -11,6 +11,9 @@
   trades=trades.filter(t=>t&&t.id&&t.status&&Number.isFinite(Number(t.entry))).slice(-MAX_TRADES);
   let syncState=read(SYNC_KEY,null);
   if(!syncState||typeof syncState!=="object")syncState=null;
+  let pendingSignals=read(PENDING_KEY,[]);
+  if(!Array.isArray(pendingSignals))pendingSignals=[];
+  pendingSignals=pendingSignals.filter(x=>x&&x.id&&x.meta&&x.meta.pair&&x.meta.tf&&["LONG","SHORT"].includes(x.meta.direction)).slice(-100);
   let catchingUp=false;
   let deferredMarkers=[];
   const pendingTrades=new Set();
@@ -22,6 +25,7 @@
   const stamp=ts=>new Date(Number(ts)||Date.now()).toLocaleString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
   function saveCfg(){try{localStorage.setItem(CFG_KEY,JSON.stringify(cfg))}catch(e){}}
   function saveTrades(){try{trades=trades.slice(-MAX_TRADES);localStorage.setItem(TRADES_KEY,JSON.stringify(trades))}catch(e){setStatus("Не удалось сохранить журнал: возможно, заполнено хранилище браузера.")}}
+  function savePending(){try{pendingSignals=pendingSignals.slice(-100);localStorage.setItem(PENDING_KEY,JSON.stringify(pendingSignals))}catch(e){setStatus("Не удалось сохранить очередь подтверждения: возможно, заполнено хранилище браузера.")}}
 
   function applyManagementToOpenTrades(){
     const targetR=Math.max(1,Math.min(50,Number(cfg.targetR)||5));
@@ -244,6 +248,33 @@
   function kindAllowed(kind){return cfg.source==="any"||String(kind||"").toLowerCase()===cfg.source}
   function fmtKind(kind){return ({sma:"SMA",rsi:"RSI",volume:"Volume",combo:"COMBO"})[kind]||String(kind||"ALERT").toUpperCase()}
 
+  function renderPending(){
+    const root=$("ptPending");if(!root)return;
+    const now=Date.now();
+    root.innerHTML=pendingSignals.slice().sort((a,b)=>(Number(b.queuedAt)||0)-(Number(a.queuedAt)||0)).map(item=>{
+      const m=item.meta||{},pair=String(m.pair||"").toUpperCase(),tf=tfNorm(m.tf),dir=m.direction==="LONG"?"LONG":"SHORT";
+      const stale=now-(Number(m.ts)||0)>2*(TF_MS[tf]||60000);
+      const enabled=cfg.enabled&&pair===String(cfg.pair).toUpperCase()&&tf===tfNorm(cfg.tf)&&!stale;
+      const reason=stale?"Сигнал устарел":pair!==String(cfg.pair).toUpperCase()||tf!==tfNorm(cfg.tf)?"Не совпадает текущая пара/TF":!cfg.enabled?"Тест на паузе":"Ожидает решения";
+      return '<div class="pt-pending-item"><div class="pt-pending-meta"><b>'+esc(pair)+' · '+esc(tf)+' · '+dir+'</b><br>'+esc(fmtKind(m.kind))+' · вход по сигналу '+fmt(Number(m.entryPrice)||Number(m.price)||0)+' · '+esc(stamp(m.ts))+'<br><span class="small">'+reason+'</span></div><div class="pt-pending-actions"><button type="button" class="confirm" data-pending-action="confirm" data-pending-id="'+esc(item.id)+'" '+(enabled?'':'disabled')+'>Подтвердить</button><button type="button" data-pending-action="skip" data-pending-id="'+esc(item.id)+'">Пропустить</button></div></div>';
+    }).join("")||'<div class="small">Пока нет сигналов на подтверждение.</div>';
+  }
+  function queueSignal(meta){
+    if(!meta||!cfg.enabled)return false;
+    const pair=String(meta.pair||"").toUpperCase(),tf=tfNorm(meta.tf),kind=String(meta.kind||"").toLowerCase();
+    if(pair!==String(cfg.pair).toUpperCase()||tf!==tfNorm(cfg.tf)||!kindAllowed(kind)||!["LONG","SHORT"].includes(meta.direction))return false;
+    const signalId=String(meta.id||[pair,tf,kind,meta.ts,meta.direction].join("|"));
+    if(trades.some(t=>t.signalId===signalId)||pendingSignals.some(x=>x.id===signalId))return false;
+    if(trades.some(t=>t.status==="OPEN"&&String(t.pair).toUpperCase()===pair&&tfNorm(t.tf)===tf)){
+      setStatus("Сигнал "+fmtKind(kind)+" пропущен: по "+pair+" / "+tf+" уже есть открытая виртуальная позиция (No trade).");return false;
+    }
+    if(pendingSignals.some(x=>String(x.meta.pair).toUpperCase()===pair&&tfNorm(x.meta.tf)===tf))return false;
+    const age=Date.now()-(Number(meta.ts)||0);
+    if(age>2*(TF_MS[tf]||60000)){return false}
+    pendingSignals.push({id:signalId,meta,queuedAt:Date.now()});savePending();renderPending();
+    setStatus("Найден сигнал "+fmtKind(kind)+" "+pair+" / "+tf+" "+meta.direction+". Виртуальная сделка не открыта: ожидается твоё подтверждение.");
+    return true;
+  }
   function render(){
     const el=$("ptEnabledBadge");
     if(el){el.textContent=cfg.enabled?"ВХОДЫ АКТИВНЫ":"ВХОДЫ ПРИОСТАНОВЛЕНЫ";el.className="pt-status-badge "+(cfg.enabled?"active":"paused")}
@@ -263,6 +294,7 @@
     if($("ptCosts"))$("ptCosts").textContent="-"+fmt(totalCosts)+" USDT";
     if($("ptExpectancy"))$("ptExpectancy").textContent=expectancy==null?"—":(expectancy>=0?"+":"")+fmt(expectancy)+" USDT";
     $("ptPF").textContent=pf==null?(grossWin>0?"∞":"—"):pf.toFixed(2);
+    renderPending();
     const body=$("ptTrades");
     const latest=trades.slice().sort((x,y)=>(Number(y.createdAt)||0)-(Number(x.createdAt)||0)).slice(0,60);
     if(body)body.innerHTML=latest.map(t=>{
@@ -294,14 +326,15 @@
         '<label>Проскальзывание, % на сторону<input id="ptSlip" type="number" min="0" step="0.001" value="0.02"></label>'+
       '</div>'+
       '<div class="pt-buttons"><button id="ptStart" class="primary" type="button">▶ Начать тест</button><button id="ptPause" type="button">Ⅱ Приостановить новые входы</button><button id="ptClear" type="button">Очистить журнал</button><span id="ptEnabledBadge" class="pt-status-badge paused">ВХОДЫ ПРИОСТАНОВЛЕНЫ</span></div>'+
-      '<div id="ptStatus" class="pt-status">Для старта выбери ту же пару и таймфрейм в панели Alerts. Приостановка запрещает только новые входы; открытые виртуальные позиции продолжают отслеживаться.</div>'+
+      '<div class="pt-pending-wrap"><h3>Ожидают твоего подтверждения</h3><div id="ptPending" class="pt-pending"><div class="small">Пока нет сигналов на подтверждение.</div></div></div>'+
+      '<div id="ptStatus" class="pt-status">Для старта выбери ту же пару и таймфрейм в панели Alerts. Каждый новый сигнал будет ждать отдельного подтверждения; без него виртуальная позиция не откроется.</div>'+
       '<div class="pt-metrics"><div><small>Открытых позиций</small><b id="ptOpen">0</b></div><div><small>Закрытых сделок</small><b id="ptClosed">0</b></div><div><small>Доля прибыльных</small><b id="ptWinRate">—</b></div><div><small>Сумма PnL после затрат</small><b id="ptNet">0.00 USDT</b></div><div><small>Profit Factor</small><b id="ptPF">—</b></div><div><small>Валовой PnL</small><b id="ptGross">0.00 USDT</b></div><div><small>Комиссии + проскальзывание</small><b id="ptCosts">0.00 USDT</b></div><div><small>Матожидание / сделку</small><b id="ptExpectancy">—</b></div></div>'+
       '<div class="small" style="margin:10px 0 6px">Правила: начальный стоп = ATR(14) × множитель; вся позиция остаётся открытой до финального тейка (по умолчанию +5R) или стопа. При достижении заданного уровня (по умолчанию +1R) стоп всей позиции переносится на цену входа (БУ); на +1R часть позиции не закрывается. Стоп БУ стоит на цене входа, поэтому комиссии и проскальзывание могут дать небольшой чистый убыток. Если стоп и тейк попали в одну свечу, консервативно первым считается стоп; если в одной свече достигнут триггер БУ и цена вернулась к входу, консервативно фиксируется БУ. Метрики учитывают только сделки новой модели; старые сделки сохранены в журнале как история. Одна открытая виртуальная позиция на пару и TF.</div>'+
       '<div class="tablewrap"><table class="table"><thead><tr><th>Время</th><th>Источник / TF</th><th>Сторона</th><th>Вход</th><th>Стоп</th><th>Триггер БУ / TP</th><th>Состояние / PnL</th></tr></thead><tbody id="ptTrades"></tbody></table></div>'+
       '<div class="small" style="margin-top:8px">Журнал хранится локально в браузере, максимум 500 сделок. После открытия приложения тест восстанавливает новые сигналы и проверяет пропущенные стопы/тейки по закрытым историческим свечам. Для теста выбери в Alerts ту же пару, таймфрейм и источник. Эти сделки не являются реальными ордерами и не гарантируют будущую доходность.</div>';
     footer.parentNode.insertBefore(panel,footer);
     const style=document.createElement("style");
-    style.textContent="#paperTradingPanel{margin-top:12px}.pt-warning{padding:9px 11px;border:1px solid #6a4d1f;border-radius:8px;background:#20190e;color:#f2d18b;font-size:11px;line-height:1.45}.pt-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}.pt-controls label{display:block;color:#8290a0;font-size:11px}.pt-controls input,.pt-controls select{display:block;width:100%;min-width:0;margin-top:4px;background:#101823;color:#eaf0f6;border:1px solid #1d2835;border-radius:8px;padding:9px}.pt-buttons{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:10px}.pt-buttons button{padding:8px 10px;font-size:11px}.pt-status-badge{display:inline-block;border-radius:8px;padding:6px 9px;font-size:10px;font-weight:800}.pt-status-badge.active{background:#0c3a28;color:#27e58a}.pt-status-badge.paused{background:#1a222c;color:#b5c0cc}.pt-status{margin-top:8px;color:#8290a0;font-size:11px;line-height:1.5}.pt-metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-top:10px}.pt-metrics>div{background:#0b1118;border:1px solid #17212d;border-radius:9px;padding:8px}.pt-metrics small{display:block;color:#8290a0;font-size:10px}.pt-metrics b{display:block;margin-top:4px;overflow-wrap:anywhere;font-size:12px}.pt-metrics #ptNet{font-variant-numeric:tabular-nums}@media(max-width:850px){.pt-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.pt-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}";
+    style.textContent="#paperTradingPanel{margin-top:12px}.pt-pending-wrap{margin-top:12px;padding:10px;border:1px solid #1d2835;border-radius:10px;background:#0b1118}.pt-pending-wrap h3{font-size:13px;margin:0 0 8px}.pt-pending{display:grid;gap:7px}.pt-pending-item{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px;border:1px solid #263342;border-radius:8px;background:#101823}.pt-pending-meta{font-size:11px;line-height:1.5}.pt-pending-actions{display:flex;gap:6px}.pt-pending-actions button{font-size:11px;padding:7px 9px}.pt-pending-actions .confirm{border-color:#245f47;background:#10251d;color:#27e58a}.pt-warning{padding:9px 11px;border:1px solid #6a4d1f;border-radius:8px;background:#20190e;color:#f2d18b;font-size:11px;line-height:1.45}.pt-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}.pt-controls label{display:block;color:#8290a0;font-size:11px}.pt-controls input,.pt-controls select{display:block;width:100%;min-width:0;margin-top:4px;background:#101823;color:#eaf0f6;border:1px solid #1d2835;border-radius:8px;padding:9px}.pt-buttons{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:10px}.pt-buttons button{padding:8px 10px;font-size:11px}.pt-status-badge{display:inline-block;border-radius:8px;padding:6px 9px;font-size:10px;font-weight:800}.pt-status-badge.active{background:#0c3a28;color:#27e58a}.pt-status-badge.paused{background:#1a222c;color:#b5c0cc}.pt-status{margin-top:8px;color:#8290a0;font-size:11px;line-height:1.5}.pt-metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-top:10px}.pt-metrics>div{background:#0b1118;border:1px solid #17212d;border-radius:9px;padding:8px}.pt-metrics small{display:block;color:#8290a0;font-size:10px}.pt-metrics b{display:block;margin-top:4px;overflow-wrap:anywhere;font-size:12px}.pt-metrics #ptNet{font-variant-numeric:tabular-nums}@media(max-width:850px){.pt-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.pt-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}";
     document.head.appendChild(style);
   }
   function collectConfig(){
@@ -354,7 +387,8 @@
         status:"OPEN",createdAt:now,signalTs,lastProcessedTs:signalTs,exits:[]
       };
       trades.push(trade);saveTrades();render();
-      setStatus("Виртуальная сделка открыта: "+pair+" / "+tf+" "+trade.direction+" по "+fmt(entry)+". Реальный ордер не отправлялся.");
+      setStatus("Виртуальная сделка подтверждена и открыта: "+pair+" / "+tf+" "+trade.direction+" по "+fmt(entry)+". Реальный ордер не отправлялся.");
+      return trade;
     }finally{pendingTrades.delete(key)}
   }
   function finishPortion(t,frac,price,reason,barTs){
@@ -462,9 +496,8 @@
           if(!cfg.enabled)break;
           if(!kindAllowed(sig.kind))continue;
           if(trades.some(t=>t.status==="OPEN"&&String(t.pair).toUpperCase()===pair&&tfNorm(t.tf)===tf))break;
-          const before=trades.length;
-          await openTrade(sig);
-          if(trades.length>before)created++;
+          const before=pendingSignals.length;
+          if(queueSignal(sig)&&pendingSignals.length>before)created++;
         }
       }
       // Also recover any open positions on a different pair/timeframe retained in the journal.
@@ -490,13 +523,13 @@
       // Persist trades before advancing the cursor; on a crash we can safely replay and deduplicate.
       saveTrades();saveSync();render();
       const closedAfter=trades.filter(t=>t.status==="CLOSED").length;
-      const resultText="Синхронизация завершена: проверено "+barCount+" новых свечей; найдено подходящих сигналов "+candidateSignals.length+(cfg.source==="combo"?" (COMBO: "+candidateComboCount+")":"")+"; новых сделок "+created+"; закрыто за восстановление "+Math.max(0,closedAfter-closedBefore)+". Последняя свеча "+stamp(latestTs)+".";
+      const resultText="Синхронизация завершена: проверено "+barCount+" новых свечей; найдено подходящих сигналов "+candidateSignals.length+(cfg.source==="combo"?" (COMBO: "+candidateComboCount+")":"")+"; ожидают подтверждения "+created+"; закрыто за восстановление "+Math.max(0,closedAfter-closedBefore)+". Последняя свеча "+stamp(latestTs)+".";
       let blocker="";
       if(cfg.enabled&&!pairSelected)blocker="ВХОДЫ ЗАБЛОКИРОВАНЫ: пара "+pair+" не выбрана в Alerts.";
       else if(cfg.enabled&&!timeframeMatches)blocker="ВХОДЫ ЗАБЛОКИРОВАНЫ: таймфрейм Paper Trading "+tf+" не совпадает с Alerts "+alertTf+".";
       else if(cfg.enabled&&!comboReady)blocker="ВХОДЫ ЗАБЛОКИРОВАНЫ: в Alerts выключено формирование COMBO.";
       else if(cfg.enabled&&candidateSignals.length===0)blocker=cfg.source==="combo"?"На новых свечах после точки запуска не найдено подходящих COMBO-сигналов. Старые сигналы до запуска не открываются.":"На новых свечах после точки запуска не найдено сигналов выбранного источника.";
-      else if(cfg.enabled&&candidateSignals.length>0&&created===0)blocker="Сигналы найдены, но новые позиции не открыты. Проверь журнал и наличие уже открытой позиции по этой паре/таймфрейму.";
+      else if(cfg.enabled&&candidateSignals.length>0&&created===0)blocker="Сигналы найдены, но новые подтверждения не добавлены: возможно, сигнал устарел, уже обработан или по паре/TF есть открытая позиция.";
       setStatus(resultText+(blocker?" "+blocker:cfg.enabled?" Тест активен.":" Новые входы приостановлены."));
     }catch(e){
       console.warn("Paper Trading history replay",e);
@@ -513,9 +546,37 @@
     const pair=String(meta.pair||"").toUpperCase(),tf=tfNorm(meta.tf);
     if(pair!==String(cfg.pair).toUpperCase()||tf!==tfNorm(cfg.tf)||!kindAllowed(meta.kind))return;
     if(!["LONG","SHORT"].includes(meta.direction)){return}
-    openTrade(meta).catch(e=>{console.warn("Paper Trading open",e);setStatus("Не удалось открыть виртуальную сделку: "+String(e&&e.message||e))});
+    queueSignal(meta);
   }
   function wire(){
+    $("ptPending").addEventListener("click",async ev=>{
+      const btn=ev.target.closest("button[data-pending-action]");
+      if(!btn)return;
+      const item=pendingSignals.find(x=>x.id===btn.dataset.pendingId);
+      if(!item)return;
+      if(btn.dataset.pendingAction==="skip"){
+        pendingSignals=pendingSignals.filter(x=>x.id!==item.id);savePending();render();
+        setStatus("Сигнал пропущен. Виртуальная позиция не открыта.");return;
+      }
+      if(!cfg.enabled){setStatus("Сначала возобнови тест, чтобы подтвердить новую виртуальную сделку.");return}
+      const meta=item.meta||{},pair=String(meta.pair||"").toUpperCase(),tf=tfNorm(meta.tf);
+      if(pair!==String(cfg.pair).toUpperCase()||tf!==tfNorm(cfg.tf)){setStatus("Подтверждение заблокировано: сигнал относится к другой паре или таймфрейму.");return}
+      if(Date.now()-(Number(meta.ts)||0)>2*(TF_MS[tf]||60000)){
+        pendingSignals=pendingSignals.filter(x=>x.id!==item.id);savePending();render();
+        setStatus("Сигнал устарел и удалён из очереди. Дождись нового сигнала, чтобы не открывать виртуальную позицию по старой цене.");return;
+      }
+      if(trades.some(t=>t.status==="OPEN"&&String(t.pair).toUpperCase()===pair&&tfNorm(t.tf)===tf)){
+        pendingSignals=pendingSignals.filter(x=>x.id!==item.id);savePending();render();
+        setStatus("Подтверждение отменено: по этой паре и таймфрейму уже открыта виртуальная позиция.");return;
+      }
+      btn.disabled=true;
+      try{
+        const trade=await openTrade(meta);
+        if(trade||trades.some(t=>t.signalId===item.id)){
+          pendingSignals=pendingSignals.filter(x=>x.id!==item.id);savePending();render();
+        }else{renderPending()}
+      }catch(e){console.warn("Paper Trading confirm",e);setStatus("Не удалось открыть виртуальную сделку: "+String(e&&e.message||e));renderPending()}
+    });
     $("ptStart").onclick=async()=>{
       const wasEnabled=cfg.enabled;
       collectConfig();
