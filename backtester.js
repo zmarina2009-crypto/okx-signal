@@ -121,7 +121,7 @@
   }
   // Shared fixed-target backtest engine. Default exit is 5R; optional comparisons
   // may override the target R or choose a target by the market phase at entry.
-  function run(a, mult, feePct, slipPct, filterMode, entryMode="current", exitR=null, phaseExit=null, vpFilter=null, vpByMinute=null, riskPct=0.5, initialCapital=1000) {
+  function run(a, mult, feePct, slipPct, filterMode, entryMode="current", exitR=null, phaseExit=null, vpFilter=null, vpByMinute=null, riskPct=0.5, initialCapital=(Number($("btCapital")?.value)||1000)) {
     const trades=[];
     riskPct=Math.max(0.01,Math.min(5,Number(riskPct)||0.5));
     initialCapital=Math.max(10,Number(initialCapital)||1000);
@@ -204,9 +204,12 @@
       const capitalNow=Math.max(0,initialCapital+equity);
       if(!(capitalNow>0))continue;
       const riskBudget=capitalNow*riskPct/100;
-      const qty=Math.min(capitalNow,riskBudget*entry/risk);
+      const stop=entry-dir*risk;
+      // Include estimated round-trip fees and slippage in the risk budget.
+      const lossPerNotional=risk/entry+(1+stop/entry)*costRate;
+      const qty=Math.min(capitalNow,riskBudget/lossPerNotional);
       if(!(Number.isFinite(qty)&&qty>0))continue;
-      pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,targetR,qty,phase,pnl:0,riskBudget};
+      pos={ts:x.ts,dir,entry,stop,risk,targetR,qty,phase,pnl:0,riskBudget};
 
       // Entry and exit levels can both be crossed during the touch candle.
       // OHLC does not reveal sequence, so an initial stop takes precedence.
