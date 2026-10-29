@@ -615,6 +615,7 @@
       const chosenEntry=Number(entryInput&&entryInput.value);
       if(!Number.isFinite(chosenEntry)||chosenEntry<=0){setStatus("Укажи корректную положительную цену входа.");entryInput&&entryInput.focus();return}
       const adjustedMeta=Object.assign({},meta,{entryPrice:chosenEntry,price:chosenEntry});
+      item.entryDraft=chosenEntry;savePending();
       btn.disabled=true;
       if(entryInput)entryInput.disabled=true;
       try{
@@ -623,7 +624,7 @@
           setStatus("Цена входа не проходит VP-фильтр: "+vp.reason+" Скорректируй цену или пропусти сигнал.");
           renderPending();return;
         }
-        item.entryDraft=chosenEntry;item.meta=Object.assign({},meta,{entryPrice:chosenEntry});
+        item.meta=Object.assign({},meta,{entryPrice:chosenEntry});
         savePending();
         const trade=await openTrade(adjustedMeta);
         if(trade||trades.some(t=>t.signalId===item.id)){
