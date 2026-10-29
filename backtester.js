@@ -17,36 +17,40 @@
   panel.className = "panel";
   panel.innerHTML = `
     <h2>Тестировщик стратегии SMA21</h2>
-    <div class="small">BTC-USDT perpetual • 1m • историческая симуляция, без реальных ордеров</div>
+    <div class="small">ZEC / NEAR USDT perpetual • 1m • историческая симуляция, без реальных ордеров</div>
     <div class="btgrid" style="margin-top:10px">
+      <div><label for="btPair">Фьючерс</label><select id="btPair"><option value="ZEC-USDT-SWAP" selected>ZEC-USDT-SWAP</option><option value="NEAR-USDT-SWAP">NEAR-USDT-SWAP</option></select></div>
       <div><label for="btDays">История, дней</label><select id="btDays"><option value="1">1 день</option><option value="3" selected>3 дня</option><option value="7">7 дней</option><option value="14">14 дней</option></select></div>
+      <div><label for="btCapital">Стартовый капитал, USDT</label><input id="btCapital" type="number" min="10" step="100" value="1000"></div>
       <div><label for="btFee">Комиссия, % на сторону</label><input id="btFee" type="number" min="0" step="0.001" value="0.05"></div>
       <div><label for="btSlip">Проскальзывание, % на сторону</label><input id="btSlip" type="number" min="0" step="0.001" value="0.02"></div>
       <div><label for="btAtr">ATR-множитель</label><input id="btAtr" type="number" min="0.1" step="0.1" value="1.5"></div>
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
+      <div><label for="btVpFilter">Обязательный VP-фильтр</label><select id="btVpFilter"><option value="poc" selected>Направление относительно POC</option><option value="value-area">Отскок от VAL / VAH</option></select></div>
     </div>
     <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить VP-фильтры 15m</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; отдельное сравнение: BE после +1R и ATR-трейлинг</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
     <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
     <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Фаза</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
-    <div class="small" style="margin-top:8px">*Расчёт для условной позиции 100 USDT. Для минут, где внутри одной свечи могли сработать и стоп, и тейк, используется консервативное допущение: стоп считается первым. Это исследовательский тест, не прогноз доходности.</div>`;
+    <div class="small" style="margin-top:8px">Размер позиции рассчитывается под риск 0,5% текущего капитала до стопа, с ограничением номинала размером капитала (без кредитного плеча). Комиссии и проскальзывание вычитаются отдельно. Если стоп и тейк затронуты одной минутной свечой, первым считается стоп. Это исследовательский тест, не прогноз доходности.</div>`;
   const anchor = document.querySelector("footer");
   if (anchor) anchor.parentNode.insertBefore(panel, anchor);
   const $ = id => document.getElementById(id);
   const fmt = n => Number(n).toLocaleString("ru-RU",{maximumFractionDigits:2});
   const BASE = "https://www.okx.com/api/v5/market/history-candles";
-  async function getCandles(days, bar="1m") {
+  async function getCandles(days, bar="1m", pair=null) {
+    const instId=pair||$("btPair")?.value||"ZEC-USDT-SWAP";
     const perDay=bar==="15m"?96:1440;
     const target = days * perDay, pages = Math.ceil(target / 300), all = new Map();
     let after = "";
     for (let page=0; page<pages; page++) {
-      $("btStatus").textContent = "Загружаю закрытые свечи BTC-USDT "+bar+"… " + Math.min(all.size, target) + " / " + target + " (запрос " + (page+1) + "/" + pages + ")";
+      $("btStatus").textContent = "Загружаю закрытые свечи "+instId+" "+bar+"… " + Math.min(all.size, target) + " / " + target + " (запрос " + (page+1) + "/" + pages + ")";
       let j = null, lastErr = null;
       for (let attempt=0; attempt<3; attempt++) {
         const controller = new AbortController();
         const timer = setTimeout(()=>controller.abort(), 20000);
         try {
-          const url = BASE+"?instId=BTC-USDT-SWAP&bar="+bar+"&limit=300"+(after?"&after="+after:"");
+          const url = BASE+"?instId="+encodeURIComponent(instId)+"&bar="+bar+"&limit=300"+(after?"&after="+after:"");
           const res = await fetch(url,{cache:"no-store",signal:controller.signal});
           if(!res.ok) throw Error("HTTP "+res.status);
           j = await res.json();
@@ -117,8 +121,10 @@
   }
   // Shared fixed-target backtest engine. Default exit is 5R; optional comparisons
   // may override the target R or choose a target by the market phase at entry.
-  function run(a, mult, feePct, slipPct, filterMode, entryMode="current", exitR=null, phaseExit=null, vpFilter=null, vpByMinute=null) {
+  function run(a, mult, feePct, slipPct, filterMode, entryMode="current", exitR=null, phaseExit=null, vpFilter=null, vpByMinute=null, riskPct=0.5, initialCapital=1000) {
     const trades=[];
+    riskPct=Math.max(0.01,Math.min(5,Number(riskPct)||0.5));
+    initialCapital=Math.max(10,Number(initialCapital)||1000);
     let pos=null, equity=0, peak=0, maxDD=0, grossTotal=0, feesTotal=0, slippageTotal=0;
     const feeRate=feePct/100, slipRate=slipPct/100, costRate=feeRate+slipRate;
 
@@ -193,7 +199,14 @@
       const dir=long?1:-1, risk=avSignal*mult, phase=marketPhase(a,i);
       const configuredR=phaseExit?(phaseExit[phase]??exitR):exitR;
       const targetR=Number.isFinite(configuredR)&&configuredR>0?configuredR:5;
-      pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,targetR,qty:100,phase,pnl:0};
+      // Size to riskPct of current simulated equity at the stop distance.
+      // Cap notional at available equity: no leverage is assumed in this first test.
+      const capitalNow=Math.max(0,initialCapital+equity);
+      if(!(capitalNow>0))continue;
+      const riskBudget=capitalNow*riskPct/100;
+      const qty=Math.min(capitalNow,riskBudget*entry/risk);
+      if(!(Number.isFinite(qty)&&qty>0))continue;
+      pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,targetR,qty,phase,pnl:0,riskBudget};
 
       // Entry and exit levels can both be crossed during the touch candle.
       // OHLC does not reveal sequence, so an initial stop takes precedence.
@@ -495,16 +508,21 @@
     finally{btn.disabled=false}
   });
   $("btRun").addEventListener("click",async()=>{
-    const btn=$("btRun");btn.disabled=true;$("btStatus").textContent="Загружаю закрытые свечи BTC-USDT…";$("btResults").innerHTML="";$("btTrades").innerHTML="";
+    const btn=$("btRun");btn.disabled=true;$("btStatus").textContent="Загружаю закрытые свечи "+$("btPair").value+"…";$("btResults").innerHTML="";$("btTrades").innerHTML="";
     try{
       const days=+$("btDays").value, mult=Math.max(.1,+$("btAtr").value||1.5), fee=Math.max(0,+$("btFee").value||0), slip=Math.max(0,+$("btSlip").value||0);
-      const candles=await getCandles(days);
-      if(candles.length<50)throw Error("Недостаточно исторических свечей");
-      const filterMode=$("btFilter").value; const r=run(candles,mult,fee,slip,filterMode), trades=r.trades;
-      const count=(fn)=>trades.filter(fn).length; const sum=(fn)=>trades.filter(fn).reduce((v,t)=>v+(t.pnl||0),0); const metrics=[["Закрытых сделок",trades.length],["Валовый результат",fmt(r.grossTotal)+" USDT"],["Комиссии",fmt(r.feesTotal)+" USDT"],["Проскальзывание",fmt(r.slippageTotal)+" USDT"],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor (валовый)",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["TP 5R",count(t=>String(t.why).startsWith("TP"))],["Стоп-лосс",count(t=>t.why==="SL")],["Закрыты по последней свече",count(t=>t.why==="END")],["Результат LONG",fmt(sum(t=>t.dir===1))+" USDT"],["Результат SHORT",fmt(sum(t=>t.dir===-1))+" USDT"],["Свечей",candles.length]];
+      const pair=$("btPair").value, capital=Math.max(10,+$("btCapital").value||1000), riskPct=0.5, vpFilter=$("btVpFilter").value;
+      const candles=await getCandles(days,"1m",pair);
+      const vpCandles=await getCandles(Math.min(15,days+1),"15m",pair);
+      if(candles.length<50)throw Error("Недостаточно исторических минутных свечей");
+      if(vpCandles.length<100)throw Error("Недостаточно 15m свечей для построения Volume Profile");
+      const vpByMinute=buildVPByMinute(candles,vpCandles);
+      const filterMode=$("btFilter").value;
+      const r=run(candles,mult,fee,slip,filterMode,"current",null,null,vpFilter,vpByMinute,riskPct,capital), trades=r.trades;
+      const count=(fn)=>trades.filter(fn).length; const sum=(fn)=>trades.filter(fn).reduce((v,t)=>v+(t.pnl||0),0); const metrics=[["Инструмент",pair],["Стартовый капитал",fmt(capital)+" USDT"],["Риск на сделку",fmt(riskPct)+"%"],["VP-фильтр",vpFilter==="poc"?"Направление от POC":"Отскок от VAL/VAH"],["Закрытых сделок",trades.length],["Валовый результат",fmt(r.grossTotal)+" USDT"],["Комиссии",fmt(r.feesTotal)+" USDT"],["Проскальзывание",fmt(r.slippageTotal)+" USDT"],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor (валовый)",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["TP 5R",count(t=>String(t.why).startsWith("TP"))],["Стоп-лосс",count(t=>t.why==="SL")],["Закрыты по последней свече",count(t=>t.why==="END")],["Результат LONG",fmt(sum(t=>t.dir===1))+" USDT"],["Результат SHORT",fmt(sum(t=>t.dir===-1))+" USDT"],["Свечей 1m",candles.length],["Свечей 15m для VP",vpCandles.length]];
       $("btResults").innerHTML=metrics.map(([k,v])=>'<div class="btmetric"><small>'+k+'</small><b>'+v+'</b></div>').join("");
       $("btTrades").innerHTML=trades.slice(-100).reverse().map(t=>'<tr><td>'+new Date(t.ts).toLocaleString("ru-RU")+'</td><td>'+((PHASE_LABELS[t.phase])||"Боковик")+'</td><td>'+(t.dir===1?"LONG":"SHORT")+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.exit||0)+' ('+t.why+')</td><td>'+fmt(t.pnl||0)+'</td></tr>').join("");
-      $("btStatus").textContent="Готово. Загружено "+candles.length+" закрытых свечей (цель: "+days*1440+"). Фильтр: "+(filterMode==="slope"?"наклон SMA21 за 5 свечей":"без фильтра")+". Последние 100 сделок показаны ниже.";
+      $("btStatus").textContent="Готово: "+pair+", "+candles.length+" закрытых свечей 1m и "+vpCandles.length+" свечей 15m. Риск 0,5% на сделку; VP-фильтр обязателен. Последние 100 сделок показаны ниже.";
     }catch(e){$("btStatus").textContent="Ошибка теста: "+(e.message||e)}
     finally{btn.disabled=false}
   });
