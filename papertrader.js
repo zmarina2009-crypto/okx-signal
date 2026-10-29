@@ -253,10 +253,13 @@
     const now=Date.now();
     root.innerHTML=pendingSignals.slice().sort((a,b)=>(Number(b.queuedAt)||0)-(Number(a.queuedAt)||0)).map(item=>{
       const m=item.meta||{},pair=String(m.pair||"").toUpperCase(),tf=tfNorm(m.tf),dir=m.direction==="LONG"?"LONG":"SHORT";
+      const signalEntry=Number(m.entryPrice)>0?Number(m.entryPrice):Number(m.price);
+      const draft=Number(item.entryDraft)>0?Number(item.entryDraft):signalEntry;
       const stale=now-(Number(m.ts)||0)>2*(TF_MS[tf]||60000);
       const enabled=cfg.enabled&&pair===String(cfg.pair).toUpperCase()&&tf===tfNorm(cfg.tf)&&!stale;
-      const reason=stale?"Сигнал устарел":pair!==String(cfg.pair).toUpperCase()||tf!==tfNorm(cfg.tf)?"Не совпадает текущая пара/TF":!cfg.enabled?"Тест на паузе":"Ожидает решения";
-      return '<div class="pt-pending-item"><div class="pt-pending-meta"><b>'+esc(pair)+' · '+esc(tf)+' · '+dir+'</b><br>'+esc(fmtKind(m.kind))+' · вход по сигналу '+fmt(Number(m.entryPrice)||Number(m.price)||0)+' · '+esc(stamp(m.ts))+'<br><span class="small">'+reason+'</span></div><div class="pt-pending-actions"><button type="button" class="confirm" data-pending-action="confirm" data-pending-id="'+esc(item.id)+'" '+(enabled?'':'disabled')+'>Подтвердить</button><button type="button" data-pending-action="skip" data-pending-id="'+esc(item.id)+'">Пропустить</button></div></div>';
+      const reason=stale?"Сигнал устарел":pair!==String(cfg.pair).toUpperCase()||tf!==tfNorm(cfg.tf)?"Не совпадает текущая пара/TF":!cfg.enabled?"Тест на паузе":"Проверь цену входа и подтверди";
+      const improved=dir==="LONG"?draft<signalEntry:draft>signalEntry;
+      return '<div class="pt-pending-item"><div class="pt-pending-meta"><b>'+esc(pair)+' · '+esc(tf)+' · '+dir+'</b><br>'+esc(fmtKind(m.kind))+' · цена сигнала '+fmt(signalEntry)+' · '+esc(stamp(m.ts))+'<br><label>Твоя цена входа <input type="number" min="0" step="any" inputmode="decimal" data-pending-entry="true" data-pending-id="'+esc(item.id)+'" value="'+esc(draft)+'" '+(stale?'disabled':'')+'></label><br><span class="small">'+reason+(improved?' · цена улучшена':draft===signalEntry?' · исходная цена':' · цена хуже исходной; проверь риск')+'</span></div><div class="pt-pending-actions"><button type="button" class="confirm" data-pending-action="confirm" data-pending-id="'+esc(item.id)+'" '+(enabled?'':'disabled')+'>Подтвердить</button><button type="button" data-pending-action="skip" data-pending-id="'+esc(item.id)+'">Пропустить</button></div></div>';
     }).join("")||'<div class="small">Пока нет сигналов на подтверждение.</div>';
   }
   async function volumeProfileAllows(meta){
@@ -580,6 +583,14 @@
     queueSignal(meta).catch(e=>{console.warn("Paper Trading VP filter",e);setStatus("Не удалось проверить VP перед подтверждением: "+String(e&&e.message||e))});
   }
   function wire(){
+    $("ptPending").addEventListener("input",ev=>{
+      const input=ev.target.closest('input[data-pending-entry="true"]');
+      if(!input)return;
+      const item=pendingSignals.find(x=>x.id===input.dataset.pendingId);
+      if(!item)return;
+      item.entryDraft=input.value;
+      savePending();
+    });
     $("ptPending").addEventListener("click",async ev=>{
       const btn=ev.target.closest("button[data-pending-action]");
       if(!btn)return;
@@ -600,13 +611,25 @@
         pendingSignals=pendingSignals.filter(x=>x.id!==item.id);savePending();render();
         setStatus("Подтверждение отменено: по этой паре и таймфрейму уже открыта виртуальная позиция.");return;
       }
+      const entryInput=Array.from($("ptPending").querySelectorAll('input[data-pending-entry="true"]')).find(el=>el.dataset.pendingId===item.id);
+      const chosenEntry=Number(entryInput&&entryInput.value);
+      if(!Number.isFinite(chosenEntry)||chosenEntry<=0){setStatus("Укажи корректную положительную цену входа.");entryInput&&entryInput.focus();return}
+      const adjustedMeta=Object.assign({},meta,{entryPrice:chosenEntry,price:chosenEntry});
       btn.disabled=true;
+      if(entryInput)entryInput.disabled=true;
       try{
-        const trade=await openTrade(meta);
+        const vp=await volumeProfileAllows(adjustedMeta);
+        if(!vp.allowed){
+          setStatus("Цена входа не проходит VP-фильтр: "+vp.reason+" Скорректируй цену или пропусти сигнал.");
+          renderPending();return;
+        }
+        item.entryDraft=chosenEntry;item.meta=Object.assign({},meta,{entryPrice:chosenEntry});
+        savePending();
+        const trade=await openTrade(adjustedMeta);
         if(trade||trades.some(t=>t.signalId===item.id)){
           pendingSignals=pendingSignals.filter(x=>x.id!==item.id);savePending();render();
         }else{renderPending()}
-      }catch(e){console.warn("Paper Trading confirm",e);setStatus("Не удалось открыть виртуальную сделку: "+String(e&&e.message||e));renderPending()}
+      }catch(e){console.warn("Paper Trading confirm",e);setStatus("Не удалось проверить VP или открыть виртуальную сделку: "+String(e&&e.message||e));renderPending()}
     });
     $("ptStart").onclick=async()=>{
       const wasEnabled=cfg.enabled;
