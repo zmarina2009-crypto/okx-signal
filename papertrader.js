@@ -152,7 +152,7 @@
       if(!payload)throw Error("Не удалось загрузить историю OKX: "+String(lastErr&&lastErr.message||"ошибка сети"));
       const rows=Array.isArray(payload.data)?payload.data:[];
       if(!rows.length){complete=lastOldest<=from;break}
-      const pageBars=rows.map(x=>({ts:Number(x[0]),o:Number(x[1]),h:Number(x[2]),l:Number(x[3]),c:Number(x[4]),v:Number(x[5]),confirm:String(x[8]??"1")}))
+      const pageBars=rows.map(x=>({ts:Number(x[0]),o:Number(x[1]),h:Number(x[2]),l:Number(x[3]),c:Number(x[4]),v:Number(x[5]),vpv:Number(x[7]??x[6]??x[5]??0),confirm:String(x[8]??"1")}))
         .filter(b=>Number.isFinite(b.ts)&&Number.isFinite(b.o)&&Number.isFinite(b.h)&&Number.isFinite(b.l)&&Number.isFinite(b.c));
       pageBars.filter(b=>b.confirm==="1").forEach(b=>found.set(b.ts,b));
       const oldest=Math.min(...pageBars.map(b=>b.ts));
@@ -259,7 +259,29 @@
       return '<div class="pt-pending-item"><div class="pt-pending-meta"><b>'+esc(pair)+' · '+esc(tf)+' · '+dir+'</b><br>'+esc(fmtKind(m.kind))+' · вход по сигналу '+fmt(Number(m.entryPrice)||Number(m.price)||0)+' · '+esc(stamp(m.ts))+'<br><span class="small">'+reason+'</span></div><div class="pt-pending-actions"><button type="button" class="confirm" data-pending-action="confirm" data-pending-id="'+esc(item.id)+'" '+(enabled?'':'disabled')+'>Подтвердить</button><button type="button" data-pending-action="skip" data-pending-id="'+esc(item.id)+'">Пропустить</button></div></div>';
     }).join("")||'<div class="small">Пока нет сигналов на подтверждение.</div>';
   }
-  function queueSignal(meta){
+  async function volumeProfileAllows(meta){
+    const pair=String(meta.pair||"").toUpperCase(),signalTs=Number(meta.ts)||Date.now(),tf=tfNorm(meta.tf);
+    const from=Math.max(0,signalTs-120*15*60*1000);
+    const result=await fetchHistory(pair,"15m",from);
+    const bars=(result.bars||[]).filter(b=>Number(b.ts)+15*60*1000<=signalTs).sort((a,b)=>a.ts-b.ts).slice(-96);
+    if(bars.length<96)return {allowed:false,reason:"Недостаточно закрытых 15m свечей для VP (нужно 96)."};
+    const rows=30,lo=Math.min(...bars.map(b=>b.l)),hi=Math.max(...bars.map(b=>b.h)),range=hi-lo;
+    if(!(range>0))return {allowed:false,reason:"Не удалось построить VP: нулевой диапазон цены."};
+    const bins=new Array(rows).fill(0);
+    for(const b of bars){
+      const typical=(b.h+b.l+b.c)/3,k=Math.max(0,Math.min(rows-1,Math.floor((typical-lo)/range*rows)));
+      bins[k]+=Math.max(0,Number(b.vpv??b.v)||0);
+    }
+    const total=bins.reduce((sum,v)=>sum+v,0),maxV=Math.max(...bins);
+    if(!(total>0&&maxV>0))return {allowed:false,reason:"Нет достаточного объёма для VP."};
+    const pocIndex=bins.indexOf(maxV),binWidth=range/rows,poc=lo+(pocIndex+.5)*binWidth;
+    const entry=Number(meta.entryPrice)>0?Number(meta.entryPrice):Number(meta.price);
+    if(!(entry>0))return {allowed:false,reason:"В сигнале отсутствует корректная цена."};
+    const nearPOC=Math.abs(entry-poc)<=binWidth;
+    const allowed=meta.direction==="LONG"?entry>poc&&!nearPOC:entry<poc&&!nearPOC;
+    return {allowed,reason:allowed?"VP подтверждает направление относительно POC.":"VP не подтверждает направление: цена не на нужной стороне POC или находится рядом с POC.",poc,binWidth};
+  }
+  async function queueSignal(meta){
     if(!meta||!cfg.enabled)return false;
     const pair=String(meta.pair||"").toUpperCase(),tf=tfNorm(meta.tf),kind=String(meta.kind||"").toLowerCase();
     if(pair!==String(cfg.pair).toUpperCase()||tf!==tfNorm(cfg.tf)||!kindAllowed(kind)||!["LONG","SHORT"].includes(meta.direction))return false;
@@ -271,8 +293,17 @@
     if(pendingSignals.some(x=>String(x.meta.pair).toUpperCase()===pair&&tfNorm(x.meta.tf)===tf))return false;
     const age=Date.now()-(Number(meta.ts)||0);
     if(age>2*(TF_MS[tf]||60000)){return false}
-    pendingSignals.push({id:signalId,meta,queuedAt:Date.now()});savePending();renderPending();
-    setStatus("Найден сигнал "+fmtKind(kind)+" "+pair+" / "+tf+" "+meta.direction+". Виртуальная сделка не открыта: ожидается твоё подтверждение.");
+    let vp;
+    try{vp=await volumeProfileAllows(meta)}catch(e){
+      setStatus("Не удалось проверить VP для "+pair+" / "+tf+": "+String(e&&e.message||e)+". Сигнал не поставлен в очередь.");
+      return false;
+    }
+    if(!vp.allowed){
+      setStatus("Сигнал "+pair+" / "+tf+" "+meta.direction+" отфильтрован Volume Profile. "+vp.reason);
+      return false;
+    }
+    pendingSignals.push({id:signalId,meta,queuedAt:Date.now(),vp:{poc:vp.poc,binWidth:vp.binWidth}});savePending();renderPending();
+    setStatus("SMA-сигнал "+pair+" / "+tf+" "+meta.direction+" прошёл VP-фильтр (POC "+fmt(vp.poc)+"). Виртуальная сделка не открыта: ожидается твоё подтверждение.");
     return true;
   }
   function render(){
@@ -497,7 +528,7 @@
           if(!kindAllowed(sig.kind))continue;
           if(trades.some(t=>t.status==="OPEN"&&String(t.pair).toUpperCase()===pair&&tfNorm(t.tf)===tf))break;
           const before=pendingSignals.length;
-          if(queueSignal(sig)&&pendingSignals.length>before)created++;
+          if(await queueSignal(sig)&&pendingSignals.length>before)created++;
         }
       }
       // Also recover any open positions on a different pair/timeframe retained in the journal.
@@ -546,7 +577,7 @@
     const pair=String(meta.pair||"").toUpperCase(),tf=tfNorm(meta.tf);
     if(pair!==String(cfg.pair).toUpperCase()||tf!==tfNorm(cfg.tf)||!kindAllowed(meta.kind))return;
     if(!["LONG","SHORT"].includes(meta.direction)){return}
-    queueSignal(meta);
+    queueSignal(meta).catch(e=>{console.warn("Paper Trading VP filter",e);setStatus("Не удалось проверить VP перед подтверждением: "+String(e&&e.message||e))});
   }
   function wire(){
     $("ptPending").addEventListener("click",async ev=>{
