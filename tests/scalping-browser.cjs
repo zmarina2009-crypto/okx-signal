@@ -20,7 +20,7 @@ async function waitForStatus(page, expectedText, timeout = 240000) {
     ({ expectedText }) => {
       const el = document.getElementById("btStatus");
       const text = el?.textContent || "";
-      return text.includes(expectedText) || /^(Ошибка теста|Ошибка сравнения|Ошибка адаптивного сравнения|Ошибка анализа фаз)/.test(text);
+      return text.includes(expectedText) || /^Ошибка/.test(text);
     },
     { expectedText },
     { timeout }
