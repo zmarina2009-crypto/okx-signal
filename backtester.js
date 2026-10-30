@@ -158,10 +158,10 @@
         // a limit target keeps its target-price fill.
         const stopHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
         if(stopHit) {
-          const gapFill=pos.dir===1?Math.min(pos.stop,x.o):Math.max(pos.stop,x.o);
+          const gapFill=BacktestMath.stopFill(pos.stop,x.o,pos.dir);
           close(gapFill,pos.beMoved?"BE":"SL",x.ts); continue;
         }
-        const target=pos.entry+pos.dir*pos.targetR*pos.risk;
+        const target=BacktestMath.targetPrice(pos.entry,pos.dir,pos.risk,pos.targetR);
         const targetHit=pos.dir===1?x.h>=target:x.l<=target;
         if(targetHit) { close(target,"TP"+pos.targetR+"R",x.ts); continue; }
 
@@ -171,9 +171,7 @@
         const beTrigger=pos.entry+pos.dir*pos.risk;
         const beHit=pos.dir===1?x.h>=beTrigger:x.l<=beTrigger;
         if(!pos.beMoved && beHit) {
-          pos.stop=pos.dir===1
-            ? pos.entry*(1+costRate)/(1-costRate)
-            : pos.entry*(1-costRate)/(1+costRate);
+          pos.stop=BacktestMath.breakevenPrice(pos.entry,pos.dir,costRate);
           pos.beMoved=true;
           const beStopHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
           if(beStopHit) { close(pos.stop,"BE",x.ts); continue; }
