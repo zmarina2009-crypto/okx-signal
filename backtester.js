@@ -28,11 +28,11 @@
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
       <div><label for="btVpFilter">Обязательный VP-фильтр</label><select id="btVpFilter"><option value="poc" selected>Направление относительно POC</option><option value="value-area">Отскок от VAL / VAH</option></select></div>
     </div>
-    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить VP-фильтры 15m</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; отдельное сравнение: BE после +1R и ATR-трейлинг</span></div>
+    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить VP-фильтры 15m</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; стоп переносится в безубыток после +1R</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
     <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
     <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Фаза</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
-    <div class="small" style="margin-top:8px">Размер позиции рассчитывается под риск 0,5% текущего капитала до стопа, с ограничением номинала размером капитала (без кредитного плеча). Комиссии и проскальзывание вычитаются отдельно. Если стоп и тейк затронуты одной минутной свечой, первым считается стоп. Это исследовательский тест, не прогноз доходности.</div>`;
+    <div class="small" style="margin-top:8px">Размер позиции рассчитывается под риск 0,5% текущего капитала до стопа, с ограничением номинала размером капитала (без кредитного плеча). Комиссии и проскальзывание вычитаются отдельно. Если стоп и тейк затронуты одной минутной свечой, первым считается стоп. После +1R стоп переносится на цену входа с поправкой на комиссию и проскальзывание. При гэпе через стоп учитывается цена открытия. Это исследовательский тест, не прогноз доходности.</div>`;
   const anchor = document.querySelector("footer");
   if (anchor) anchor.parentNode.insertBefore(panel, anchor);
   const $ = id => document.getElementById(id);
@@ -153,13 +153,31 @@
     for(let i=30;i<a.length;i++) {
       const x=a[i], prev=a[i-1], mPrev=sma(a,i-1,21), avPrev=atr(a,i-1,14);
       if(pos) {
-        // Both levels can be crossed in one OHLC candle; resolve conservatively:
-        // stop first, then target.
+        // Previously active stop/target levels are checked first. A stop crossed
+        // by a candle opening beyond it is filled at the open (gap risk);
+        // a limit target keeps its target-price fill.
         const stopHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
-        if(stopHit) { close(pos.stop,"SL",x.ts); continue; }
+        if(stopHit) {
+          const gapFill=pos.dir===1?Math.min(pos.stop,x.o):Math.max(pos.stop,x.o);
+          close(gapFill,pos.beMoved?"BE":"SL",x.ts); continue;
+        }
         const target=pos.entry+pos.dir*pos.targetR*pos.risk;
         const targetHit=pos.dir===1?x.h>=target:x.l<=target;
         if(targetHit) { close(target,"TP"+pos.targetR+"R",x.ts); continue; }
+
+        // Move the stop after +1R, adjusted to cover estimated round-trip
+        // commission and slippage. If the trigger and return through the new
+        // stop occur in the same OHLC candle, assume the conservative BE exit.
+        const beTrigger=pos.entry+pos.dir*pos.risk;
+        const beHit=pos.dir===1?x.h>=beTrigger:x.l<=beTrigger;
+        if(!pos.beMoved && beHit) {
+          pos.stop=pos.dir===1
+            ? pos.entry*(1+costRate)/(1-costRate)
+            : pos.entry*(1-costRate)/(1+costRate);
+          pos.beMoved=true;
+          const beStopHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
+          if(beStopHit) { close(pos.stop,"BE",x.ts); continue; }
+        }
 
         const mark=pos.dir===1?x.l:x.h;
         const unrealized=(mark-pos.entry)*pos.dir*pos.qty/pos.entry;
@@ -217,7 +235,7 @@
       const lossPerNotional=risk/entry+(1+stop/entry)*costRate;
       const qty=Math.min(capitalNow,riskBudget/lossPerNotional);
       if(!(Number.isFinite(qty)&&qty>0))continue;
-      pos={ts:x.ts,dir,entry,stop,risk,targetR,qty,phase,pnl:0,riskBudget};
+      pos={ts:x.ts,dir,entry,stop,risk,targetR,qty,phase,pnl:0,riskBudget,beMoved:false};
 
       // The signal is confirmed only after candle x closes, and entry is x.c.
       // Do not inspect x.high/x.low for exits after this entry: those extremes
@@ -540,7 +558,7 @@
       const vpByMinute=buildVPByMinute(candles,vpCandles);
       const filterMode=$("btFilter").value;
       const r=run(candles,mult,fee,slip,filterMode,"current",null,null,vpFilter,vpByMinute,riskPct,capital), trades=r.trades;
-      const count=(fn)=>trades.filter(fn).length; const sum=(fn)=>trades.filter(fn).reduce((v,t)=>v+(t.pnl||0),0); const metrics=[["Инструмент",pair],["Стартовый капитал",fmt(capital)+" USDT"],["Риск на сделку",fmt(riskPct)+"%"],["VP-фильтр",vpFilter==="poc"?"Направление от POC":"Отскок от VAL/VAH"],["Закрытых сделок",trades.length],["Валовый результат",fmt(r.grossTotal)+" USDT"],["Комиссии",fmt(r.feesTotal)+" USDT"],["Проскальзывание",fmt(r.slippageTotal)+" USDT"],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor (валовый)",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["TP 5R",count(t=>String(t.why).startsWith("TP"))],["Стоп-лосс",count(t=>t.why==="SL")],["Закрыты по последней свече",count(t=>t.why==="END")],["Результат LONG",fmt(sum(t=>t.dir===1))+" USDT"],["Результат SHORT",fmt(sum(t=>t.dir===-1))+" USDT"],["Свечей 1m",candles.length],["Свечей 15m для VP",vpCandles.length]];
+      const count=(fn)=>trades.filter(fn).length; const sum=(fn)=>trades.filter(fn).reduce((v,t)=>v+(t.pnl||0),0); const metrics=[["Инструмент",pair],["Стартовый капитал",fmt(capital)+" USDT"],["Риск на сделку",fmt(riskPct)+"%"],["VP-фильтр",vpFilter==="poc"?"Направление от POC":"Отскок от VAL/VAH"],["Закрытых сделок",trades.length],["Валовый результат",fmt(r.grossTotal)+" USDT"],["Комиссии",fmt(r.feesTotal)+" USDT"],["Проскальзывание",fmt(r.slippageTotal)+" USDT"],["Чистый результат",fmt(r.net)+" USDT"],["Win rate",fmt(trades.length?100*r.wins/trades.length:0)+"%"],["Макс. просадка",fmt(r.maxDD)+" USDT"],["Profit Factor (валовый)",r.grossLoss>0?fmt(r.grossWin/r.grossLoss):(r.grossWin>0?"∞":"—")],["TP 5R",count(t=>String(t.why).startsWith("TP"))],["Стоп-лосс",count(t=>t.why==="SL")],["Безубыток после +1R",count(t=>t.why==="BE")],["Закрыты по последней свече",count(t=>t.why==="END")],["Результат LONG",fmt(sum(t=>t.dir===1))+" USDT"],["Результат SHORT",fmt(sum(t=>t.dir===-1))+" USDT"],["Свечей 1m",candles.length],["Свечей 15m для VP",vpCandles.length]];
       $("btResults").innerHTML=metrics.map(([k,v])=>'<div class="btmetric"><small>'+k+'</small><b>'+v+'</b></div>').join("");
       $("btTrades").innerHTML=trades.slice(-100).reverse().map(t=>'<tr><td>'+new Date(t.ts).toLocaleString("ru-RU")+'</td><td>'+((PHASE_LABELS[t.phase])||"Боковик")+'</td><td>'+(t.dir===1?"LONG":"SHORT")+'</td><td>'+fmt(t.entry)+'</td><td>'+fmt(t.stop)+'</td><td>'+fmt(t.exit||0)+' ('+t.why+')</td><td>'+fmt(t.pnl||0)+'</td></tr>').join("");
       $("btStatus").textContent="Готово: "+pair+", "+candles.length+" закрытых свечей 1m и "+vpCandles.length+" свечей 15m. Риск 0,5% на сделку; VP-фильтр обязателен. Последние 100 сделок показаны ниже.";
