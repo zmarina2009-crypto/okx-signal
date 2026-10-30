@@ -230,8 +230,7 @@
       const riskBudget=capitalNow*riskPct/100;
       const stop=entry-dir*risk;
       // Include estimated round-trip fees and slippage in the risk budget.
-      const lossPerNotional=risk/entry+(1+stop/entry)*costRate;
-      const qty=Math.min(capitalNow,riskBudget/lossPerNotional);
+      const qty=BacktestMath.positionSize({capital:capitalNow,riskPct,entry,stop,costRate});
       if(!(Number.isFinite(qty)&&qty>0))continue;
       pos={ts:x.ts,dir,entry,stop,risk,targetR,qty,phase,pnl:0,riskBudget,beMoved:false};
 
@@ -460,8 +459,7 @@
       const capitalNow=Math.max(0,initialCapital+equity);
       if(!(capitalNow>0))continue;
       const riskBudget=capitalNow*riskPct/100, stop=entry-dir*risk;
-      const lossPerNotional=risk/entry+(1+stop/entry)*costRate;
-      const qty=Math.min(capitalNow,riskBudget/lossPerNotional);
+      const qty=BacktestMath.positionSize({capital:capitalNow,riskPct,entry,stop,costRate});
       if(!(Number.isFinite(qty)&&qty>0))continue;
       pos={ts:x.ts,dir,entry,stop,risk,qty,pnl:0,activated:false,best:entry,entryIndex:i,stopIsBE:false};
     }
