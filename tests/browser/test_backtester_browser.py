@@ -120,7 +120,7 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
         for button_id, expected_status, result_id in comparisons:
             with self.subTest(button=button_id):
                 status = self.wait_for_action(button_id, expected_status)
-                self.assertRegex(status, r"\d+ (?:закрытых )?свечей 1m")
+                self.assertRegex(status, r"\d+ закрытых (?:минутных )?свеч")
                 if button_id == "btCompare":
                     self.assertRegex(status, r"\d+ (?:закрытых )?свечей 15m")
                 result = self.page.locator(f"#{result_id}")
