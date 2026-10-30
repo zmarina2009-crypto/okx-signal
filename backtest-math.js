@@ -9,8 +9,7 @@
     return dir===1 ? Math.min(stop,open) : Math.max(stop,open);
   }
   function positionSize({capital,riskPct,entry,stop,costRate}){
-    if(!(capital>0&&entry>0&&stop>0&&riskPct>0)||![1].includes(1)||
-       !Number.isFinite(costRate)||costRate<0||costRate>=1) return 0;
+    if(!(capital>0&&entry>0&&stop>0&&riskPct>0)||!Number.isFinite(costRate)||costRate<0||costRate>=1) return 0;
     const distance=Math.abs(entry-stop);
     const lossPerNotional=distance/entry+(1+stop/entry)*costRate;
     if(!(lossPerNotional>0)) return 0;
