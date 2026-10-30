@@ -404,9 +404,7 @@
             pos.activated=true;
             pos.stopIsBE=true;
             // Price adjusted so estimated round-trip fees and slippage are covered.
-            pos.stop=pos.dir===1
-              ? pos.entry*(1+costRate)/(1-costRate)
-              : pos.entry*(1-costRate)/(1+costRate);
+            pos.stop=BacktestMath.breakevenPrice(pos.entry,pos.dir,costRate);
             // If +1R and the cost-adjusted BE level are both crossed in this
             // candle, OHLC cannot reveal order; conservatively count BE exit.
             const beTouched=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
