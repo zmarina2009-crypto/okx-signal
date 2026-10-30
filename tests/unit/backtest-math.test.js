@@ -38,3 +38,33 @@ test("invalid inputs are rejected or produce zero size",()=>{
   assert.throws(()=>stopFill(100,101,0),RangeError);
   assert.equal(positionSize({capital:0,riskPct:.5,entry:100,stop:98,costRate:.001}),0);
 });
+
+const {atr,firstExitIndex,intrabarExit,closedCandles}=require("../../backtest-math.js");
+
+test("ATR uses only the selected candle and prior close values",()=>{
+  const candles=[
+    {h:11,l:9,c:10},
+    {h:13,l:9,c:11},
+    {h:14,l:10,c:12},
+    {h:1000,l:0,c:500}
+  ];
+  assert.equal(atr(candles,2,2),4);
+  assert.ok(Number.isNaN(atr(candles,1,2)));
+});
+
+test("a signal candle cannot be used for exit; first check is next candle",()=>{
+  assert.equal(firstExitIndex(25),26);
+});
+
+test("when stop and target are touched in one candle, stop wins conservatively",()=>{
+  assert.equal(intrabarExit({dir:1,low:95,high:110,stop:98,target:110}),"SL");
+  assert.equal(intrabarExit({dir:-1,low:90,high:105,stop:102,target:90}),"SL");
+  assert.equal(intrabarExit({dir:1,low:99,high:111,stop:98,target:110}),"TP");
+  assert.equal(intrabarExit({dir:1,low:99,high:105,stop:98,target:110}),null);
+});
+
+test("15m profile input excludes the still-open candle at the minute timestamp",()=>{
+  const bars=[{ts:0},{ts:900000},{ts:1800000}];
+  assert.deepEqual(closedCandles(bars,1799999,900000),[{ts:0}]);
+  assert.deepEqual(closedCandles(bars,1800000,900000),[{ts:0},{ts:900000}]);
+});
