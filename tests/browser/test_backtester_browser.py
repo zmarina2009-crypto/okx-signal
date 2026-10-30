@@ -99,8 +99,8 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
 
         main_status = self.wait_for_action("btRun", "Готово:")
         self.assertIn("ZEC-USDT-SWAP", main_status)
-        self.assertRegex(main_status, r"\d+ свечей 1m")
-        self.assertRegex(main_status, r"\d+ свечей 15m")
+        self.assertRegex(main_status, r"\d+ (?:закрытых )?свечей 1m")
+        self.assertRegex(main_status, r"\d+ (?:закрытых )?свечей 15m")
         self.assertGreater(
             self.page.locator("#btResults .btmetric").count(), 5,
             "The main backtest should render its metrics.",
@@ -120,9 +120,9 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
         for button_id, expected_status, result_id in comparisons:
             with self.subTest(button=button_id):
                 status = self.wait_for_action(button_id, expected_status)
-                self.assertRegex(status, r"\d+ свечей 1m")
+                self.assertRegex(status, r"\d+ (?:закрытых )?свечей 1m")
                 if button_id == "btCompare":
-                    self.assertRegex(status, r"\d+ свечей 15m")
+                    self.assertRegex(status, r"\d+ (?:закрытых )?свечей 15m")
                 result = self.page.locator(f"#{result_id}")
                 self.assertTrue(result.inner_text().strip(), f"{button_id} returned no visible comparison table")
 
