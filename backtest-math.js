@@ -20,7 +20,29 @@
     if(!(entry>0&&risk>0&&targetR>0)||![1,-1].includes(dir)) throw new RangeError("Invalid target inputs");
     return entry+dir*risk*targetR;
   }
-  const api={breakevenPrice,stopFill,positionSize,targetPrice};
+  function atr(candles,index,period=14){
+    if(!Array.isArray(candles)||!Number.isInteger(index)||!Number.isInteger(period)||period<1||index<period)return NaN;
+    let sum=0;
+    for(let i=index-period+1;i<=index;i++){
+      const prev=candles[i-1]?.c, cur=candles[i];
+      if(!Number.isFinite(prev)||!Number.isFinite(cur?.h)||!Number.isFinite(cur?.l))return NaN;
+      sum+=Math.max(cur.h-cur.l,Math.abs(cur.h-prev),Math.abs(cur.l-prev));
+    }
+    return sum/period;
+  }
+  function firstExitIndex(signalIndex){return signalIndex+1;}
+  function intrabarExit({dir,low,high,stop,target}){
+    if(![1,-1].includes(dir))throw new RangeError("Invalid direction");
+    const stopHit=dir===1?low<=stop:high>=stop;
+    if(stopHit)return "SL";
+    const targetHit=dir===1?high>=target:low<=target;
+    return targetHit?"TP":null;
+  }
+  function closedCandles(candles,atTimestamp,durationMs){
+    if(!Array.isArray(candles)||!Number.isFinite(atTimestamp)||!(durationMs>0))return [];
+    return candles.filter(c=>Number.isFinite(c?.ts)&&c.ts+durationMs<=atTimestamp);
+  }
+  const api={breakevenPrice,stopFill,positionSize,targetPrice,atr,firstExitIndex,intrabarExit,closedCandles};
   if(typeof module!=="undefined"&&module.exports) module.exports=api;
   root.BacktestMath=api;
 })(typeof globalThis!=="undefined"?globalThis:this);
