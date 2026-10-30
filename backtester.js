@@ -76,7 +76,7 @@
     return [...all.values()].sort((a,b)=>a.ts-b.ts).slice(-target);
   }
   function sma(a,i,n){if(i+1<n)return NaN;let s=0;for(let k=i-n+1;k<=i;k++)s+=a[k].c;return s/n}
-  function atr(a,i,n=14){if(i<n)return NaN;let sum=0;for(let k=i-n+1;k<=i;k++){const p=a[k-1]?.c;if(!Number.isFinite(p))return NaN;sum+=Math.max(a[k].h-a[k].l,Math.abs(a[k].h-p),Math.abs(a[k].l-p))}return sum/n}
+  function atr(a,i,n=14){return BacktestMath.atr(a,i,n)}
   const PHASE_LABELS={up:"Тренд ↑",down:"Тренд ↓",range:"Боковик"};
   // Build a causal 15m Volume Profile for each 1m candle timestamp.
   // Profile uses the last 96 fully closed 15m candles (rolling 24h), 30 bins,
@@ -86,6 +86,7 @@
     const rows=30, lookback=96, quarterHour=15*60*1000;
     for(const m of minuteCandles){
       while(j<fifteenCandles.length && fifteenCandles[j].ts+quarterHour<=m.ts) j++;
+      // Only bars whose full 15m interval ended by this minute timestamp are eligible.
       const end=j, start=Math.max(0,end-lookback), history=fifteenCandles.slice(start,end);
       if(history.length<lookback) continue;
       const lo=Math.min(...history.map(x=>x.l)), hi=Math.max(...history.map(x=>x.h)), range=hi-lo;
