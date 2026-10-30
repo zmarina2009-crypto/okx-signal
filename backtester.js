@@ -139,11 +139,8 @@
 
     function close(price, why, bar) {
       const qty=pos.qty, dir=pos.dir;
-      const raw=(price-pos.entry)*dir*qty/pos.entry;
-      const entryNotional=qty, exitNotional=price*qty/pos.entry;
-      const fees=(entryNotional+exitNotional)*feeRate;
-      const slippage=(entryNotional+exitNotional)*slipRate;
-      const pnl=raw-fees-slippage;
+      const accounting=BacktestMath.calculateTradePnl({entry:pos.entry,exit:price,dir,qty,feeRate,slipRate});
+      const {gross:raw,fees,slippage,net:pnl}=accounting;
       pos.pnl=pnl; pos.gross=raw; pos.fees=fees; pos.slippage=slippage;
       pos.exit=price; pos.why=why; pos.lastBar=bar;
       grossTotal+=raw; feesTotal+=fees; slippageTotal+=slippage;
@@ -158,25 +155,11 @@
         // Previously active stop/target levels are checked first. A stop crossed
         // by a candle opening beyond it is filled at the open (gap risk);
         // a limit target keeps its target-price fill.
-        const target=BacktestMath.targetPrice(pos.entry,pos.dir,pos.risk,pos.targetR);
-        const exitType=BacktestMath.intrabarExit({dir:pos.dir,low:x.l,high:x.h,stop:pos.stop,target});
-        if(exitType==="SL") {
-          const gapFill=BacktestMath.stopFill(pos.stop,x.o,pos.dir);
-          close(gapFill,pos.beMoved?"BE":"SL",x.ts); continue;
-        }
-        if(exitType==="TP") { close(target,"TP"+pos.targetR+"R",x.ts); continue; }
-
-        // Move the stop after +1R, adjusted to cover estimated round-trip
-        // commission and slippage. If the trigger and return through the new
-        // stop occur in the same OHLC candle, assume the conservative BE exit.
-        const beTrigger=pos.entry+pos.dir*pos.risk;
-        const beHit=pos.dir===1?x.h>=beTrigger:x.l<=beTrigger;
-        if(!pos.beMoved && beHit) {
-          pos.stop=BacktestMath.breakevenPrice(pos.entry,pos.dir,costRate);
-          pos.beMoved=true;
-          const beStopHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
-          if(beStopHit) { close(pos.stop,"BE",x.ts); continue; }
-        }
+        // Advance one fully formed OHLC candle through the same lifecycle
+        // function exercised by deterministic synthetic-candle unit tests.
+        const advanced=BacktestMath.advancePosition(pos,x,costRate);
+        if(advanced.exit) { close(advanced.exit.price,advanced.exit.reason==="TP"?"TP"+pos.targetR+"R":advanced.exit.reason,x.ts); continue; }
+        pos=advanced.position;
 
         const mark=pos.dir===1?x.l:x.h;
         const unrealized=(mark-pos.entry)*pos.dir*pos.qty/pos.entry;
