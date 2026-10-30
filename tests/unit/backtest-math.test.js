@@ -1,7 +1,7 @@
 "use strict";
 const test=require("node:test");
 const assert=require("node:assert/strict");
-const {breakevenPrice,stopFill,positionSize,targetPrice}=require("../backtest-math.js");
+const {breakevenPrice,stopFill,positionSize,targetPrice}=require("../../backtest-math.js");
 
 test("position sizing risks 0.5% including round-trip costs and caps notional",()=>{
   const capital=1000, entry=100, stop=98, costRate=.001;
