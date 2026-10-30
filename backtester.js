@@ -154,17 +154,17 @@
     for(let i=30;i<a.length;i++) {
       const x=a[i], prev=a[i-1], mPrev=sma(a,i-1,21), avPrev=atr(a,i-1,14);
       if(pos) {
+        if(i<pos.firstExitIndex) continue;
         // Previously active stop/target levels are checked first. A stop crossed
         // by a candle opening beyond it is filled at the open (gap risk);
         // a limit target keeps its target-price fill.
-        const stopHit=pos.dir===1?x.l<=pos.stop:x.h>=pos.stop;
-        if(stopHit) {
+        const target=BacktestMath.targetPrice(pos.entry,pos.dir,pos.risk,pos.targetR);
+        const exitType=BacktestMath.intrabarExit({dir:pos.dir,low:x.l,high:x.h,stop:pos.stop,target});
+        if(exitType==="SL") {
           const gapFill=BacktestMath.stopFill(pos.stop,x.o,pos.dir);
           close(gapFill,pos.beMoved?"BE":"SL",x.ts); continue;
         }
-        const target=BacktestMath.targetPrice(pos.entry,pos.dir,pos.risk,pos.targetR);
-        const targetHit=pos.dir===1?x.h>=target:x.l<=target;
-        if(targetHit) { close(target,"TP"+pos.targetR+"R",x.ts); continue; }
+        if(exitType==="TP") { close(target,"TP"+pos.targetR+"R",x.ts); continue; }
 
         // Move the stop after +1R, adjusted to cover estimated round-trip
         // commission and slippage. If the trigger and return through the new
@@ -233,7 +233,7 @@
       // Include estimated round-trip fees and slippage in the risk budget.
       const qty=BacktestMath.positionSize({capital:capitalNow,riskPct,entry,stop,costRate});
       if(!(Number.isFinite(qty)&&qty>0))continue;
-      pos={ts:x.ts,dir,entry,stop,risk,targetR,qty,phase,pnl:0,riskBudget,beMoved:false};
+      pos={ts:x.ts,dir,entry,stop,risk,targetR,qty,phase,pnl:0,riskBudget,beMoved:false,firstExitIndex:BacktestMath.firstExitIndex(i)};
 
       // The signal is confirmed only after candle x closes, and entry is x.c.
       // Do not inspect x.high/x.low for exits after this entry: those extremes
