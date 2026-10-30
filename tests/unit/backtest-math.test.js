@@ -68,3 +68,48 @@ test("15m profile input excludes the still-open candle at the minute timestamp",
   assert.deepEqual(closedCandles(bars,1799999,900000),[{ts:0}]);
   assert.deepEqual(closedCandles(bars,1800000,900000),[{ts:0},{ts:900000}]);
 });
+
+const {advancePosition,calculateTradePnl}=require("../../backtest-math.js");
+
+function syntheticPosition(overrides={}) {
+  return {entry:100,dir:1,risk:2,stop:98,targetR:5,beMoved:false,qty:100,...overrides};
+}
+
+test("synthetic long trade: +1R moves stop to cost-adjusted breakeven, next candle exits there",()=>{
+  const costRate=.001;
+  const afterTrigger=advancePosition(syntheticPosition(),{o:100.5,h:102.2,l:100.5,c:101.8},costRate);
+  assert.equal(afterTrigger.exit,null);
+  assert.equal(afterTrigger.position.beMoved,true);
+  assert.ok(afterTrigger.position.stop>100);
+  const afterReturn=advancePosition(afterTrigger.position,{o:101.5,h:101.7,l:100.1,c:100.4},costRate);
+  assert.equal(afterReturn.exit.reason,"BE");
+  assert.equal(afterReturn.exit.price,afterTrigger.position.stop);
+  const pnl=calculateTradePnl({entry:100,exit:afterReturn.exit.price,dir:1,qty:100,feeRate:.0005,slipRate:.0005});
+  assert.ok(Math.abs(pnl.net)<1e-10,"cost-adjusted BE should approximately break even net of costs");
+});
+
+test("synthetic long trade: initial stop and gap through stop use adverse open",()=>{
+  const normal=advancePosition(syntheticPosition(),{o:99,h:100,l:97.5,c:98.5},.001);
+  assert.deepEqual(normal.exit,{price:98,reason:"SL"});
+  const gap=advancePosition(syntheticPosition(),{o:96,h:97,l:94,c:95},.001);
+  assert.deepEqual(gap.exit,{price:96,reason:"SL"});
+});
+
+test("synthetic long trade: target exits at 5R and costs are deducted",()=>{
+  const result=advancePosition(syntheticPosition(),{o:103,h:110.5,l:102.5,c:109.5},.001);
+  assert.deepEqual(result.exit,{price:110,reason:"TP"});
+  const pnl=calculateTradePnl({entry:100,exit:110,dir:1,qty:100,feeRate:.0005,slipRate:.0005});
+  assert.ok(pnl.gross>0&&pnl.fees>0&&pnl.slippage>0&&pnl.net<pnl.gross);
+  assert.equal(pnl.gross,10);
+});
+
+test("synthetic short trade: +1R BE move and adverse gap are mirrored",()=>{
+  const costRate=.001;
+  const moved=advancePosition(syntheticPosition({dir:-1,stop:102}),{o:99.5,h:99.5,l:97.8,c:98.2},costRate);
+  assert.equal(moved.position.beMoved,true);
+  assert.ok(moved.position.stop<100);
+  const returned=advancePosition(moved.position,{o:98.5,h:99.9,l:98.3,c:99.5},costRate);
+  assert.equal(returned.exit.reason,"BE");
+  const gap=advancePosition(syntheticPosition({dir:-1,stop:102}),{o:105,h:107,l:104,c:106},costRate);
+  assert.deepEqual(gap.exit,{price:105,reason:"SL"});
+});
