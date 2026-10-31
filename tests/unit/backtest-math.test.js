@@ -113,3 +113,39 @@ test("synthetic short trade: +1R BE move and adverse gap are mirrored",()=>{
   const gap=advancePosition(syntheticPosition({dir:-1,stop:102}),{o:105,h:107,l:104,c:106},costRate);
   assert.deepEqual(gap.exit,{price:105,reason:"SL"});
 });
+
+const {positionSize: sizeForRisk}=require("../../backtest-math.js");
+
+test("position sizing produces exactly 0.5% net loss at the planned stop for LONG and SHORT",()=>{
+  const capital=1000, entry=100, riskPct=.5, feeRate=.0005, slipRate=.0002;
+  const costRate=feeRate+slipRate, budget=capital*riskPct/100;
+  for(const {dir,stop} of [{dir:1,stop:98},{dir:-1,stop:102}]){
+    const notional=sizeForRisk({capital,riskPct,entry,stop,costRate});
+    const pnl=calculateTradePnl({entry,exit:stop,dir,qty:notional,feeRate,slipRate});
+    assert.ok(notional>0&&notional<=capital);
+    assert.ok(Math.abs(pnl.net+budget)<1e-9,
+      `${dir===1?"LONG":"SHORT"} planned-stop loss should equal ${budget} USDT, got ${pnl.net}`);
+  }
+});
+
+test("position sizing never exceeds available equity and may risk less when the notional cap binds",()=>{
+  const capital=100, entry=100, stop=99.9;
+  const notional=sizeForRisk({capital,riskPct:.5,entry,stop,costRate:0});
+  assert.equal(notional,capital);
+  const pnl=calculateTradePnl({entry,exit:stop,dir:1,qty:notional,feeRate:0,slipRate:0});
+  assert.ok(Math.abs(pnl.net)<capital*.005);
+});
+
+test("position sizing rejects non-finite inputs",()=>{
+  assert.equal(sizeForRisk({capital:Infinity,riskPct:.5,entry:100,stop:98,costRate:.001}),0);
+  assert.equal(sizeForRisk({capital:1000,riskPct:.5,entry:100,stop:98,costRate:NaN}),0);
+});
+
+test("a gap through the planned stop can exceed the 0.5% risk budget",()=>{
+  const capital=1000, entry=100, stop=98, feeRate=.0005, slipRate=.0002;
+  const qty=sizeForRisk({capital,riskPct:.5,entry,stop,costRate:feeRate+slipRate});
+  const gapFill=95;
+  const pnl=calculateTradePnl({entry,exit:gapFill,dir:1,qty,feeRate,slipRate});
+  assert.ok(pnl.net < -(capital*.005),
+    "gap loss should be greater than the planned stop-risk budget");
+});
