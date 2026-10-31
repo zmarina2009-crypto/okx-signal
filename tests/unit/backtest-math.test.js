@@ -149,3 +149,54 @@ test("a gap through the planned stop can exceed the 0.5% risk budget",()=>{
   assert.ok(pnl.net < -(capital*.005),
     "gap loss should be greater than the planned stop-risk budget");
 });
+
+const {volumeProfile,buildVolumeProfilesByMinute}=require("../../backtest-math.js");
+
+test("synthetic Volume Profile selects POC and 70% value area from typical-price volume bins",()=>{
+  const bars=[
+    {l:0,h:3,c:1,v:4},
+    {l:10,h:20,c:15,v:3},
+    {l:27,h:30,c:29,v:10}
+  ];
+  const profile=volumeProfile(bars,3);
+  assert.deepEqual(profile,{poc:25,val:10,vah:30,binWidth:10});
+});
+
+test("Volume Profile excludes a 15m candle until the signal 1m candle has closed",()=>{
+  const quarter=15*60*1000, minute=60*1000;
+  const bars=Array.from({length:96},(_,i)=>({
+    ts:i*quarter,l:99,h:101,c:100,v:1
+  }));
+  const stillOpen15m={ts:96*quarter,l:10000,h:20000,c:15000,v:1e9};
+  // The 1m signal candle opens two minutes before the 15m close;
+  // its close is still one minute before that 15m candle finishes.
+  const tooEarlyMinute={ts:96*quarter-2*minute};
+  const tooEarly=buildVolumeProfilesByMinute([tooEarlyMinute],[...bars,stillOpen15m]);
+  assert.equal(tooEarly.has(tooEarlyMinute.ts),false);
+
+  // One minute later, the signal candle closes exactly when the 15m bar closes.
+  const exactCloseMinute={ts:96*quarter-minute};
+  const withoutFuture=buildVolumeProfilesByMinute([exactCloseMinute],bars);
+  const withStillOpen=buildVolumeProfilesByMinute([exactCloseMinute],[...bars,stillOpen15m]);
+  assert.equal(withoutFuture.has(exactCloseMinute.ts),true);
+  assert.deepEqual(withStillOpen.get(exactCloseMinute.ts),withoutFuture.get(exactCloseMinute.ts));
+  assert.ok(withStillOpen.get(exactCloseMinute.ts).poc<1000,
+    "the high-volume future candle must not move POC into its price range");
+});
+
+test("rolling Volume Profile uses only the latest configured number of fully closed 15m bars",()=>{
+  const quarter=15*60*1000, minute=60*1000;
+  const bars=Array.from({length:98},(_,i)=>({
+    ts:i*quarter,l:99,h:101,c:100,v:i===0?1e6:1
+  }));
+  const signal={ts:97*quarter-minute};
+  const profile=buildVolumeProfilesByMinute([signal],bars,{lookback:96});
+  assert.equal(profile.has(signal.ts),true);
+  const expected=volumeProfile(bars.slice(2,98),30);
+  assert.deepEqual(profile.get(signal.ts),expected);
+});
+
+test("Volume Profile returns no profile for zero-range or zero-volume history",()=>{
+  assert.equal(volumeProfile([{l:10,h:10,c:10,v:5}],30),null);
+  assert.equal(volumeProfile([{l:10,h:20,c:15,v:0}],30),null);
+});
