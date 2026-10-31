@@ -28,9 +28,9 @@
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
       <div><label for="btVpFilter">Обязательный VP-фильтр</label><select id="btVpFilter"><option value="poc" selected>Направление относительно POC</option><option value="value-area">Отскок от VAL / VAH</option></select></div>
     </div>
-    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить VP-фильтры 15m</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; стоп переносится в безубыток после +1R</span></div>
+    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить VP-фильтры 15m</button><button id="btComparePeriod" type="button">Сравнить ZEC / NEAR · 7 / 14 дней</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; стоп переносится в безубыток после +1R</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
-    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div>
+    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePeriodResults" class="tablewrap" style="margin-top:12px"></div>
     <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Фаза</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
     <div class="small" style="margin-top:8px">Размер позиции рассчитывается под риск 0,5% текущего капитала до стопа, с ограничением номинала размером капитала (без кредитного плеча). Комиссии и проскальзывание вычитаются отдельно. Если стоп и тейк затронуты одной минутной свечой, первым считается стоп. После +1R стоп переносится на цену входа с поправкой на комиссию и проскальзывание. При гэпе через стоп учитывается цена открытия. Это исследовательский тест, не прогноз доходности.</div>`;
   const anchor = document.querySelector("footer");
@@ -202,12 +202,24 @@
       // The first eligible stop/target check is the next candle, i + 1.
     }
 
-    if(pos) close(a[a.length-1].c,"END",a[a.length-1].ts);
+    // Do not force-close a position at the same close where its entry signal
+    // was just confirmed. Keep any surviving trade open and mark it to market
+    // at the final close, subtracting estimated exit costs separately.
+    let openNet=0, openPosition=null;
+    if(pos&&a.length){
+      const mark=a[a.length-1].c;
+      const marked=BacktestMath.calculateTradePnl({entry:pos.entry,exit:mark,dir:pos.dir,qty:pos.qty,feeRate,slipRate});
+      openNet=marked.net;
+      openPosition={...pos,mark,unrealizedGross:marked.gross,estimatedExitCosts:marked.fees+marked.slippage,net:marked.net};
+      const markedEquity=equity+openNet;
+      peak=Math.max(peak,markedEquity);
+      maxDD=Math.max(maxDD,peak-markedEquity);
+    }
     const grossWin=trades.reduce((sum,t)=>sum+(t.gross>0?t.gross:0),0);
     const grossLoss=trades.reduce((sum,t)=>sum+(t.gross<0?Math.abs(t.gross):0),0);
     const phaseStats={up:{trades:[],net:0},down:{trades:[],net:0},range:{trades:[],net:0}};
     trades.forEach(t=>{const p=phaseStats[t.phase]||phaseStats.range;p.trades.push(t);p.net+=t.pnl||0;});
-    return {trades,net:equity,maxDD,wins:trades.filter(t=>t.pnl>0).length,
+    return {trades,net:equity,openNet,netWithOpen:equity+openNet,openPosition,maxDD,wins:trades.filter(t=>t.pnl>0).length,
       grossWin,grossLoss,grossTotal,feesTotal,slippageTotal,phaseStats};
   }
   $("btCompareEntry").addEventListener("click",async()=>{
@@ -502,6 +514,72 @@
     }catch(e){$("btStatus").textContent="Ошибка сравнения VP: "+(e.message||e)}
     finally{btn.disabled=false}
   });
+  $("btComparePeriod").addEventListener("click",async()=>{
+    const btn=$("btComparePeriod");btn.disabled=true;
+    $("btComparePeriodResults").innerHTML="";
+    $("btStatus").textContent="Подготавливаю четыре исторических теста ZEC и NEAR…";
+    try{
+      const mult=Math.max(.1,+$("btAtr").value||1.5);
+      const fee=Math.max(0,+$("btFee").value||0),slip=Math.max(0,+$("btSlip").value||0);
+      const capital=Math.max(10,+$("btCapital").value||1000),riskPct=.5;
+      const filter=$("btFilter").value,vpFilter=$("btVpFilter").value;
+      const cases=[{pair:"ZEC-USDT-SWAP",days:7},{pair:"ZEC-USDT-SWAP",days:14},
+                   {pair:"NEAR-USDT-SWAP",days:7},{pair:"NEAR-USDT-SWAP",days:14}];
+      const results=[];
+      for(let i=0;i<cases.length;i++){
+        const item=cases[i];
+        $("btStatus").textContent="Сценарий "+(i+1)+"/4: "+item.pair+", "+item.days+" дней. Загружаю закрытые свечи…";
+        const candles=await getCandles(item.days,"1m",item.pair);
+        const vpCandles=await getCandles(Math.min(15,item.days+1),"15m",item.pair);
+        if(candles.length<item.days*1440*.95)
+          throw Error("Недостаточно минутных свечей для "+item.pair+" за "+item.days+" дней: получено "+candles.length);
+        if(vpCandles.length<96)
+          throw Error("Недостаточно 15m свечей для Volume Profile: "+item.pair);
+        const vpByMinute=buildVPByMinute(candles,vpCandles);
+        const result=run(candles,mult,fee,slip,filter,"current",null,null,vpFilter,vpByMinute,riskPct,capital);
+        const trades=result.trades;
+        const netWins=trades.reduce((sum,t)=>sum+(t.pnl>0?t.pnl:0),0);
+        const netLoss=trades.reduce((sum,t)=>sum+(t.pnl<0?Math.abs(t.pnl):0),0);
+        const netPF=netLoss>0?netWins/netLoss:(netWins>0?Infinity:0);
+        const expected=item.days*1440;
+        const missing1m=candles.slice(1).reduce((sum,c,j)=>{
+          const delta=c.ts-candles[j].ts;
+          return sum+Math.max(0,Math.round(delta/60000)-1);
+        },Math.max(0,Math.round((candles[0].ts-candles[0].ts)/60000)));
+        const expected15m=Math.min(15,item.days+1)*96;
+        const missing15m=vpCandles.slice(1).reduce((sum,c,j)=>{
+          const delta=c.ts-vpCandles[j].ts;
+          return sum+Math.max(0,Math.round(delta/900000)-1);
+        },0);
+        results.push({
+          ...item,candles:candles.length,vpCandles:vpCandles.length,
+          coverage:Math.min(100,candles.length/expected*100),missing1m,missing15m,
+          firstTs:candles[0].ts,lastTs:candles[candles.length-1].ts,
+          trades:trades.length,wr:trades.length?100*result.wins/trades.length:0,
+          netPF,net:result.net,openNet:result.openNet,netWithOpen:result.netWithOpen,
+          openCount:result.openPosition?1:0,maxDD:result.maxDD,
+          fees:result.feesTotal,slippage:result.slippageTotal,
+          tp:trades.filter(t=>String(t.why).startsWith("TP")).length,
+          sl:trades.filter(t=>t.why==="SL").length,
+          be:trades.filter(t=>t.why==="BE").length
+        });
+      }
+      const pf=v=>v===Infinity?"∞":(v>0?fmt(v):"—");
+      const date=v=>new Date(v).toLocaleString("ru-RU");
+      let html='<div class="small" style="margin-bottom:8px">Все четыре прогона используют одинаковые настройки: стартовый капитал '+fmt(capital)+' USDT, риск 0,5%, ATR(14) × '+fmt(mult)+', комиссия '+fmt(fee)+'% и проскальзывание '+fmt(slip)+'% на сторону, один вход SMA21 и выбранный VP-фильтр ('+(vpFilter==="poc"?"относительно POC":"VAL / VAH")+'). Размер позиции ограничен капиталом, плечо не используется.</div>';
+      html+='<div class="small" style="margin-bottom:8px">Net PF рассчитан по чистой прибыли/убытку закрытых сделок после расходов. «Net закрытых» не включает открытую позицию; «Net с открытой» добавляет её оценку по последней цене с расчётными расходами на выход. Незавершённая сделка не закрывается искусственно на последней свече.</div>';
+      html+='<table class="table"><thead><tr><th>Инструмент</th><th>Период</th><th>Свечи 1m / покрытие</th><th>Пропуски 1m</th><th>Сделок закрыто</th><th>Win rate</th><th>Net PF</th><th>Net закрытых, USDT</th><th>Открытая позиция, Net</th><th>Net с открытой, USDT</th><th>Net/день</th><th>Макс. DD, USDT</th><th>Комиссия</th><th>Проскальзывание</th><th>TP 5R / SL / BE</th></tr></thead><tbody>';
+      results.forEach(r=>{
+        html+='<tr data-case="'+r.pair+'-'+r.days+'"><td>'+r.pair+'</td><td>'+r.days+' дн.</td><td>'+r.candles+' / '+fmt(r.coverage)+'%</td><td>'+r.missing1m+'</td><td>'+r.trades+'</td><td>'+fmt(r.wr)+'%</td><td>'+pf(r.netPF)+'</td><td>'+fmt(r.net)+'</td><td>'+(r.openCount?fmt(r.openNet):"нет")+'</td><td>'+fmt(r.netWithOpen)+'</td><td>'+fmt(r.netWithOpen/r.days)+'</td><td>'+fmt(r.maxDD)+'</td><td>'+fmt(r.fees)+'</td><td>'+fmt(r.slippage)+'</td><td>'+r.tp+' / '+r.sl+' / '+r.be+'</td></tr>';
+      });
+      html+='</tbody></table>';
+      html+='<div class="small" style="margin-top:6px">15m Volume Profile: число свечей по четырём сценариям '+results.map(r=>r.pair+" "+r.days+"дн. — "+r.vpCandles+" (пропусков "+r.missing15m+")").join("; ")+'. Временной диапазон минутных данных: '+results.map(r=>r.pair+" "+r.days+"дн. "+date(r.firstTs)+" — "+date(r.lastTs)).join("; ")+'.</div>';
+      $("btComparePeriodResults").innerHTML=html;
+      $("btStatus").textContent="Сравнение ZEC/NEAR за 7 и 14 дней завершено: четыре сценария рассчитаны на закрытых свечах OKX.";
+    }catch(e){$("btStatus").textContent="Ошибка сравнения ZEC/NEAR: "+(e.message||e)}
+    finally{btn.disabled=false}
+  });
+
   $("btRun").addEventListener("click",async()=>{
     const btn=$("btRun");btn.disabled=true;$("btStatus").textContent="Загружаю закрытые свечи "+$("btPair").value+"…";$("btResults").innerHTML="";$("btTrades").innerHTML="";
     try{
