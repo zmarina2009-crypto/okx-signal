@@ -82,33 +82,11 @@
   // Profile uses the last 96 fully closed 15m candles (rolling 24h), 30 bins,
   // typical-price volume allocation, and a 70% value area.
   function buildVPByMinute(minuteCandles, fifteenCandles) {
-    const out=new Map(); let j=0;
-    const rows=30, lookback=96, quarterHour=15*60*1000;
-    for(const m of minuteCandles){
-      while(j<fifteenCandles.length && fifteenCandles[j].ts+quarterHour<=m.ts) j++;
-      // Only bars whose full 15m interval ended by this minute timestamp are eligible.
-      const end=j, start=Math.max(0,end-lookback), history=fifteenCandles.slice(start,end);
-      if(history.length<lookback) continue;
-      const lo=Math.min(...history.map(x=>x.l)), hi=Math.max(...history.map(x=>x.h)), range=hi-lo;
-      if(!(range>0)) continue;
-      const bins=new Array(rows).fill(0);
-      for(const c of history){
-        const typical=(c.h+c.l+c.c)/3;
-        const k=Math.max(0,Math.min(rows-1,Math.floor((typical-lo)/range*rows)));
-        bins[k]+=Math.max(0,Number(c.v)||0);
-      }
-      const total=bins.reduce((a,b)=>a+b,0), maxV=Math.max(...bins);
-      if(!(total>0&&maxV>0)) continue;
-      const poc=bins.indexOf(maxV), target=total*.70;
-      let left=poc,right=poc,covered=bins[poc];
-      while(covered<target&&(left>0||right<rows-1)){
-        const lv=left>0?bins[left-1]:-1, rv=right<rows-1?bins[right+1]:-1;
-        if(rv>=lv){right++;covered+=Math.max(0,rv);}else{left--;covered+=Math.max(0,lv);}
-      }
-      const binWidth=range/rows;
-      out.set(m.ts,{poc:lo+(poc+.5)*binWidth,val:lo+left*binWidth,vah:lo+(right+1)*binWidth,binWidth});
-    }
-    return out;
+    // OKX timestamps are candle-open times. A minute signal becomes available
+    // at the 1m close; a 15m candle closing at that exact time is then eligible.
+    return BacktestMath.buildVolumeProfilesByMinute(minuteCandles,fifteenCandles,{
+      rows:30,lookback:96,barDurationMs:15*60*1000,signalDurationMs:60*1000
+    });
   }
   function marketPhase(a,i){
     const m=sma(a,i,21), m10=sma(a,i-10,21), av=atr(a,i,14);
