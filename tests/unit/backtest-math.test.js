@@ -85,7 +85,7 @@ test("synthetic long trade: +1R moves stop to cost-adjusted breakeven, next cand
   assert.equal(afterReturn.exit.reason,"BE");
   assert.equal(afterReturn.exit.price,afterTrigger.position.stop);
   const pnl=calculateTradePnl({entry:100,exit:afterReturn.exit.price,dir:1,qty:100,feeRate:.0005,slipRate:.0005});
-  assert.ok(Math.abs(pnl.net)<1e-10,"cost-adjusted BE should approximately break even net of costs");
+  assert.equal(pnl.net,0,"cost-adjusted BE should be exactly neutral after floating-point normalization");
 });
 
 test("synthetic long trade: initial stop and gap through stop use adverse open",()=>{
