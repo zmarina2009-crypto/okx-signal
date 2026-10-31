@@ -9,11 +9,17 @@
     return dir===1 ? Math.min(stop,open) : Math.max(stop,open);
   }
   function positionSize({capital,riskPct,entry,stop,costRate}){
-    if(!(capital>0&&entry>0&&stop>0&&riskPct>0)||!Number.isFinite(costRate)||costRate<0||costRate>=1) return 0;
+    // All rates are decimal fractions except riskPct, which is entered in percent.
+    // Reject non-finite inputs before deriving notional or risk.
+    if(![capital,riskPct,entry,stop,costRate].every(Number.isFinite) ||
+       !(capital>0&&entry>0&&stop>0&&riskPct>0) || costRate<0 || costRate>=1) return 0;
     const distance=Math.abs(entry-stop);
+    // Loss per 1 USDT of entry notional at the planned stop, including both
+    // entry/exit fees and slippage. This mirrors calculateTradePnl().
     const lossPerNotional=distance/entry+(1+stop/entry)*costRate;
-    if(!(lossPerNotional>0)) return 0;
+    if(!(lossPerNotional>0)||!Number.isFinite(lossPerNotional)) return 0;
     const budget=capital*Math.min(5,Math.max(.01,riskPct))/100;
+    // No leverage in this tester: entry notional cannot exceed current equity.
     return Math.min(capital,budget/lossPerNotional);
   }
   function targetPrice(entry,dir,risk,targetR){
