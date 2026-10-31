@@ -294,8 +294,8 @@
     const raw=o.a||[],pair=o.pair,tf=o.tf||"15m",updateUi=o.updateUi;
     if(raw.length<6)return;
     const polled=o.polled===true;
-    const hist=polled?raw.slice(0,-1):raw;
-    const live=polled?raw[raw.length-1]:o.live;
+    const hist=raw;
+    const live=polled?null:o.live;
     if(hist.length<5)return;
     currentComboCandles=hist;
     const st=pairState[pair]||(pairState[pair]={lastClosedTs:0,lastTouch:false});
