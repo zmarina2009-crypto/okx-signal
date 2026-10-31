@@ -69,10 +69,56 @@
     return {gross,fees,slippage,net:gross-fees-slippage};
   }
   function closedCandles(candles,atTimestamp,durationMs){
-    if(!Array.isArray(candles)||!Number.isFinite(atTimestamp)||!(durationMs>0))return [];
+    if(!Array.isArray(candles)||!Number.isFinite(atTimestamp)||!Number.isFinite(durationMs)||!(durationMs>0))return [];
     return candles.filter(c=>Number.isFinite(c?.ts)&&c.ts+durationMs<=atTimestamp);
   }
-  const api={breakevenPrice,stopFill,positionSize,targetPrice,atr,firstExitIndex,intrabarExit,advancePosition,calculateTradePnl,closedCandles};
+  function volumeProfile(candles,rows=30){
+    if(!Array.isArray(candles)||!Number.isInteger(rows)||rows<2)return null;
+    const bars=candles.filter(c=>Number.isFinite(c?.l)&&Number.isFinite(c?.h)&&Number.isFinite(c?.c)&&
+      Number.isFinite(c?.v)&&c.h>=c.l&&c.v>=0);
+    if(!bars.length)return null;
+    const lo=Math.min(...bars.map(c=>c.l)), hi=Math.max(...bars.map(c=>c.h)), range=hi-lo;
+    if(!(range>0))return null;
+    const bins=new Array(rows).fill(0);
+    for(const c of bars){
+      const typical=(c.h+c.l+c.c)/3;
+      const k=Math.max(0,Math.min(rows-1,Math.floor((typical-lo)/range*rows)));
+      bins[k]+=c.v;
+    }
+    const total=bins.reduce((a,b)=>a+b,0), maxV=Math.max(...bins);
+    if(!(total>0&&maxV>0))return null;
+    const poc=bins.indexOf(maxV), target=total*.70;
+    let left=poc,right=poc,covered=bins[poc];
+    while(covered<target&&(left>0||right<rows-1)){
+      const lv=left>0?bins[left-1]:-1, rv=right<rows-1?bins[right+1]:-1;
+      if(rv>=lv){right++;covered+=Math.max(0,rv);}else{left--;covered+=Math.max(0,lv);}
+    }
+    const binWidth=range/rows;
+    return {poc:lo+(poc+.5)*binWidth,val:lo+left*binWidth,vah:lo+(right+1)*binWidth,binWidth};
+  }
+  function buildVolumeProfilesByMinute(minuteCandles,fifteenCandles,options={}){
+    if(!Array.isArray(minuteCandles)||!Array.isArray(fifteenCandles))return new Map();
+    const rows=Number.isInteger(options.rows)?options.rows:30;
+    const lookback=Number.isInteger(options.lookback)?options.lookback:96;
+    const barDurationMs=Number.isFinite(options.barDurationMs)?options.barDurationMs:15*60*1000;
+    const signalDurationMs=Number.isFinite(options.signalDurationMs)?options.signalDurationMs:60*1000;
+    if(rows<2||lookback<1||barDurationMs<=0||signalDurationMs<=0)throw new RangeError("Invalid Volume Profile options");
+    const out=new Map(); let j=0;
+    for(const minute of minuteCandles){
+      if(!Number.isFinite(minute?.ts))continue;
+      // OKX candle timestamps mark candle OPEN. The 1m signal is known only
+      // at its close, so include 15m bars ending at or before that close.
+      const decisionTime=minute.ts+signalDurationMs;
+      while(j<fifteenCandles.length&&Number.isFinite(fifteenCandles[j]?.ts)&&
+            fifteenCandles[j].ts+barDurationMs<=decisionTime)j++;
+      const end=j,start=Math.max(0,end-lookback),history=fifteenCandles.slice(start,end);
+      if(history.length<lookback)continue;
+      const profile=volumeProfile(history,rows);
+      if(profile)out.set(minute.ts,profile);
+    }
+    return out;
+  }
+  const api={breakevenPrice,stopFill,positionSize,targetPrice,atr,firstExitIndex,intrabarExit,advancePosition,calculateTradePnl,closedCandles,volumeProfile,buildVolumeProfilesByMinute};
   if(typeof module!=="undefined"&&module.exports) module.exports=api;
   root.BacktestMath=api;
 })(typeof globalThis!=="undefined"?globalThis:this);
