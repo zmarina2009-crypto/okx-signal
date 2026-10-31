@@ -21,6 +21,7 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
         cls.page = cls.context.new_page()
         cls.page_errors = []
         cls.okx_responses = []
+        cls.period_comparison = ""
         cls.page.on("pageerror", lambda error: cls.page_errors.append(str(error)))
 
         def record_okx_response(response):
@@ -60,6 +61,7 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
             json.dumps({
                 "pageErrors": cls.page_errors,
                 "okxResponses": cls.okx_responses,
+                "periodComparison": cls.period_comparison,
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -126,6 +128,27 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
                 result = self.page.locator(f"#{result_id}")
                 self.assertTrue(result.inner_text().strip(), f"{button_id} returned no visible comparison table")
 
+        period_status = self.wait_for_action(
+            "btComparePeriod",
+            "Сравнение ZEC/NEAR за 7 и 14 дней завершено",
+            timeout=480_000,
+        )
+        self.assertIn("четыре сценария", period_status)
+        period_table = self.page.locator("#btComparePeriodResults table")
+        self.assertTrue(period_table.is_visible(), "The 7d/14d comparison table should be visible")
+        expected_cases = (
+            "ZEC-USDT-SWAP-7",
+            "ZEC-USDT-SWAP-14",
+            "NEAR-USDT-SWAP-7",
+            "NEAR-USDT-SWAP-14",
+        )
+        for case in expected_cases:
+            row = self.page.locator(f'#btComparePeriodResults tr[data-case="{case}"]')
+            self.assertEqual(row.count(), 1, f"Missing comparison row for {case}")
+            self.assertGreater(len(row.locator("td").all()), 10, f"Incomplete result row for {case}")
+        self.__class__.period_comparison = period_table.inner_text()
+        print("\\nFOUR-WAY ZEC / NEAR 7D / 14D COMPARISON\\n" + self.period_comparison)
+
         self.assertEqual(self.page_errors, [], f"Uncaught browser errors: {self.page_errors}")
         successful_okx = [
             r for r in self.okx_responses
@@ -134,8 +157,15 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
         ]
         self.assertTrue(any(r["bar"] == "1m" for r in successful_okx), "No successful live OKX 1m candle response was observed")
         self.assertTrue(any(r["bar"] == "15m" for r in successful_okx), "No successful live OKX 15m candle response was observed")
+        for pair in ("ZEC-USDT-SWAP", "NEAR-USDT-SWAP"):
+            pair_responses = [
+                r for r in self.okx_responses
+                if r["instId"] == pair and r["status"] == 200 and r["code"] == "0" and r["count"] > 0
+            ]
+            self.assertTrue(any(r["bar"] == "1m" for r in pair_responses), f"No successful {pair} 1m history response")
+            self.assertTrue(any(r["bar"] == "15m" for r in pair_responses), f"No successful {pair} 15m history response")
         self.assertFalse(
-            [r for r in self.okx_responses if r["instId"] == "ZEC-USDT-SWAP" and r["error"]],
+            [r for r in self.okx_responses if r["instId"] in ("ZEC-USDT-SWAP", "NEAR-USDT-SWAP") and r["error"]],
             f"OKX history API errors: {self.okx_responses}",
         )
 
