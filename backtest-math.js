@@ -66,7 +66,11 @@
     const exitNotional=exit*qty/entry;
     const fees=(qty+exitNotional)*feeRate;
     const slippage=(qty+exitNotional)*slipRate;
-    return {gross,fees,slippage,net:gross-fees-slippage};
+    const rawNet=gross-fees-slippage;
+    // Round-trip BE prices are algebraically neutral; suppress floating-point
+    // residue so a zero-result trade is never misclassified as a tiny win/loss.
+    const net=Math.abs(rawNet)<1e-8?0:rawNet;
+    return {gross,fees,slippage,net};
   }
   function closedCandles(candles,atTimestamp,durationMs){
     if(!Array.isArray(candles)||!Number.isFinite(atTimestamp)||!Number.isFinite(durationMs)||!(durationMs>0))return [];
