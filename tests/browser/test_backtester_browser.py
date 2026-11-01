@@ -23,6 +23,7 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
         cls.okx_responses = []
         cls.period_comparison = ""
         cls.mtf_comparison = ""
+        cls.mtf_entry_comparison = ""
         cls.page.on("pageerror", lambda error: cls.page_errors.append(str(error)))
 
         def record_okx_response(response):
@@ -64,6 +65,7 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
                 "okxResponses": cls.okx_responses,
                 "periodComparison": cls.period_comparison,
                 "mtfComparison": cls.mtf_comparison,
+                "mtfEntryComparison": cls.mtf_entry_comparison,
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -177,6 +179,23 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
             self.assertGreaterEqual(len(row.locator("td").all()), 19, f"Incomplete MTF result row for {case}")
         self.__class__.mtf_comparison = mtf_table.inner_text()
         print("\\nFOUR-WAY MTF CONTINUATION / REVERSAL COMPARISON\\n" + self.mtf_comparison)
+
+        entry_table = self.page.locator("#btCompareMtfEntryResults table#btMtfEntryComparison")
+        self.assertEqual(entry_table.count(), 1, "The three-variant MTF entry table should render")
+        entry_rows = entry_table.locator("tbody tr")
+        self.assertEqual(entry_rows.count(), 24, "Four datasets × three confirmations × two scenarios should produce 24 rows")
+        for variant in ("previous", "structure2", "structure2-volume"):
+            variant_rows = entry_table.locator(f'tr[data-variant="{variant}"]')
+            self.assertEqual(variant_rows.count(), 8, f"Expected 8 rows for MTF confirmation {variant}")
+            for scenario in ("continuation", "reversal"):
+                scenario_rows = variant_rows.locator(f'tr[data-scenario="{scenario}"]')
+                self.assertEqual(scenario_rows.count(), 4, f"Expected one {scenario} row for each pair/period for {variant}")
+        for case in mtf_cases:
+            case_rows = entry_table.locator(f'tr[data-case="{case}"]')
+            self.assertEqual(case_rows.count(), 6, f"Expected 3 confirmation modes × 2 scenarios for {case}")
+            self.assertTrue(all(len(row.locator("td").all()) == 11 for row in case_rows.all()))
+        self.__class__.mtf_entry_comparison = entry_table.inner_text()
+        print("\\nMTF ENTRY CONFIRMATION VARIANTS\\n" + self.mtf_entry_comparison)
 
         self.assertEqual(self.page_errors, [], f"Uncaught browser errors: {self.page_errors}")
         successful_okx = [
