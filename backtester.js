@@ -661,7 +661,7 @@
           candles,plan.warmupStartTs,plan.endExclusive,minuteMs,
           (warmupDays+windowDays*2)*1440,pair+" · 1m прогрев + два тестовых окна"
         );
-        const htfStartTs=firstWindow.startTs-24*60*minuteMs;
+        const htfStartTs=firstWindow.startTs-25*60*minuteMs;
         const htfExpected=(plan.endExclusive-htfStartTs)/quarterMs;
         exactRange(htfCandles,htfStartTs,plan.endExclusive,quarterMs,htfExpected,
           pair+" · 15m контекст для SMA21 и VP"
