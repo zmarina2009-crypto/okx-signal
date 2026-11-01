@@ -215,7 +215,7 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
 
         holdout_status = self.wait_for_action(
             "btCompareMtfHoldout",
-            "неперекрывающихся 14-дневных окон",
+            "три неперекрывающихся 14-дневных окна",
             timeout=1_200_000,
         )
         self.assertIn("ZEC и NEAR + BTC, ETH, SOL, XRP и DOGE", holdout_status)
@@ -231,12 +231,12 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
         for pair in HOLDOUT_PAIRS:
             for window in HOLDOUT_WINDOWS:
                 case = f"{pair}-{window}"
-            audit_row = audit_table.locator(f'tr[data-case="{case}"]')
-            self.assertEqual(audit_row.count(), 1, f"Missing data audit for {case}")
-            cells = audit_row.locator("td").all()
-            self.assertEqual(len(cells), 8, f"Incomplete coverage audit for {case}")
-            self.assertIn("100", cells[5].inner_text(), f"Expected complete 1m coverage for {case}")
-            self.assertEqual(cells[4].inner_text().strip(), "0", f"Unexpected 1m gaps in {case}")
+                audit_row = audit_table.locator(f'tr[data-case="{case}"]')
+                self.assertEqual(audit_row.count(), 1, f"Missing data audit for {case}")
+                cells = audit_row.locator("td").all()
+                self.assertEqual(len(cells), 8, f"Incomplete coverage audit for {case}")
+                self.assertIn("100", cells[5].inner_text(), f"Expected complete 1m coverage for {case}")
+                self.assertEqual(cells[4].inner_text().strip(), "0", f"Unexpected 1m gaps in {case}")
 
         holdout_rows = result_table.locator("tbody tr")
         self.assertEqual(holdout_rows.count(), len(HOLDOUT_PAIRS) * len(HOLDOUT_WINDOWS) * 3 * 2, "7 pairs × 3 windows × 3 entry modes × 2 scenarios must produce 126 rows")
