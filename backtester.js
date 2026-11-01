@@ -686,7 +686,7 @@
       results.forEach(r=>r.entryVariants.forEach(v=>["continuation","reversal"].forEach(scenario=>{
         const s=v[scenario];
         variantsHtml+='<tr data-case="'+r.pair+'-'+r.days+'" data-variant="'+v.id+'" data-scenario="'+scenario+'"><td>'+r.pair+'</td><td>'+r.days+' дн.</td><td>'+v.label+'</td><td>'+(scenario==="continuation"?"Продолжение":"Разворот")+'</td><td>'+s.signals+'</td><td>'+s.closed+'</td><td>'+n(s.wr)+'%</td><td>'+pf(s.pf)+'</td><td>'+n(s.net)+'</td><td>'+n(s.netWithOpen)+'</td><td>'+n(s.dd)+'</td></tr>';
-      }))));
+      })));
       variantsHtml+='</tbody></table><div class="small" style="margin-top:7px">Объём берётся из поля volume, возвращаемого OKX для свечи; сравнение относительное, поэтому валюта измерения не влияет на коэффициент. Сигналы считаются на закрытии 1m; открытые позиции и расходы по ним учитываются так же, как в основном MTF-тесте.</div>';
       $("btCompareMtfEntryResults").innerHTML=variantsHtml;
       $("btCompareMtfPeriodResults").innerHTML=html;
