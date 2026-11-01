@@ -161,8 +161,10 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
             timeout=900_000,
         )
         self.assertIn("четыре независимых прогона", mtf_status)
-        mtf_table = self.page.locator("#btCompareMtfPeriodResults table")
-        self.assertTrue(mtf_table.is_visible(), "The MTF period comparison table should be visible")
+        mtf_tables = self.page.locator("#btCompareMtfPeriodResults table")
+        self.assertEqual(mtf_tables.count(), 2, "The MTF comparison should render both performance and cost tables")
+        mtf_table = mtf_tables.first
+        self.assertTrue(mtf_table.is_visible(), "The primary MTF comparison table should be visible")
         mtf_cases = (
             "ZEC-USDT-SWAP-7",
             "ZEC-USDT-SWAP-14",
