@@ -118,15 +118,19 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
             ("btComparePhase", "Сравнение завершено на одном наборе", "btComparePhaseResults"),
             ("btCompareAdaptive", "Адаптивное сравнение завершено", "btCompareAdaptiveResults"),
             ("btCompare", "Сравнение VP завершено", "btCompareResults"),
+            ("btCompareMtf", "MTF-тест завершён", "btCompareMtfResults"),
         )
         for button_id, expected_status, result_id in comparisons:
             with self.subTest(button=button_id):
                 status = self.wait_for_action(button_id, expected_status)
                 self.assertRegex(status, r"(?:\d+ закрытых (?:минутных )?свеч|\d+ свечей 1m)")
-                if button_id == "btCompare":
+                if button_id in ("btCompare", "btCompareMtf"):
                     self.assertRegex(status, r"\d+ (?:закрытых )?свечей 15m")
                 result = self.page.locator(f"#{result_id}")
                 self.assertTrue(result.inner_text().strip(), f"{button_id} returned no visible comparison table")
+                if button_id == "btCompareMtf":
+                    self.assertEqual(result.locator('tr[data-scenario="continuation"]').count(), 1)
+                    self.assertEqual(result.locator('tr[data-scenario="reversal"]').count(), 1)
 
         period_status = self.wait_for_action(
             "btComparePeriod",
