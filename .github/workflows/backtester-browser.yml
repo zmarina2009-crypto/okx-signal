@@ -18,6 +18,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: backtester-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   browser-smoke:
     name: Chromium + live OKX candle history
@@ -52,6 +56,9 @@ jobs:
           done
           cat /tmp/okx-preview-http.log
           exit 1
+
+      - name: Check tester JavaScript syntax
+        run: node --check backtest-math.js && node --check backtester.js
 
       - name: Run deterministic backtest math unit tests
         run: node --test tests/unit/backtest-math.test.js
