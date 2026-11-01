@@ -595,13 +595,13 @@
   $("btCompareMtfHoldout").addEventListener("click",async()=>{
     const btn=$("btCompareMtfHoldout");btn.disabled=true;
     $("btCompareMtfHoldoutResults").innerHTML="";
-    $("btStatus").textContent="Загружаю 31 день истории ZEC и NEAR для двух неперекрывающихся 14-дневных MTF-окон…";
+    $("btStatus").textContent="Загружаю 45 дней истории ZEC и NEAR; последние уже проверенные 14 дней исключены…";
     try{
       const mult=Math.max(.1,+$("btAtr").value||1.5);
       const fee=Math.max(0,+$("btFee").value||0),slip=Math.max(0,+$("btSlip").value||0);
       const capital=Math.max(10,+$("btCapital").value||1000),riskPct=.5;
       const minuteMs=60*1000,quarterMs=15*minuteMs,dayMs=24*60*minuteMs;
-      const windowDays=14,warmupDays=2,historyDays=31;
+      const windowDays=14,warmupDays=2,excludeRecentDays=14,historyDays=45;
       const windowBars=windowDays*1440,minuteHistoryBars=historyDays*1440;
       const confirmationModes=[
         {id:"previous",label:"A · Пробой предыдущей свечи"},
@@ -646,15 +646,15 @@
 
       for(let pairIndex=0;pairIndex<pairs.length;pairIndex++){
         const pair=pairs[pairIndex];
-        $("btStatus").textContent="Независимые окна "+(pairIndex+1)+"/2: загружаю 31 день 1m и 15m истории "+pair+"…";
+        $("btStatus").textContent="Независимые окна "+(pairIndex+1)+"/2: загружаю 45 дней 1m и 15m истории "+pair+"…";
         const candles=await getCandles(historyDays,"1m",pair);
         const htfCandles=await getCandles(historyDays,"15m",pair);
         if(candles.length<minuteHistoryBars*.99){
-          throw Error(pair+": получено только "+candles.length+" из "+minuteHistoryBars+" требуемых 1m-свечей за 31 день");
+          throw Error(pair+": получено только "+candles.length+" из "+minuteHistoryBars+" требуемых 1m-свечей за 45 дней");
         }
         if(!candles.length||!htfCandles.length)throw Error(pair+": OKX не вернул историю свечей");
         const plan=BacktestMath.createMtfHoldoutPlan(candles[candles.length-1].ts,{
-          windowDays,windowCount:2,warmupDays
+          windowDays,windowCount:2,warmupDays,excludeRecentDays
         });
         const firstWindow=plan.windows[0];
         const warmupAndTest=exactRange(
@@ -703,7 +703,7 @@
         }
       }
 
-      let auditHtml='<div class="small" style="margin:8px 0">Качество истории и границы окон (время UTC). Для каждой 14-дневной выборки проверены все минутные свечи, отсутствие разрывов и наличие причинного MTF-контекста. 2 дня перед окном 1 и 2 дня непосредственно перед окном 2 доступны только для прогрева и не включаются в торговую статистику.</div>';
+      let auditHtml='<div class="small" style="margin:8px 0">Качество истории и границы окон (время UTC). Для каждой 14-дневной выборки проверены все минутные свечи, отсутствие разрывов и наличие причинного MTF-контекста. Последние 14 дней, которые уже участвовали в предыдущем сравнении A/B/C, исключены из обеих выборок. Оба измеряемых периода находятся раньше; 2 дня перед первым окном используются только для прогрева и не входят в статистику.</div>';
       auditHtml+='<table class="table" id="btMtfHoldoutAudit"><thead><tr><th>Инструмент</th><th>Окно</th><th>Период UTC</th><th>Свечей 1m</th><th>Пропуски 1m</th><th>Покрытие</th><th>Контексты 15m</th><th>15m-история VP</th></tr></thead><tbody>';
       audit.forEach(row=>{
         auditHtml+='<tr data-case="'+row.pair+'-'+row.windowId+'"><td>'+row.pair+'</td><td>'+row.label+'</td><td>'+row.period+'</td><td>'+row.candles+'</td><td>'+row.missing+'</td><td>'+fmt(row.coverage)+'%</td><td>'+row.contexts+'</td><td>'+row.htfCandles+'</td></tr>';
@@ -727,7 +727,7 @@
       resultHtml+='</tbody></table>';
       resultHtml+='<div class="small" style="margin-top:8px">Окна не пересекаются по минутным свечам и P&amp;L. Это убирает повторное использование одних и тех же сделок в соседних тестовых выборках, но не означает статистическую независимость рыночных наблюдений: соседние режимы рынка могут быть связаны. Метрики двух окон нельзя складывать без отдельного расчёта.</div>';
       $("btCompareMtfHoldoutResults").innerHTML=auditHtml+resultHtml;
-      $("btStatus").textContent="Проверка завершена: два неперекрывающихся 14-дневных окна для ZEC и NEAR; 24 варианта A/B/C × продолжение/разворот.";
+      $("btStatus").textContent="Проверка завершена: два более ранних неперекрывающихся 14-дневных окна для ZEC и NEAR; последние 14 дней исключены; 24 варианта A/B/C × продолжение/разворот.";
     }catch(e){
       $("btStatus").textContent="Ошибка проверки неперекрывающихся MTF-окон: "+(e.message||e);
     }finally{btn.disabled=false}

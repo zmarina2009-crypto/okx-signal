@@ -283,14 +283,17 @@ test("MTF two-candle structural breakout is mirrored for SHORT continuation",()=
 
 test("MTF holdout planner creates adjacent, non-overlapping UTC 14-day windows with warmup",()=>{
   const lastMinuteTs=Date.UTC(2026,10,1,20,37);
-  const plan=createMtfHoldoutPlan(lastMinuteTs,{windowDays:14,windowCount:2,warmupDays:2});
+  const plan=createMtfHoldoutPlan(lastMinuteTs,{windowDays:14,windowCount:2,warmupDays:2,excludeRecentDays:14});
   const day=24*60*60*1000;
-  assert.equal(plan.endExclusive,Date.UTC(2026,10,1));
-  assert.equal(plan.warmupStartTs,Date.UTC(2026,9,2));
-  assert.equal(plan.warmupEndTs,Date.UTC(2026,9,4));
+  assert.equal(plan.latestEndExclusive,Date.UTC(2026,10,1));
+  assert.equal(plan.endExclusive,Date.UTC(2026,9,18));
+  assert.equal(plan.excludedRecentStartTs,Date.UTC(2026,9,18));
+  assert.equal(plan.excludedRecentEndTs,Date.UTC(2026,10,1));
+  assert.equal(plan.warmupStartTs,Date.UTC(2026,8,18));
+  assert.equal(plan.warmupEndTs,Date.UTC(2026,8,20));
   assert.deepEqual(plan.windows,[
-    {id:"older",startTs:Date.UTC(2026,9,4),endTs:Date.UTC(2026,9,18)},
-    {id:"newer",startTs:Date.UTC(2026,9,18),endTs:Date.UTC(2026,10,1)}
+    {id:"older",startTs:Date.UTC(2026,8,20),endTs:Date.UTC(2026,9,4)},
+    {id:"newer",startTs:Date.UTC(2026,9,4),endTs:Date.UTC(2026,9,18)}
   ]);
   assert.equal(plan.windows[0].endTs,plan.windows[1].startTs,
     "the second period starts exactly after the first; no candle is reused");
@@ -302,4 +305,5 @@ test("MTF holdout planner rejects invalid timestamps and window settings",()=>{
   assert.throws(()=>createMtfHoldoutPlan(NaN),RangeError);
   assert.throws(()=>createMtfHoldoutPlan(Date.UTC(2026,0,1),{windowDays:0}),RangeError);
   assert.throws(()=>createMtfHoldoutPlan(Date.UTC(2026,0,1),{windowCount:1}),RangeError);
+  assert.throws(()=>createMtfHoldoutPlan(Date.UTC(2026,0,1),{excludeRecentDays:-1}),RangeError);
 });

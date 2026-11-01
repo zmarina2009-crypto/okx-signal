@@ -175,15 +175,18 @@
     const windowDays=options.windowDays??14;
     const windowCount=options.windowCount??2;
     const warmupDays=options.warmupDays??2;
+    const excludeRecentDays=options.excludeRecentDays??0;
     if(!Number.isFinite(lastMinuteTs)||lastMinuteTs<0||
        !Number.isInteger(windowDays)||windowDays<1||
        !Number.isInteger(windowCount)||windowCount<2||
-       !Number.isInteger(warmupDays)||warmupDays<1){
+       !Number.isInteger(warmupDays)||warmupDays<1||
+       !Number.isInteger(excludeRecentDays)||excludeRecentDays<0){
       throw new RangeError("Invalid MTF holdout plan options");
     }
-    // End at the latest fully completed UTC calendar day. Exclude the
-    // unfinished part of the current UTC day from both measured windows.
-    const endExclusive=Math.floor((lastMinuteTs+minuteMs)/dayMs)*dayMs;
+    // Anchor to the latest fully completed UTC day, but allow already-seen
+    // recent data to be excluded from all measured holdout windows.
+    const latestEndExclusive=Math.floor((lastMinuteTs+minuteMs)/dayMs)*dayMs;
+    const endExclusive=latestEndExclusive-excludeRecentDays*dayMs;
     const windowMs=windowDays*dayMs;
     const windows=Array.from({length:windowCount},(_,index)=>{
       const startTs=endExclusive-(windowCount-index)*windowMs;
@@ -191,7 +194,10 @@
         startTs,endTs:startTs+windowMs};
     });
     return {
-      endExclusive,
+      endExclusive,latestEndExclusive,
+      excludedRecentStartTs:endExclusive,
+      excludedRecentEndTs:latestEndExclusive,
+      excludeRecentDays,
       warmupStartTs:windows[0].startTs-warmupDays*dayMs,
       warmupEndTs:windows[0].startTs,
       windowDays,windowCount,warmupDays,windows
