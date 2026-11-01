@@ -10,6 +10,16 @@ from playwright.sync_api import sync_playwright
 
 BASE_URL = os.environ.get("PLAYWRIGHT_TEST_BASE_URL", "http://127.0.0.1:4173")
 OKX_HISTORY_URL = "https://www.okx.com/api/v5/market/history-candles"
+HOLDOUT_PAIRS = (
+    "ZEC-USDT-SWAP",
+    "NEAR-USDT-SWAP",
+    "BTC-USDT-SWAP",
+    "ETH-USDT-SWAP",
+    "SOL-USDT-SWAP",
+    "XRP-USDT-SWAP",
+    "DOGE-USDT-SWAP",
+)
+HOLDOUT_WINDOWS = ("older", "middle-2", "newer")
 
 
 class BacktesterBrowserSmokeTest(unittest.TestCase):
@@ -206,9 +216,10 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
         holdout_status = self.wait_for_action(
             "btCompareMtfHoldout",
             "неперекрывающихся 14-дневных окон",
-            timeout=900_000,
+            timeout=1_200_000,
         )
-        self.assertIn("ZEC и NEAR", holdout_status)
+        self.assertIn("ZEC и NEAR + BTC, ETH, SOL, XRP и DOGE", holdout_status)
+        self.assertIn("три неперекрывающихся 14-дневных окна", holdout_status)
         self.assertIn("последние 21 сутки исключены", holdout_status)
         holdout_root = self.page.locator("#btCompareMtfHoldoutResults")
         audit_table = holdout_root.locator("table#btMtfHoldoutAudit")
@@ -216,13 +227,10 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
         self.assertEqual(audit_table.count(), 1, "The holdout data-quality audit table should render")
         self.assertEqual(result_table.count(), 1, "The non-overlapping holdout comparison should render")
         audit_rows = audit_table.locator("tbody tr")
-        self.assertEqual(audit_rows.count(), 4, "Two instruments × two disjoint periods should produce 4 audit rows")
-        for case in (
-            "ZEC-USDT-SWAP-older",
-            "ZEC-USDT-SWAP-newer",
-            "NEAR-USDT-SWAP-older",
-            "NEAR-USDT-SWAP-newer",
-        ):
+        self.assertEqual(audit_rows.count(), len(HOLDOUT_PAIRS) * len(HOLDOUT_WINDOWS), "7 instruments × 3 disjoint periods should produce 21 audit rows")
+        for pair in HOLDOUT_PAIRS:
+            for window in HOLDOUT_WINDOWS:
+                case = f"{pair}-{window}"
             audit_row = audit_table.locator(f'tr[data-case="{case}"]')
             self.assertEqual(audit_row.count(), 1, f"Missing data audit for {case}")
             cells = audit_row.locator("td").all()
@@ -231,35 +239,25 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
             self.assertEqual(cells[4].inner_text().strip(), "0", f"Unexpected 1m gaps in {case}")
 
         holdout_rows = result_table.locator("tbody tr")
-        self.assertEqual(holdout_rows.count(), 24, "2 pairs × 2 windows × 3 entry modes × 2 scenarios must produce 24 rows")
-        for case in (
-            "ZEC-USDT-SWAP-older",
-            "ZEC-USDT-SWAP-newer",
-            "NEAR-USDT-SWAP-older",
-            "NEAR-USDT-SWAP-newer",
-        ):
-            case_rows = result_table.locator(f'tr[data-case="{case}"]')
-            self.assertEqual(case_rows.count(), 6, f"Expected 3 entry modes × 2 scenarios for {case}")
-            for variant in ("previous", "structure2", "structure2-volume"):
-                for scenario in ("continuation", "reversal"):
-                    matching = result_table.locator(
-                        f'tr[data-case="{case}"][data-variant="{variant}"][data-scenario="{scenario}"]'
-                    )
-                    self.assertEqual(matching.count(), 1, f"Missing {variant}/{scenario} row for {case}")
+        self.assertEqual(holdout_rows.count(), len(HOLDOUT_PAIRS) * len(HOLDOUT_WINDOWS) * 3 * 2, "7 pairs × 3 windows × 3 entry modes × 2 scenarios must produce 126 rows")
+        for pair in HOLDOUT_PAIRS:
+            for window in HOLDOUT_WINDOWS:
+                case = f"{pair}-{window}"
+                case_rows = result_table.locator(f'tr[data-case="{case}"]')
+                self.assertEqual(case_rows.count(), 6, f"Expected 3 entry modes × 2 scenarios for {case}")
+                for variant in ("previous", "structure2", "structure2-volume"):
+                    for scenario in ("continuation", "reversal"):
+                        matching = result_table.locator(
+                            f'tr[data-case="{case}"][data-variant="{variant}"][data-scenario="{scenario}"]'
+                        )
+                        self.assertEqual(matching.count(), 1, f"Missing {variant}/{scenario} row for {case}")
         self.__class__.mtf_holdout_audit = audit_table.inner_text()
         self.__class__.mtf_holdout_comparison = result_table.inner_text()
         print("\\nNON-OVERLAPPING MTF HOLDOUT AUDIT\\n" + self.mtf_holdout_audit)
         print("\\nNON-OVERLAPPING MTF HOLDOUT RESULTS\\n" + self.mtf_holdout_comparison)
 
         self.assertEqual(self.page_errors, [], f"Uncaught browser errors: {self.page_errors}")
-        successful_okx = [
-            r for r in self.okx_responses
-            if r["status"] == 200 and r["code"] == "0" and r["count"] > 0
-            and r["instId"] == "ZEC-USDT-SWAP"
-        ]
-        self.assertTrue(any(r["bar"] == "1m" for r in successful_okx), "No successful live OKX 1m candle response was observed")
-        self.assertTrue(any(r["bar"] == "15m" for r in successful_okx), "No successful live OKX 15m candle response was observed")
-        for pair in ("ZEC-USDT-SWAP", "NEAR-USDT-SWAP"):
+        for pair in HOLDOUT_PAIRS:
             pair_responses = [
                 r for r in self.okx_responses
                 if r["instId"] == pair and r["status"] == 200 and r["code"] == "0" and r["count"] > 0
@@ -267,7 +265,7 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
             self.assertTrue(any(r["bar"] == "1m" for r in pair_responses), f"No successful {pair} 1m history response")
             self.assertTrue(any(r["bar"] == "15m" for r in pair_responses), f"No successful {pair} 15m history response")
         self.assertFalse(
-            [r for r in self.okx_responses if r["instId"] in ("ZEC-USDT-SWAP", "NEAR-USDT-SWAP") and r["error"]],
+            [r for r in self.okx_responses if r["instId"] in HOLDOUT_PAIRS and r["error"]],
             f"OKX history API errors: {self.okx_responses}",
         )
 
