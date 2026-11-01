@@ -28,9 +28,9 @@
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
       <div><label for="btVpFilter">Обязательный VP-фильтр</label><select id="btVpFilter"><option value="poc" selected>Направление относительно POC</option><option value="value-area">Отскок от VAL / VAH</option></select></div>
     </div>
-    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить VP-фильтры 15m</button><button id="btComparePeriod" type="button">Сравнить ZEC / NEAR · 7 / 14 дней</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; стоп переносится в безубыток после +1R</span></div>
+    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить VP-фильтры 15m</button><button id="btCompareMtf" type="button">Тест MTF: 15m → 1m</button><button id="btComparePeriod" type="button">Сравнить ZEC / NEAR · 7 / 14 дней</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; стоп переносится в безубыток после +1R</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
-    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePeriodResults" class="tablewrap" style="margin-top:12px"></div>
+    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePeriodResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfResults" class="tablewrap" style="margin-top:12px"></div>
     <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Фаза</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
     <div class="small" style="margin-top:8px">Размер позиции рассчитывается под риск 0,5% текущего капитала до стопа, с ограничением номинала размером капитала (без кредитного плеча). Комиссии и проскальзывание вычитаются отдельно. Если стоп и тейк затронуты одной минутной свечой, первым считается стоп. После +1R стоп переносится на цену входа с поправкой на комиссию и проскальзывание. При гэпе через стоп учитывается цена открытия. Это исследовательский тест, не прогноз доходности.</div>`;
   const anchor = document.querySelector("footer");
@@ -514,6 +514,136 @@
     }catch(e){$("btStatus").textContent="Ошибка сравнения VP: "+(e.message||e)}
     finally{btn.disabled=false}
   });
+
+  function runMtfScenario(candles,contexts,scenario,mult,feePct,slipPct,riskPct,initialCapital){
+    const trades=[];
+    let pos=null,equity=0,peak=0,maxDD=0,grossTotal=0,feesTotal=0,slippageTotal=0,signals=0;
+    const feeRate=feePct/100,slipRate=slipPct/100,costRate=feeRate+slipRate;
+    function close(price,reason,bar){
+      const accounting=BacktestMath.calculateTradePnl({
+        entry:pos.entry,exit:price,dir:pos.dir,qty:pos.qty,feeRate,slipRate
+      });
+      pos.pnl=accounting.net;pos.gross=accounting.gross;pos.fees=accounting.fees;
+      pos.slippage=accounting.slippage;pos.exit=price;pos.why=reason;pos.lastBar=bar;
+      grossTotal+=accounting.gross;feesTotal+=accounting.fees;slippageTotal+=accounting.slippage;
+      equity+=accounting.net;peak=Math.max(peak,equity);maxDD=Math.max(maxDD,peak-equity);
+      trades.push(pos);pos=null;
+    }
+    for(let i=30;i<candles.length;i++){
+      const candle=candles[i];
+      if(pos){
+        if(i<pos.firstExitIndex)continue;
+        const advanced=BacktestMath.advancePosition(pos,candle,costRate);
+        if(advanced.exit){
+          const reason=advanced.exit.reason==="TP"?"TP"+pos.targetR+"R":advanced.exit.reason;
+          close(advanced.exit.price,reason,candle.ts);
+          continue;
+        }
+        pos=advanced.position;
+        const mark=pos.dir===1?candle.l:candle.h;
+        const marked=BacktestMath.calculateTradePnl({
+          entry:pos.entry,exit:mark,dir:pos.dir,qty:pos.qty,feeRate,slipRate
+        });
+        const markedEquity=equity+marked.net;
+        peak=Math.max(peak,markedEquity);maxDD=Math.max(maxDD,peak-markedEquity);
+        continue;
+      }
+      const context=contexts.get(candle.ts);
+      const signal=BacktestMath.getMtfEntrySignal(candles,i,context,scenario);
+      if(!signal)continue;
+      signals++;
+      const currentAtr=atr(candles,i,14);
+      if(!Number.isFinite(currentAtr)||currentAtr<=0)continue;
+      const entry=candle.c,risk=currentAtr*mult,capitalNow=Math.max(0,initialCapital+equity);
+      if(!(entry>0&&risk>0&&capitalNow>0))continue;
+      const stop=entry-signal.dir*risk;
+      const qty=BacktestMath.positionSize({capital:capitalNow,riskPct,entry,stop,costRate});
+      if(!(Number.isFinite(qty)&&qty>0))continue;
+      pos={
+        ts:candle.ts,dir:signal.dir,entry,stop,risk,targetR:5,qty,
+        phase:marketPhase(candles,i),pnl:0,scenario,entryReason:signal.reason,
+        firstExitIndex:BacktestMath.firstExitIndex(i),beMoved:false
+      };
+      // The 1m setup is evaluated only after this candle closes. Its earlier
+      // OHLC extremes cannot close a position entered at this close.
+    }
+    let openNet=0,openPosition=null;
+    if(pos&&candles.length){
+      const mark=candles[candles.length-1].c;
+      const marked=BacktestMath.calculateTradePnl({
+        entry:pos.entry,exit:mark,dir:pos.dir,qty:pos.qty,feeRate,slipRate
+      });
+      openNet=marked.net;
+      openPosition={...pos,mark,unrealizedGross:marked.gross,estimatedExitCosts:marked.fees+marked.slippage,net:marked.net};
+      const markedEquity=equity+openNet;
+      peak=Math.max(peak,markedEquity);maxDD=Math.max(maxDD,peak-markedEquity);
+    }
+    const grossWin=trades.reduce((sum,t)=>sum+(t.gross>0?t.gross:0),0);
+    const grossLoss=trades.reduce((sum,t)=>sum+(t.gross<0?Math.abs(t.gross):0),0);
+    const netWin=trades.reduce((sum,t)=>sum+(t.pnl>0?t.pnl:0),0);
+    const netLoss=trades.reduce((sum,t)=>sum+(t.pnl<0?Math.abs(t.pnl):0),0);
+    return {trades,signals,net:equity,openNet,netWithOpen:equity+openNet,maxDD,
+      grossTotal,grossWin,grossLoss,netWin,netLoss,feesTotal,slippageTotal,openPosition,
+      wins:trades.filter(t=>t.pnl>0).length,
+      netPF:netLoss>0?netWin/netLoss:(netWin>0?Infinity:0)};
+  }
+
+  $("btCompareMtf").addEventListener("click",async()=>{
+    const btn=$("btCompareMtf");btn.disabled=true;
+    $("btCompareMtfResults").innerHTML="";
+    $("btStatus").textContent="Загружаю 1m и 15m историю для MTF-стратегии VP + SMA21…";
+    try{
+      const days=+$("btDays").value,mult=Math.max(.1,+$("btAtr").value||1.5);
+      const fee=Math.max(0,+$("btFee").value||0),slip=Math.max(0,+$("btSlip").value||0);
+      const pair=$("btPair").value,capital=Math.max(10,+$("btCapital").value||1000),riskPct=.5;
+      const candles=await getCandles(days,"1m",pair);
+      const htfCandles=await getCandles(Math.min(15,days+1),"15m",pair);
+      if(candles.length<50)throw Error("Недостаточно закрытых свечей 1m");
+      if(htfCandles.length<120)throw Error("Недостаточно истории 15m для SMA21 и 24-часового VP");
+      const contexts=BacktestMath.buildMtfContextsByMinute(candles,htfCandles,{
+        rows:30,lookback:96,minuteDurationMs:60*1000,fifteenDurationMs:15*60*1000
+      });
+      if(contexts.size<50)throw Error("Недостаточно полностью сформированных MTF-контекстов: "+contexts.size);
+      const continuation=runMtfScenario(candles,contexts,"continuation",mult,fee,slip,riskPct,capital);
+      const reversal=runMtfScenario(candles,contexts,"reversal",mult,fee,slip,riskPct,capital);
+      const stat=r=>({
+        closed:r.trades.length,signals:r.signals,
+        wr:r.trades.length?100*r.wins/r.trades.length:0,
+        pf:r.netPF,net:r.net,openNet:r.openNet,netWithOpen:r.netWithOpen,dd:r.maxDD,
+        fees:r.feesTotal,slippage:r.slippageTotal,
+        tp:r.trades.filter(t=>String(t.why).startsWith("TP")).length,
+        sl:r.trades.filter(t=>t.why==="SL").length,
+        be:r.trades.filter(t=>t.why==="BE").length
+      });
+      const a=stat(continuation),b=stat(reversal);
+      const pf=v=>v===Infinity?"∞":(v>0?fmt(v):"—");
+      const rows=[
+        ["Сигналов 1m",a.signals,b.signals],
+        ["Закрытых сделок",a.closed,b.closed],
+        ["Win rate (от всех закрытых)",a.wr,b.wr],
+        ["Net Profit Factor",a.pf,b.pf],
+        ["Net закрытых, USDT",a.net,b.net],
+        ["Открытая позиция, Net",a.openNet,b.openNet],
+        ["Net с открытой позицией, USDT",a.netWithOpen,b.netWithOpen],
+        ["Максимальная просадка, USDT",a.dd,b.dd],
+        ["Комиссии, USDT",a.fees,b.fees],
+        ["Проскальзывание, USDT",a.slippage,b.slippage],
+        ["TP 5R / SL / BE",a.tp+" / "+a.sl+" / "+a.be,b.tp+" / "+b.sl+" / "+b.be]
+      ];
+      const show=(value,index)=>index===0||index===1?String(value):
+        index===2?fmt(value)+"%":index===3?pf(value):typeof value==="string"?value:fmt(value);
+      let html='<div class="small" style="margin-bottom:7px">Одинаковые закрытые свечи и издержки для двух независимых сценариев. Контекст 15m: SMA21 и её наклон за 3 закрытых бара; Volume Profile — 96 предыдущих закрытых 15m свечей (24 часа), 30 bins, Value Area 70%. Текущая 15m свеча не участвует в расчёте собственного VP. Вход — по закрытию подтверждающей 1m свечи; первый контроль выхода — следующая минута. ATR(14) × '+fmt(mult)+', риск 0,5% текущего капитала с учётом комиссии и проскальзывания, без плеча; безубыток после +1R, цель 5R.</div>';
+      html+='<div class="small" style="margin-bottom:7px"><b>Продолжение:</b> 15m close выше/ниже SMA21, наклон SMA21 в ту же сторону и цена за пределами POC более чем на один bin; на 1m — касание SMA21, возврат в сторону контекста и закрытие за максимумом/минимумом предыдущей свечи. <b>Разворот:</b> 15m rejection от VAL/VAH против стороны SMA21; на 1m — пересечение SMA21 в сторону разворота и пробой экстремума предыдущей свечи.</div>';
+      html+='<table class="table"><thead><tr><th>Показатель</th><th>Продолжение 15m → 1m</th><th>Разворот VA 15m → 1m</th></tr></thead><tbody>';
+      html+='<tr data-scenario="continuation"><td>Продолжение</td>'+rows.map((r,i)=>'<td>'+show(r[1],i)+'</td>').join("")+'</tr>';
+      html+='<tr data-scenario="reversal"><td>Разворот от VA</td>'+rows.map((r,i)=>'<td>'+show(r[2],i)+'</td>').join("")+'</tr>';
+      html+='</tbody></table><div class="small" style="margin-top:7px">Ограничения: профиль строится по типичной цене свечи, а не по биржевым тикам; результат исторического теста не является прогнозом. При неоднозначности внутри минутной свечи используется консервативное правило стопа. Сценарии рассчитываются независимо и не открывают реальные ордера.</div>';
+      $("btCompareMtfResults").innerHTML=html;
+      $("btStatus").textContent="MTF-тест завершён: "+pair+", "+candles.length+" закрытых свечей 1m, "+htfCandles.length+" закрытых свечей 15m; контекстов "+contexts.size+". Сценарии продолжения и разворота рассчитаны отдельно.";
+    }catch(e){$("btStatus").textContent="Ошибка MTF-теста: "+(e.message||e)}
+    finally{btn.disabled=false}
+  });
+
   $("btComparePeriod").addEventListener("click",async()=>{
     const btn=$("btComparePeriod");btn.disabled=true;
     $("btComparePeriodResults").innerHTML="";
