@@ -122,7 +122,76 @@
     }
     return out;
   }
-  const api={breakevenPrice,stopFill,positionSize,targetPrice,atr,firstExitIndex,intrabarExit,advancePosition,calculateTradePnl,closedCandles,volumeProfile,buildVolumeProfilesByMinute};
+
+  function smaClose(candles,index,period=21){
+    if(!Array.isArray(candles)||!Number.isInteger(index)||!Number.isInteger(period)||period<1||index+1<period)return NaN;
+    let sum=0;
+    for(let i=index-period+1;i<=index;i++){
+      const close=candles[i]?.c;
+      if(!Number.isFinite(close))return NaN;
+      sum+=close;
+    }
+    return sum/period;
+  }
+  function buildMtfContextsByMinute(minuteCandles,fifteenCandles,options={}){
+    if(!Array.isArray(minuteCandles)||!Array.isArray(fifteenCandles))return new Map();
+    const rows=Number.isInteger(options.rows)?options.rows:30;
+    const lookback=Number.isInteger(options.lookback)?options.lookback:96;
+    const minuteDurationMs=Number.isFinite(options.minuteDurationMs)?options.minuteDurationMs:60*1000;
+    const fifteenDurationMs=Number.isFinite(options.fifteenDurationMs)?options.fifteenDurationMs:15*60*1000;
+    if(rows<2||lookback<1||minuteDurationMs<=0||fifteenDurationMs<=0)throw new RangeError("Invalid MTF context options");
+    const out=new Map();let j=-1;
+    for(const minute of minuteCandles){
+      if(!Number.isFinite(minute?.ts))continue;
+      const decisionTime=minute.ts+minuteDurationMs;
+      // Only a 15m candle whose close is at or before the completed 1m
+      // decision time may define the higher-timeframe context.
+      while(j+1<fifteenCandles.length&&Number.isFinite(fifteenCandles[j+1]?.ts)&&
+            fifteenCandles[j+1].ts+fifteenDurationMs<=decisionTime)j++;
+      if(j<lookback||j<23)continue;
+      const bar=fifteenCandles[j];
+      // The profile is frozen before the current 15m context candle opens.
+      // That candle may test/reject VAL or VAH but cannot move its own levels.
+      const profile=volumeProfile(fifteenCandles.slice(j-lookback,j),rows);
+      const htfSma21=smaClose(fifteenCandles,j,21);
+      const htfSma21Past3=smaClose(fifteenCandles,j-3,21);
+      if(!profile||![bar.o,bar.h,bar.l,bar.c,htfSma21,htfSma21Past3].every(Number.isFinite))continue;
+      const slopeUp=htfSma21>htfSma21Past3;
+      const slopeDown=htfSma21<htfSma21Past3;
+      const continuationDir=bar.c>htfSma21&&slopeUp&&bar.c>profile.poc+profile.binWidth?1:
+        bar.c<htfSma21&&slopeDown&&bar.c<profile.poc-profile.binWidth?-1:0;
+      const reversalLong=bar.c<htfSma21&&bar.l<=profile.val+profile.binWidth&&bar.c>profile.val&&bar.c>bar.o;
+      const reversalShort=bar.c>htfSma21&&bar.h>=profile.vah-profile.binWidth&&bar.c<profile.vah&&bar.c<bar.o;
+      out.set(minute.ts,{
+        higherTimeframeTs:bar.ts,htfOpen:bar.o,htfHigh:bar.h,htfLow:bar.l,htfClose:bar.c,
+        htfSma21,htfSma21Past3,htfSmaSlope:htfSma21-htfSma21Past3,profile,
+        continuationDir,reversalLong,reversalShort
+      });
+    }
+    return out;
+  }
+  function getMtfEntrySignal(minuteCandles,index,context,scenario){
+    if(!Array.isArray(minuteCandles)||!Number.isInteger(index)||index<21||!context||
+       !["continuation","reversal"].includes(scenario))return null;
+    const current=minuteCandles[index],previous=minuteCandles[index-1];
+    if(!current||!previous||![current.o,current.h,current.l,current.c,previous.h,previous.l,previous.c].every(Number.isFinite))return null;
+    const currentSma=smaClose(minuteCandles,index,21),previousSma=smaClose(minuteCandles,index-1,21);
+    if(!Number.isFinite(currentSma)||!Number.isFinite(previousSma))return null;
+    if(scenario==="continuation"){
+      if(context.continuationDir===1&&current.l<=currentSma&&current.c>currentSma&&
+         current.c>current.o&&current.c>previous.h)return {dir:1,reason:"continuation"};
+      if(context.continuationDir===-1&&current.h>=currentSma&&current.c<currentSma&&
+         current.c<current.o&&current.c<previous.l)return {dir:-1,reason:"continuation"};
+      return null;
+    }
+    if(context.reversalLong&&previous.c<=previousSma&&current.c>currentSma&&
+       current.c>current.o&&current.c>previous.h)return {dir:1,reason:"reversal"};
+    if(context.reversalShort&&previous.c>=previousSma&&current.c<currentSma&&
+       current.c<current.o&&current.c<previous.l)return {dir:-1,reason:"reversal"};
+    return null;
+  }
+
+  const api={breakevenPrice,stopFill,positionSize,targetPrice,atr,firstExitIndex,intrabarExit,advancePosition,calculateTradePnl,closedCandles,volumeProfile,buildVolumeProfilesByMinute,smaClose,buildMtfContextsByMinute,getMtfEntrySignal};
   if(typeof module!=="undefined"&&module.exports) module.exports=api;
   root.BacktestMath=api;
 })(typeof globalThis!=="undefined"?globalThis:this);
