@@ -200,3 +200,40 @@ test("Volume Profile returns no profile for zero-range or zero-volume history",(
   assert.equal(volumeProfile([{l:10,h:10,c:10,v:5}],30),null);
   assert.equal(volumeProfile([{l:10,h:20,c:15,v:0}],30),null);
 });
+
+
+const {buildMtfContextsByMinute,getMtfEntrySignal}=require("../../backtest-math.js");
+
+test("15m-to-1m context waits for a fully closed 15m candle and freezes VP before that candle",()=>{
+  const quarter=15*60*1000, minute=60*1000;
+  const htf=Array.from({length:96},(_,i)=>{
+    const base=100+i*.1;
+    return {ts:i*quarter,o:base,l:base-.2,h:base+.8,c:base+.5,v:100};
+  });
+  htf.push({ts:96*quarter,o:110,l:100,h:10000,c:110,v:1e9});
+  const beforeClose={ts:97*quarter-2*minute};
+  const atClose={ts:97*quarter-minute};
+  const contexts=buildMtfContextsByMinute([beforeClose,atClose],htf);
+  assert.equal(contexts.has(beforeClose.ts),false,"an unfinished 15m candle must not define context");
+  assert.equal(contexts.has(atClose.ts),true,"context becomes available exactly when the 15m candle closes");
+  const context=contexts.get(atClose.ts);
+  assert.equal(context.higherTimeframeTs,96*quarter);
+  assert.ok(context.profile.vah<1000,"the current 15m candle's extreme volume/price must not contaminate its own VP levels");
+});
+
+test("1m continuation entry requires a pullback/reclaim in the 15m direction",()=>{
+  const base=Array.from({length:21},()=>({o:100,h:100.2,l:99.8,c:100}));
+  const long=[...base,{o:100.1,h:101.2,l:99.9,c:101}];
+  const short=[...base,{o:99.9,h:100.1,l:98.9,c:99}];
+  assert.deepEqual(getMtfEntrySignal(long,21,{continuationDir:1},"continuation"),{dir:1,reason:"continuation"});
+  assert.deepEqual(getMtfEntrySignal(short,21,{continuationDir:-1},"continuation"),{dir:-1,reason:"continuation"});
+  assert.equal(getMtfEntrySignal(long,21,{continuationDir:1},"reversal"),null,"continuation context must not emit a reversal entry");
+});
+
+test("1m reversal entry requires a 1m SMA21 reclaim and break of the previous candle",()=>{
+  const base=Array.from({length:21},()=>({o:100,h:100.2,l:99.8,c:100}));
+  const long=[...base.slice(0,20),{o:100,h:100.1,l:99.3,c:99.5},{o:99.6,h:100.7,l:99.5,c:100.6}];
+  const short=[...base.slice(0,20),{o:100,h:100.7,l:99.9,c:100.5},{o:100.4,h:100.5,l:99.2,c:99.3}];
+  assert.deepEqual(getMtfEntrySignal(long,21,{reversalLong:true},"reversal"),{dir:1,reason:"reversal"});
+  assert.deepEqual(getMtfEntrySignal(short,21,{reversalShort:true},"reversal"),{dir:-1,reason:"reversal"});
+});
