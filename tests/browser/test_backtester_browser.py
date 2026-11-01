@@ -209,7 +209,7 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
             timeout=900_000,
         )
         self.assertIn("ZEC и NEAR", holdout_status)
-        self.assertIn("последние 14 дней исключены", holdout_status)
+        self.assertIn("последние 21 сутки исключены", holdout_status)
         holdout_root = self.page.locator("#btCompareMtfHoldoutResults")
         audit_table = holdout_root.locator("table#btMtfHoldoutAudit")
         result_table = holdout_root.locator("table#btMtfHoldoutComparison")
