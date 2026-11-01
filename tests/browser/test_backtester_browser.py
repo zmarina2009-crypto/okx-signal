@@ -188,7 +188,9 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
             variant_rows = entry_table.locator(f'tr[data-variant="{variant}"]')
             self.assertEqual(variant_rows.count(), 8, f"Expected 8 rows for MTF confirmation {variant}")
             for scenario in ("continuation", "reversal"):
-                scenario_rows = variant_rows.locator(f'tr[data-scenario="{scenario}"]')
+                scenario_rows = entry_table.locator(
+                    f'tr[data-variant="{variant}"][data-scenario="{scenario}"]'
+                )
                 self.assertEqual(scenario_rows.count(), 4, f"Expected one {scenario} row for each pair/period for {variant}")
         for case in mtf_cases:
             case_rows = entry_table.locator(f'tr[data-case="{case}"]')
