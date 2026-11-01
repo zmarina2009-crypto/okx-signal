@@ -28,9 +28,9 @@
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
       <div><label for="btVpFilter">Обязательный VP-фильтр</label><select id="btVpFilter"><option value="poc" selected>Направление относительно POC</option><option value="value-area">Отскок от VAL / VAH</option></select></div>
     </div>
-    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить VP-фильтры 15m</button><button id="btCompareMtf" type="button">Тест MTF: 15m → 1m</button><button id="btCompareMtfPeriod" type="button">Сравнить MTF ZEC/NEAR · 7/14 дней</button><button id="btComparePeriod" type="button">Сравнить ZEC / NEAR · 7 / 14 дней</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; стоп переносится в безубыток после +1R</span></div>
+    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить VP-фильтры 15m</button><button id="btCompareMtf" type="button">Тест MTF: 15m → 1m</button><button id="btCompareMtfPeriod" type="button">Сравнить MTF + 3 входа · ZEC/NEAR · 7/14 дней</button><button id="btComparePeriod" type="button">Сравнить ZEC / NEAR · 7 / 14 дней</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; стоп переносится в безубыток после +1R</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
-    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePeriodResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfPeriodResults" class="tablewrap" style="margin-top:12px"></div>
+    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePeriodResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfPeriodResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfEntryResults" class="tablewrap" style="margin-top:12px"></div>
     <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Фаза</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
     <div class="small" style="margin-top:8px">Размер позиции рассчитывается под риск 0,5% текущего капитала до стопа, с ограничением номинала размером капитала (без кредитного плеча). Комиссии и проскальзывание вычитаются отдельно. Если стоп и тейк затронуты одной минутной свечой, первым считается стоп. После +1R стоп переносится на цену входа с поправкой на комиссию и проскальзывание. При гэпе через стоп учитывается цена открытия. Это исследовательский тест, не прогноз доходности.</div>`;
   const anchor = document.querySelector("footer");
@@ -515,7 +515,7 @@
     finally{btn.disabled=false}
   });
 
-  function runMtfScenario(candles,contexts,scenario,mult,feePct,slipPct,riskPct,initialCapital){
+  function runMtfScenario(candles,contexts,scenario,mult,feePct,slipPct,riskPct,initialCapital,confirmationMode="previous"){
     const trades=[];
     let pos=null,equity=0,peak=0,maxDD=0,grossTotal=0,feesTotal=0,slippageTotal=0,signals=0;
     const feeRate=feePct/100,slipRate=slipPct/100,costRate=feeRate+slipRate;
@@ -549,7 +549,7 @@
         continue;
       }
       const context=contexts.get(candle.ts);
-      const signal=BacktestMath.getMtfEntrySignal(candles,i,context,scenario);
+      const signal=BacktestMath.getMtfEntrySignal(candles,i,context,scenario,confirmationMode);
       if(!signal)continue;
       signals++;
       const currentAtr=atr(candles,i,14);
@@ -592,7 +592,8 @@
   $("btCompareMtfPeriod").addEventListener("click",async()=>{
     const btn=$("btCompareMtfPeriod");btn.disabled=true;
     $("btCompareMtfPeriodResults").innerHTML="";
-    $("btStatus").textContent="Подготавливаю четыре MTF-прогона ZEC и NEAR за 7 и 14 дней…";
+    $("btCompareMtfEntryResults").innerHTML="";
+    $("btStatus").textContent="Подготавливаю четыре MTF-прогона ZEC и NEAR за 7 и 14 дней и сравниваю три подтверждения входа…";
     try{
       const mult=Math.max(.1,+$("btAtr").value||1.5);
       const fee=Math.max(0,+$("btFee").value||0),slip=Math.max(0,+$("btSlip").value||0);
@@ -602,6 +603,11 @@
         {pair:"ZEC-USDT-SWAP",days:14},
         {pair:"NEAR-USDT-SWAP",days:7},
         {pair:"NEAR-USDT-SWAP",days:14}
+      ];
+      const confirmationModes=[
+        {id:"previous",label:"A · Пробой предыдущей свечи"},
+        {id:"structure2",label:"B · Пробой структуры 2 свечей"},
+        {id:"structure2-volume",label:"C · Структура 2 свечей + объём"}
       ];
       const results=[];
       for(let index=0;index<cases.length;index++){
@@ -621,8 +627,6 @@
         if(contexts.size<expectedMinutes*.5){
           throw Error("Недостаточно MTF-контекстов для "+item.pair+": "+contexts.size);
         }
-        const continuation=runMtfScenario(candles,contexts,"continuation",mult,fee,slip,riskPct,capital);
-        const reversal=runMtfScenario(candles,contexts,"reversal",mult,fee,slip,riskPct,capital);
         const summarize=r=>({
           signals:r.signals,closed:r.trades.length,
           wr:r.trades.length?100*r.wins/r.trades.length:0,
@@ -633,6 +637,15 @@
           be:r.trades.filter(t=>t.why==="BE").length,
           open:r.openPosition?1:0
         });
+        // Reuse the same history for every confirmation mode. Each mode
+        // independently tests continuation and reversal.
+        const entryVariants=confirmationModes.map(mode=>({
+          id:mode.id,label:mode.label,
+          continuation:summarize(runMtfScenario(candles,contexts,"continuation",mult,fee,slip,riskPct,capital,mode.id)),
+          reversal:summarize(runMtfScenario(candles,contexts,"reversal",mult,fee,slip,riskPct,capital,mode.id))
+        }));
+        const continuation=entryVariants[0].continuation;
+        const reversal=entryVariants[0].reversal;
         const missing1m=candles.slice(1).reduce((sum,c,index)=>{
           const delta=c.ts-candles[index].ts;
           return sum+Math.max(0,Math.round(delta/60000)-1);
@@ -642,7 +655,7 @@
           coverage:Math.min(100,candles.length/expectedMinutes*100),
           missing1m,htfCandles:htfCandles.length,contexts:contexts.size,
           firstTs:candles[0].ts,lastTs:candles[candles.length-1].ts,
-          continuation:summarize(continuation),reversal:summarize(reversal)
+          continuation,reversal,entryVariants
         });
       }
       const pf=value=>value===Infinity?"∞":(value>0?fmt(value):"—");
@@ -668,8 +681,16 @@
       });
       html+='</tbody></table>';
       html+='<div class="small" style="margin-top:8px">Диапазоны 1m-истории: '+results.map(r=>r.pair+' '+r.days+'дн. '+d(r.firstTs)+' — '+d(r.lastTs)).join('; ')+'. 15m свечей: '+results.map(r=>r.pair+' '+r.days+'дн. — '+r.htfCandles).join('; ')+'. Для каждого сценария профиль использует только предшествующие закрытые 15m свечи; будущее и незакрытые свечи исключены.</div>';
+      let variantsHtml='<div class="small" style="margin-bottom:8px">Три правила подтверждения проверены на тех же четырёх наборах свечей. A — исходный пробой максимума/минимума одной предыдущей 1m-свечи. B — закрытие за локальным экстремумом двух предыдущих 1m-свечей. C — вариант B плюс объём текущей закрытой 1m-свечи строго выше 1,2× среднего объёма 20 предыдущих закрытых минут; сигнальная свеча не входит в среднее. Продолжение и разворот тестируются отдельно.</div>';
+      variantsHtml+='<table class="table" id="btMtfEntryComparison"><thead><tr><th>Инструмент</th><th>Период</th><th>Подтверждение</th><th>Сценарий</th><th>Сигналы</th><th>Закрыто</th><th>Win rate</th><th>Net PF</th><th>Net закрытых</th><th>Net с открытой</th><th>DD</th></tr></thead><tbody>';
+      results.forEach(r=>r.entryVariants.forEach(v=>["continuation","reversal"].forEach(scenario=>{
+        const s=v[scenario];
+        variantsHtml+='<tr data-case="'+r.pair+'-'+r.days+'" data-variant="'+v.id+'" data-scenario="'+scenario+'"><td>'+r.pair+'</td><td>'+r.days+' дн.</td><td>'+v.label+'</td><td>'+(scenario==="continuation"?"Продолжение":"Разворот")+'</td><td>'+s.signals+'</td><td>'+s.closed+'</td><td>'+n(s.wr)+'%</td><td>'+pf(s.pf)+'</td><td>'+n(s.net)+'</td><td>'+n(s.netWithOpen)+'</td><td>'+n(s.dd)+'</td></tr>';
+      }))));
+      variantsHtml+='</tbody></table><div class="small" style="margin-top:7px">Объём берётся из поля volume, возвращаемого OKX для свечи; сравнение относительное, поэтому валюта измерения не влияет на коэффициент. Сигналы считаются на закрытии 1m; открытые позиции и расходы по ним учитываются так же, как в основном MTF-тесте.</div>';
+      $("btCompareMtfEntryResults").innerHTML=variantsHtml;
       $("btCompareMtfPeriodResults").innerHTML=html;
-      $("btStatus").textContent="Сравнение MTF за 7 и 14 дней завершено: ZEC и NEAR, четыре независимых прогона; продолжение и разворот рассчитаны отдельно.";
+      $("btStatus").textContent="Сравнение MTF за 7 и 14 дней завершено: ZEC и NEAR, четыре независимых прогона; три подтверждения входа проверены отдельно для продолжения и разворота."
     }catch(e){
       $("btStatus").textContent="Ошибка сравнения MTF 7/14: "+(e.message||e);
     }finally{btn.disabled=false}
