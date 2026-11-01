@@ -22,6 +22,7 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
         cls.page_errors = []
         cls.okx_responses = []
         cls.period_comparison = ""
+        cls.mtf_comparison = ""
         cls.page.on("pageerror", lambda error: cls.page_errors.append(str(error)))
 
         def record_okx_response(response):
@@ -62,6 +63,7 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
                 "pageErrors": cls.page_errors,
                 "okxResponses": cls.okx_responses,
                 "periodComparison": cls.period_comparison,
+                "mtfComparison": cls.mtf_comparison,
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -152,6 +154,27 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
             self.assertGreater(len(row.locator("td").all()), 10, f"Incomplete result row for {case}")
         self.__class__.period_comparison = period_table.inner_text()
         print("\\nFOUR-WAY ZEC / NEAR 7D / 14D COMPARISON\\n" + self.period_comparison)
+
+        mtf_status = self.wait_for_action(
+            "btCompareMtfPeriod",
+            "Сравнение MTF за 7 и 14 дней завершено",
+            timeout=900_000,
+        )
+        self.assertIn("четыре независимых прогона", mtf_status)
+        mtf_table = self.page.locator("#btCompareMtfPeriodResults table")
+        self.assertTrue(mtf_table.is_visible(), "The MTF period comparison table should be visible")
+        mtf_cases = (
+            "ZEC-USDT-SWAP-7",
+            "ZEC-USDT-SWAP-14",
+            "NEAR-USDT-SWAP-7",
+            "NEAR-USDT-SWAP-14",
+        )
+        for case in mtf_cases:
+            row = self.page.locator(f'#btCompareMtfPeriodResults tr[data-case="{case}"]')
+            self.assertEqual(row.count(), 1, f"Missing MTF comparison row for {case}")
+            self.assertGreaterEqual(len(row.locator("td").all()), 19, f"Incomplete MTF result row for {case}")
+        self.__class__.mtf_comparison = mtf_table.inner_text()
+        print("\\nFOUR-WAY MTF CONTINUATION / REVERSAL COMPARISON\\n" + self.mtf_comparison)
 
         self.assertEqual(self.page_errors, [], f"Uncaught browser errors: {self.page_errors}")
         successful_okx = [
