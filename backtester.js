@@ -595,13 +595,13 @@
   $("btCompareMtfHoldout").addEventListener("click",async()=>{
     const btn=$("btCompareMtfHoldout");btn.disabled=true;
     $("btCompareMtfHoldoutResults").innerHTML="";
-    $("btStatus").textContent="Готовлю расширенный holdout: 7 пар, 3 неперекрывающихся окна по 14 дней; последние 21 сутки исключены…";
+    $("btStatus").textContent="Готовлю расширенный holdout: 7 пар, 3 неперекрывающихся окна по 14 дней; последние 49 суток исключены…";
     try{
       const mult=Math.max(.1,+$("btAtr").value||1.5);
       const fee=Math.max(0,+$("btFee").value||0),slip=Math.max(0,+$("btSlip").value||0);
       const capital=Math.max(10,+$("btCapital").value||1000),riskPct=.5;
       const minuteMs=60*1000,quarterMs=15*minuteMs,dayMs=24*60*minuteMs;
-      const windowDays=14,windowCount=3,warmupDays=2,excludeRecentDays=21;
+      const windowDays=14,windowCount=3,warmupDays=2,excludeRecentDays=49;
       // One extra day covers the partial current UTC day excluded by the planner.
       const historyDays=warmupDays+windowDays*windowCount+excludeRecentDays+1;
       const windowBars=windowDays*1440,minuteHistoryBars=historyDays*1440;
@@ -706,7 +706,7 @@
         }
       }
 
-      let auditHtml='<div class="small" style="margin:8px 0">Семь инструментов: ZEC и NEAR (базовая выборка), а также BTC, ETH, SOL, XRP и DOGE. Три последовательных неперекрывающихся 14-дневных окна (42 дня тестовой истории на пару). Для каждой выборки проверены все 1m-свечи, отсутствие разрывов и причинный MTF-контекст. Последние 21 сутки исключены из оценки, чтобы не использовать уже просмотренную историю; 2 дня перед первым окном выделены только на прогрев.</div>';
+      let auditHtml='<div class="small" style="margin:8px 0">Семь инструментов: ZEC и NEAR (базовая выборка), а также BTC, ETH, SOL, XRP и DOGE. Три последовательных неперекрывающихся 14-дневных окна (42 дня тестовой истории на пару). Для каждой выборки проверены все 1m-свечи, отсутствие разрывов и причинный MTF-контекст. Последние 49 суток исключены из оценки, чтобы не использовать уже просмотренную историю; 2 дня перед первым окном выделены только на прогрев.</div>';
       auditHtml+='<table class="table" id="btMtfHoldoutAudit"><thead><tr><th>Инструмент</th><th>Окно</th><th>Период UTC</th><th>Свечей 1m</th><th>Пропуски 1m</th><th>Покрытие</th><th>Контексты 15m</th><th>15m-история VP</th></tr></thead><tbody>';
       audit.forEach(row=>{
         auditHtml+='<tr data-case="'+row.pair+'-'+row.windowId+'"><td>'+row.pair+'</td><td>'+row.label+'</td><td>'+row.period+'</td><td>'+row.candles+'</td><td>'+row.missing+'</td><td>'+fmt(row.coverage)+'%</td><td>'+row.contexts+'</td><td>'+row.htfCandles+'</td></tr>';
@@ -730,7 +730,7 @@
       resultHtml+='</tbody></table>';
       resultHtml+='<div class="small" style="margin-top:8px">Окна не пересекаются по минутным свечам и P&amp;L. Это убирает повторное использование одних и тех же сделок в соседних тестовых выборках, но не означает статистическую независимость рыночных наблюдений: соседние режимы рынка могут быть связаны. Метрики двух окон нельзя складывать без отдельного расчёта.</div>';
       $("btCompareMtfHoldoutResults").innerHTML=auditHtml+resultHtml;
-      $("btStatus").textContent="Проверка завершена: 7 пар (ZEC и NEAR + BTC, ETH, SOL, XRP и DOGE), три неперекрывающихся 14-дневных окна; последние 21 сутки исключены; 126 сравнений A/B/C × продолжение/разворот.";
+      $("btStatus").textContent="Проверка завершена: 7 пар (ZEC и NEAR + BTC, ETH, SOL, XRP и DOGE), три неперекрывающихся 14-дневных окна; последние 49 суток исключены; 126 сравнений A/B/C × продолжение/разворот.";
     }catch(e){
       $("btStatus").textContent="Ошибка проверки неперекрывающихся MTF-окон: "+(e.message||e);
     }finally{btn.disabled=false}

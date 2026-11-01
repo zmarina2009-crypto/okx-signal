@@ -312,15 +312,15 @@ test("MTF holdout planner rejects invalid timestamps and window settings",()=>{
 test("MTF holdout planner supports three contiguous 14-day windows after an excluded recent period",()=>{
   const lastMinuteTs=Date.UTC(2026,10,1,20,37);
   const plan=createMtfHoldoutPlan(lastMinuteTs,{
-    windowDays:14,windowCount:3,warmupDays:2,excludeRecentDays:21
+    windowDays:14,windowCount:3,warmupDays:2,excludeRecentDays:49
   });
   const day=24*60*60*1000;
-  assert.equal(plan.endExclusive,Date.UTC(2026,9,11));
-  assert.equal(plan.warmupStartTs,Date.UTC(2026,7,28));
+  assert.equal(plan.endExclusive,Date.UTC(2026,8,13));
+  assert.equal(plan.warmupStartTs,Date.UTC(2026,6,31));
   assert.deepEqual(plan.windows,[
-    {id:"older",startTs:Date.UTC(2026,7,30),endTs:Date.UTC(2026,8,13)},
-    {id:"middle-2",startTs:Date.UTC(2026,8,13),endTs:Date.UTC(2026,8,27)},
-    {id:"newer",startTs:Date.UTC(2026,8,27),endTs:Date.UTC(2026,9,11)}
+    {id:"older",startTs:Date.UTC(2026,7,2),endTs:Date.UTC(2026,7,16)},
+    {id:"middle-2",startTs:Date.UTC(2026,7,16),endTs:Date.UTC(2026,7,30)},
+    {id:"newer",startTs:Date.UTC(2026,7,30),endTs:Date.UTC(2026,8,13)}
   ]);
   assert.equal(plan.windows.length,3);
   for(let i=0;i<plan.windows.length;i++){
