@@ -24,6 +24,8 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
         cls.period_comparison = ""
         cls.mtf_comparison = ""
         cls.mtf_entry_comparison = ""
+        cls.mtf_holdout_comparison = ""
+        cls.mtf_holdout_audit = ""
         cls.page.on("pageerror", lambda error: cls.page_errors.append(str(error)))
 
         def record_okx_response(response):
@@ -66,6 +68,8 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
                 "periodComparison": cls.period_comparison,
                 "mtfComparison": cls.mtf_comparison,
                 "mtfEntryComparison": cls.mtf_entry_comparison,
+                "mtfHoldoutComparison": cls.mtf_holdout_comparison,
+                "mtfHoldoutAudit": cls.mtf_holdout_audit,
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -198,6 +202,53 @@ class BacktesterBrowserSmokeTest(unittest.TestCase):
             self.assertTrue(all(len(row.locator("td").all()) == 11 for row in case_rows.all()))
         self.__class__.mtf_entry_comparison = entry_table.inner_text()
         print("\\nMTF ENTRY CONFIRMATION VARIANTS\\n" + self.mtf_entry_comparison)
+
+        holdout_status = self.wait_for_action(
+            "btCompareMtfHoldout",
+            "неперекрывающихся 14-дневных окон",
+            timeout=900_000,
+        )
+        self.assertIn("ZEC и NEAR", holdout_status)
+        holdout_root = self.page.locator("#btCompareMtfHoldoutResults")
+        audit_table = holdout_root.locator("table#btMtfHoldoutAudit")
+        result_table = holdout_root.locator("table#btMtfHoldoutComparison")
+        self.assertEqual(audit_table.count(), 1, "The holdout data-quality audit table should render")
+        self.assertEqual(result_table.count(), 1, "The non-overlapping holdout comparison should render")
+        audit_rows = audit_table.locator("tbody tr")
+        self.assertEqual(audit_rows.count(), 4, "Two instruments × two disjoint periods should produce 4 audit rows")
+        for case in (
+            "ZEC-USDT-SWAP-older",
+            "ZEC-USDT-SWAP-newer",
+            "NEAR-USDT-SWAP-older",
+            "NEAR-USDT-SWAP-newer",
+        ):
+            audit_row = audit_table.locator(f'tr[data-case="{case}"]')
+            self.assertEqual(audit_row.count(), 1, f"Missing data audit for {case}")
+            cells = audit_row.locator("td").all()
+            self.assertEqual(len(cells), 8, f"Incomplete coverage audit for {case}")
+            self.assertIn("100", cells[5].inner_text(), f"Expected complete 1m coverage for {case}")
+            self.assertEqual(cells[4].inner_text().strip(), "0", f"Unexpected 1m gaps in {case}")
+
+        holdout_rows = result_table.locator("tbody tr")
+        self.assertEqual(holdout_rows.count(), 24, "2 pairs × 2 windows × 3 entry modes × 2 scenarios must produce 24 rows")
+        for case in (
+            "ZEC-USDT-SWAP-older",
+            "ZEC-USDT-SWAP-newer",
+            "NEAR-USDT-SWAP-older",
+            "NEAR-USDT-SWAP-newer",
+        ):
+            case_rows = result_table.locator(f'tr[data-case="{case}"]')
+            self.assertEqual(case_rows.count(), 6, f"Expected 3 entry modes × 2 scenarios for {case}")
+            for variant in ("previous", "structure2", "structure2-volume"):
+                for scenario in ("continuation", "reversal"):
+                    matching = result_table.locator(
+                        f'tr[data-case="{case}"][data-variant="{variant}"][data-scenario="{scenario}"]'
+                    )
+                    self.assertEqual(matching.count(), 1, f"Missing {variant}/{scenario} row for {case}")
+        self.__class__.mtf_holdout_audit = audit_table.inner_text()
+        self.__class__.mtf_holdout_comparison = result_table.inner_text()
+        print("\\nNON-OVERLAPPING MTF HOLDOUT AUDIT\\n" + self.mtf_holdout_audit)
+        print("\\nNON-OVERLAPPING MTF HOLDOUT RESULTS\\n" + self.mtf_holdout_comparison)
 
         self.assertEqual(self.page_errors, [], f"Uncaught browser errors: {self.page_errors}")
         successful_okx = [

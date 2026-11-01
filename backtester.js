@@ -28,9 +28,9 @@
       <div><label for="btFilter">Фильтр направления</label><select id="btFilter"><option value="none" selected>Без фильтра</option><option value="slope">Наклон SMA21 за 5 свечей</option></select></div>
       <div><label for="btVpFilter">Обязательный VP-фильтр</label><select id="btVpFilter"><option value="poc" selected>Направление относительно POC</option><option value="value-area">Отскок от VAL / VAH</option></select></div>
     </div>
-    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить VP-фильтры 15m</button><button id="btCompareMtf" type="button">Тест MTF: 15m → 1m</button><button id="btCompareMtfPeriod" type="button">Сравнить MTF + 3 входа · ZEC/NEAR · 7/14 дней</button><button id="btComparePeriod" type="button">Сравнить ZEC / NEAR · 7 / 14 дней</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; стоп переносится в безубыток после +1R</span></div>
+    <div class="btrow" style="margin-top:10px"><button id="btRun" class="primary" type="button">Запустить тест</button><button id="btCompareEntry" type="button">Сравнить оба входа</button><button id="btCompareExit" type="button">Сравнить выходы</button><button id="btCompareTrail" type="button">Сравнить трейлинг 5R</button><button id="btComparePhase" type="button">Сравнить фазы рынка</button><button id="btCompareAdaptive" type="button">Адаптивный выход</button><button id="btCompare" type="button">Сравнить VP-фильтры 15m</button><button id="btCompareMtf" type="button">Тест MTF: 15m → 1m</button><button id="btCompareMtfPeriod" type="button">Сравнить MTF + 3 входа · ZEC/NEAR · 7/14 дней</button><button id="btCompareMtfHoldout" type="button">Проверить 2 неперекрывающихся окна · 14 дней</button><button id="btComparePeriod" type="button">Сравнить ZEC / NEAR · 7 / 14 дней</button><span class="small">ATR(14) × заданный множитель • базовый выход TP 5R; стоп переносится в безубыток после +1R</span></div>
     <div id="btStatus" class="btstatus">Нажми «Запустить тест», чтобы загрузить исторические минутные свечи OKX.</div>
-    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePeriodResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfPeriodResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfEntryResults" class="tablewrap" style="margin-top:12px"></div>
+    <div id="btResults" class="btresults"></div><div id="btCompareEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareExitResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareTrailResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePhaseResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareAdaptiveResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareResults" class="tablewrap" style="margin-top:12px"></div><div id="btComparePeriodResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfPeriodResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfEntryResults" class="tablewrap" style="margin-top:12px"></div><div id="btCompareMtfHoldoutResults" class="tablewrap" style="margin-top:12px"></div>
     <div class="tablewrap" style="margin-top:12px"><table class="table"><thead><tr><th>Время входа</th><th>Фаза</th><th>Направление</th><th>Вход</th><th>Стоп</th><th>Выход</th><th>Результат, USDT*</th></thead><tbody id="btTrades"></tbody></table></div>
     <div class="small" style="margin-top:8px">Размер позиции рассчитывается под риск 0,5% текущего капитала до стопа, с ограничением номинала размером капитала (без кредитного плеча). Комиссии и проскальзывание вычитаются отдельно. Если стоп и тейк затронуты одной минутной свечой, первым считается стоп. После +1R стоп переносится на цену входа с поправкой на комиссию и проскальзывание. При гэпе через стоп учитывается цена открытия. Это исследовательский тест, не прогноз доходности.</div>`;
   const anchor = document.querySelector("footer");
@@ -71,7 +71,7 @@
       if(after && oldest>=Number(after)) break;
       after=String(oldest);
       if(all.size>=target) break;
-      await new Promise(r=>setTimeout(r,80));
+      await new Promise(r=>setTimeout(r,110));
     }
     return [...all.values()].sort((a,b)=>a.ts-b.ts).slice(-target);
   }
@@ -515,7 +515,7 @@
     finally{btn.disabled=false}
   });
 
-  function runMtfScenario(candles,contexts,scenario,mult,feePct,slipPct,riskPct,initialCapital,confirmationMode="previous"){
+  function runMtfScenario(candles,contexts,scenario,mult,feePct,slipPct,riskPct,initialCapital,confirmationMode="previous",range=null){
     const trades=[];
     let pos=null,equity=0,peak=0,maxDD=0,grossTotal=0,feesTotal=0,slippageTotal=0,signals=0;
     const feeRate=feePct/100,slipRate=slipPct/100,costRate=feeRate+slipRate;
@@ -529,7 +529,9 @@
       equity+=accounting.net;peak=Math.max(peak,equity);maxDD=Math.max(maxDD,peak-equity);
       trades.push(pos);pos=null;
     }
-    for(let i=30;i<candles.length;i++){
+    const startIndex=Math.max(30,Math.min(candles.length,Number.isInteger(range?.startIndex)?range.startIndex:30));
+    const endIndex=Math.max(startIndex,Math.min(candles.length,Number.isInteger(range?.endIndex)?range.endIndex:candles.length));
+    for(let i=startIndex;i<endIndex;i++){
       const candle=candles[i];
       if(pos){
         if(i<pos.firstExitIndex)continue;
@@ -568,8 +570,8 @@
       // OHLC extremes cannot close a position entered at this close.
     }
     let openNet=0,openPosition=null;
-    if(pos&&candles.length){
-      const mark=candles[candles.length-1].c;
+    if(pos&&endIndex>startIndex){
+      const mark=candles[endIndex-1].c;
       const marked=BacktestMath.calculateTradePnl({
         entry:pos.entry,exit:mark,dir:pos.dir,qty:pos.qty,feeRate,slipRate
       });
@@ -588,6 +590,148 @@
       netPF:netLoss>0?netWin/netLoss:(netWin>0?Infinity:0)};
   }
 
+
+
+  $("btCompareMtfHoldout").addEventListener("click",async()=>{
+    const btn=$("btCompareMtfHoldout");btn.disabled=true;
+    $("btCompareMtfHoldoutResults").innerHTML="";
+    $("btStatus").textContent="Загружаю 31 день истории ZEC и NEAR для двух неперекрывающихся 14-дневных MTF-окон…";
+    try{
+      const mult=Math.max(.1,+$("btAtr").value||1.5);
+      const fee=Math.max(0,+$("btFee").value||0),slip=Math.max(0,+$("btSlip").value||0);
+      const capital=Math.max(10,+$("btCapital").value||1000),riskPct=.5;
+      const minuteMs=60*1000,quarterMs=15*minuteMs,dayMs=24*60*minuteMs;
+      const windowDays=14,warmupDays=2,historyDays=31;
+      const windowBars=windowDays*1440,minuteHistoryBars=historyDays*1440;
+      const confirmationModes=[
+        {id:"previous",label:"A · Пробой предыдущей свечи"},
+        {id:"structure2",label:"B · Пробой структуры 2 свечей"},
+        {id:"structure2-volume",label:"C · Структура + объём"}
+      ];
+      const pairs=["ZEC-USDT-SWAP","NEAR-USDT-SWAP"];
+      const audit=[],allRows=[];
+      const lowerBound=(items,ts)=>{
+        let lo=0,hi=items.length;
+        while(lo<hi){const mid=(lo+hi)>>1;if(items[mid].ts<ts)lo=mid+1;else hi=mid;}
+        return lo;
+      };
+      const exactRange=(items,startTs,endTs,stepMs,expected,label)=>{
+        const startIndex=lowerBound(items,startTs),endIndex=lowerBound(items,endTs);
+        if(endIndex-startIndex!==expected||items[startIndex]?.ts!==startTs||
+           items[endIndex-1]?.ts!==endTs-stepMs){
+          throw Error(label+": неполное покрытие ("+(endIndex-startIndex)+" из "+expected+" свечей)");
+        }
+        for(let i=startIndex+1;i<endIndex;i++){
+          if(items[i].ts-items[i-1].ts!==stepMs){
+            throw Error(label+": обнаружен разрыв между "+new Date(items[i-1].ts).toISOString()+
+              " и "+new Date(items[i].ts).toISOString());
+          }
+        }
+        return {startIndex,endIndex,count:endIndex-startIndex};
+      };
+      const fmtUtc=ts=>new Date(ts).toISOString().slice(0,10);
+      const formatNumber=value=>Number.isFinite(value)?fmt(value):"—";
+      const formatPf=value=>value===Infinity?"∞":(value>0?fmt(value):"—");
+      const summarize=result=>({
+        signals:result.signals,closed:result.trades.length,
+        wr:result.trades.length?100*result.wins/result.trades.length:0,
+        pf:result.netPF,net:result.net,openNet:result.openNet,
+        netWithOpen:result.netWithOpen,dd:result.maxDD,
+        fees:result.feesTotal,slippage:result.slippageTotal,
+        tp:result.trades.filter(t=>String(t.why).startsWith("TP")).length,
+        sl:result.trades.filter(t=>t.why==="SL").length,
+        be:result.trades.filter(t=>t.why==="BE").length,
+        open:result.openPosition?1:0
+      });
+
+      for(let pairIndex=0;pairIndex<pairs.length;pairIndex++){
+        const pair=pairs[pairIndex];
+        $("btStatus").textContent="Независимые окна "+(pairIndex+1)+"/2: загружаю 31 день 1m и 15m истории "+pair+"…";
+        const candles=await getCandles(historyDays,"1m",pair);
+        const htfCandles=await getCandles(historyDays,"15m",pair);
+        if(candles.length<minuteHistoryBars*.99){
+          throw Error(pair+": получено только "+candles.length+" из "+minuteHistoryBars+" требуемых 1m-свечей за 31 день");
+        }
+        if(!candles.length||!htfCandles.length)throw Error(pair+": OKX не вернул историю свечей");
+        const plan=BacktestMath.createMtfHoldoutPlan(candles[candles.length-1].ts,{
+          windowDays,windowCount:2,warmupDays
+        });
+        const firstWindow=plan.windows[0];
+        const warmupAndTest=exactRange(
+          candles,plan.warmupStartTs,plan.endExclusive,minuteMs,
+          (warmupDays+windowDays*2)*1440,pair+" · 1m прогрев + два тестовых окна"
+        );
+        const htfStartTs=firstWindow.startTs-24*60*minuteMs;
+        const htfExpected=(plan.endExclusive-htfStartTs)/quarterMs;
+        exactRange(htfCandles,htfStartTs,plan.endExclusive,quarterMs,htfExpected,
+          pair+" · 15m контекст для SMA21 и VP"
+        );
+        const contexts=BacktestMath.buildMtfContextsByMinute(candles,htfCandles,{
+          rows:30,lookback:96,minuteDurationMs:minuteMs,fifteenDurationMs:quarterMs
+        });
+        for(const window of plan.windows){
+          const range=exactRange(candles,window.startTs,window.endTs,minuteMs,windowBars,
+            pair+" · "+window.id+" 14-дневное окно"
+          );
+          const contextCount=candles.slice(range.startIndex,range.endIndex)
+            .reduce((count,candle)=>count+(contexts.has(candle.ts)?1:0),0);
+          if(contextCount!==windowBars){
+            throw Error(pair+" · "+window.id+": MTF-контекст доступен для "+contextCount+
+              " из "+windowBars+" минут");
+          }
+          const label=window.id==="older"?"Окно 1 · старшее":"Окно 2 · более новое";
+          const endInclusive=window.endTs-minuteMs;
+          audit.push({
+            pair,windowId:window.id,label,
+            period:fmtUtc(window.startTs)+" — "+fmtUtc(endInclusive),
+            candles:range.count,missing:0,coverage:100,
+            contexts:contextCount,htfCandles:htfExpected
+          });
+          for(const mode of confirmationModes){
+            for(const scenario of ["continuation","reversal"]){
+              const result=runMtfScenario(candles,contexts,scenario,mult,fee,slip,riskPct,capital,
+                mode.id,{startIndex:range.startIndex,endIndex:range.endIndex});
+              allRows.push({
+                pair,windowId:window.id,label,period:fmtUtc(window.startTs)+" — "+fmtUtc(endInclusive),
+                variant:mode,scenario,stats:summarize(result),candles:range.count
+              });
+            }
+          }
+        }
+        if(warmupAndTest.count!==(warmupDays+2*windowDays)*1440){
+          throw Error(pair+": неверная длина подготовленного диапазона");
+        }
+      }
+
+      let auditHtml='<div class="small" style="margin:8px 0">Качество истории и границы окон (время UTC). Для каждой 14-дневной выборки проверены все минутные свечи, отсутствие разрывов и наличие причинного MTF-контекста. 2 дня перед окном 1 и 2 дня непосредственно перед окном 2 доступны только для прогрева и не включаются в торговую статистику.</div>';
+      auditHtml+='<table class="table" id="btMtfHoldoutAudit"><thead><tr><th>Инструмент</th><th>Окно</th><th>Период UTC</th><th>Свечей 1m</th><th>Пропуски 1m</th><th>Покрытие</th><th>Контексты 15m</th><th>15m-история VP</th></tr></thead><tbody>';
+      audit.forEach(row=>{
+        auditHtml+='<tr data-case="'+row.pair+'-'+row.windowId+'"><td>'+row.pair+'</td><td>'+row.label+'</td><td>'+row.period+'</td><td>'+row.candles+'</td><td>'+row.missing+'</td><td>'+fmt(row.coverage)+'%</td><td>'+row.contexts+'</td><td>'+row.htfCandles+'</td></tr>';
+      });
+      auditHtml+='</tbody></table>';
+
+      let resultHtml='<div class="small" style="margin:8px 0">Сравнение A/B/C на одних и тех же 14-дневных неперекрывающихся отрезках. Каждый вариант и сценарий начинает с '+fmt(capital)+' USDT отдельно в каждом окне. ATR(14) × '+fmt(mult)+', риск 0,5%, комиссия '+fmt(fee)+'% и проскальзывание '+fmt(slip)+'% на сторону, BE после +1R, TP 5R, без плеча. В итог включены расходы; незавершённая позиция показывается отдельно и не считается закрытой сделкой.</div>';
+      resultHtml+='<table class="table" id="btMtfHoldoutComparison"><thead><tr><th>Инструмент</th><th>Период UTC</th><th>Подтверждение</th><th>Сценарий</th><th>Сигналы</th><th>Закрыто</th><th>Win rate</th><th>Net PF</th><th>Net закрытых</th><th>Net с открытой</th><th>Max DD</th><th>Комиссия</th><th>Проскальзывание</th><th>TP / SL / BE / открыта</th></tr></thead><tbody>';
+      allRows.forEach(row=>{
+        const s=row.stats;
+        resultHtml+='<tr data-case="'+row.pair+'-'+row.windowId+'" data-window="'+row.windowId+
+          '" data-variant="'+row.variant.id+'" data-scenario="'+row.scenario+'"><td>'+row.pair+
+          '</td><td>'+row.period+'</td><td>'+row.variant.label+'</td><td>'+
+          (row.scenario==="continuation"?"Продолжение":"Разворот")+'</td><td>'+s.signals+
+          '</td><td>'+s.closed+'</td><td>'+formatNumber(s.wr)+'%</td><td>'+formatPf(s.pf)+
+          '</td><td>'+formatNumber(s.net)+'</td><td>'+formatNumber(s.netWithOpen)+
+          '</td><td>'+formatNumber(s.dd)+'</td><td>'+formatNumber(s.fees)+
+          '</td><td>'+formatNumber(s.slippage)+'</td><td>'+s.tp+' / '+s.sl+' / '+s.be+' / '+s.open+
+          '</td></tr>';
+      });
+      resultHtml+='</tbody></table>';
+      resultHtml+='<div class="small" style="margin-top:8px">Окна не пересекаются по минутным свечам и P&amp;L. Это убирает повторное использование одних и тех же сделок в соседних тестовых выборках, но не означает статистическую независимость рыночных наблюдений: соседние режимы рынка могут быть связаны. Метрики двух окон нельзя складывать без отдельного расчёта.</div>';
+      $("btCompareMtfHoldoutResults").innerHTML=auditHtml+resultHtml;
+      $("btStatus").textContent="Проверка завершена: два неперекрывающихся 14-дневных окна для ZEC и NEAR; 24 варианта A/B/C × продолжение/разворот.";
+    }catch(e){
+      $("btStatus").textContent="Ошибка проверки неперекрывающихся MTF-окон: "+(e.message||e);
+    }finally{btn.disabled=false}
+  });
 
   $("btCompareMtfPeriod").addEventListener("click",async()=>{
     const btn=$("btCompareMtfPeriod");btn.disabled=true;

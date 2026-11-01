@@ -170,6 +170,34 @@
     }
     return out;
   }
+  function createMtfHoldoutPlan(lastMinuteTs,options={}){
+    const dayMs=24*60*60*1000,minuteMs=60*1000;
+    const windowDays=options.windowDays??14;
+    const windowCount=options.windowCount??2;
+    const warmupDays=options.warmupDays??2;
+    if(!Number.isFinite(lastMinuteTs)||lastMinuteTs<0||
+       !Number.isInteger(windowDays)||windowDays<1||
+       !Number.isInteger(windowCount)||windowCount<2||
+       !Number.isInteger(warmupDays)||warmupDays<1){
+      throw new RangeError("Invalid MTF holdout plan options");
+    }
+    // End at the latest fully completed UTC calendar day. Exclude the
+    // unfinished part of the current UTC day from both measured windows.
+    const endExclusive=Math.floor((lastMinuteTs+minuteMs)/dayMs)*dayMs;
+    const windowMs=windowDays*dayMs;
+    const windows=Array.from({length:windowCount},(_,index)=>{
+      const startTs=endExclusive-(windowCount-index)*windowMs;
+      return {id:index===0?"older":index===windowCount-1?"newer":"middle-"+(index+1),
+        startTs,endTs:startTs+windowMs};
+    });
+    return {
+      endExclusive,
+      warmupStartTs:windows[0].startTs-warmupDays*dayMs,
+      warmupEndTs:windows[0].startTs,
+      windowDays,windowCount,warmupDays,windows
+    };
+  }
+
   function getMtfEntrySignal(minuteCandles,index,context,scenario,confirmationMode="previous"){
     if(!Array.isArray(minuteCandles)||!Number.isInteger(index)||index<21||!context||
        !["continuation","reversal"].includes(scenario)||
@@ -216,7 +244,7 @@
     return null;
   }
 
-  const api={breakevenPrice,stopFill,positionSize,targetPrice,atr,firstExitIndex,intrabarExit,advancePosition,calculateTradePnl,closedCandles,volumeProfile,buildVolumeProfilesByMinute,smaClose,buildMtfContextsByMinute,getMtfEntrySignal};
+  const api={breakevenPrice,stopFill,positionSize,targetPrice,atr,firstExitIndex,intrabarExit,advancePosition,calculateTradePnl,closedCandles,volumeProfile,buildVolumeProfilesByMinute,smaClose,buildMtfContextsByMinute,createMtfHoldoutPlan,getMtfEntrySignal};
   if(typeof module!=="undefined"&&module.exports) module.exports=api;
   root.BacktestMath=api;
 })(typeof globalThis!=="undefined"?globalThis:this);
