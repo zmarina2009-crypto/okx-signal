@@ -237,3 +237,45 @@ test("1m reversal entry requires a 1m SMA21 reclaim and break of the previous ca
   assert.deepEqual(getMtfEntrySignal(long,21,{reversalLong:true},"reversal"),{dir:1,reason:"reversal"});
   assert.deepEqual(getMtfEntrySignal(short,21,{reversalShort:true},"reversal"),{dir:-1,reason:"reversal"});
 });
+
+
+test("MTF entry variants distinguish previous-candle and two-candle structure breakouts",()=>{
+  const makeBars=(close,volume=100)=>{
+    const bars=Array.from({length:21},()=>({o:100,h:100.2,l:99.8,c:100,v:100}));
+    bars[19]={o:100,h:100.8,l:99.8,c:100,v:100};
+    bars[20]={o:100,h:100.5,l:99.8,c:100,v:100};
+    bars.push({o:100.1,h:Math.max(close,100.2),l:99.9,c:close,v:volume});
+    return bars;
+  };
+  const context={continuationDir:1};
+  const clearsPreviousOnly=makeBars(100.7);
+  assert.deepEqual(getMtfEntrySignal(clearsPreviousOnly,21,context,"continuation","previous"),
+    {dir:1,reason:"continuation"});
+  assert.equal(getMtfEntrySignal(clearsPreviousOnly,21,context,"continuation","structure2"),null,
+    "the close has not cleared the higher high from two bars back");
+  const clearsTwoBarRange=makeBars(100.9);
+  assert.deepEqual(getMtfEntrySignal(clearsTwoBarRange,21,context,"continuation","structure2"),
+    {dir:1,reason:"continuation"});
+});
+
+test("MTF volume confirmation requires more than 1.2x prior 20-minute average",()=>{
+  const bars=Array.from({length:21},()=>({o:100,h:100.2,l:99.8,c:100,v:100}));
+  bars[19]={o:100,h:100.8,l:99.8,c:100,v:100};
+  bars[20]={o:100,h:100.5,l:99.8,c:100,v:100};
+  bars.push({o:100.1,h:101.2,l:99.9,c:100.9,v:120});
+  const context={continuationDir:1};
+  assert.equal(getMtfEntrySignal(bars,21,context,"continuation","structure2-volume"),null,
+    "equal to 1.2x average is not strictly above the threshold");
+  bars[21].v=121;
+  assert.deepEqual(getMtfEntrySignal(bars,21,context,"continuation","structure2-volume"),
+    {dir:1,reason:"continuation"});
+});
+
+test("MTF two-candle structural breakout is mirrored for SHORT continuation",()=>{
+  const bars=Array.from({length:21},()=>({o:100,h:100.2,l:99.8,c:100,v:100}));
+  bars[19]={o:100,h:100.2,l:99.2,c:100,v:100};
+  bars[20]={o:100,h:100.2,l:99.5,c:100,v:100};
+  bars.push({o:99.9,h:100.1,l:98.5,c:98.9,v:100});
+  assert.deepEqual(getMtfEntrySignal(bars,21,{continuationDir:-1},"continuation","structure2"),
+    {dir:-1,reason:"continuation"});
+});
