@@ -170,24 +170,49 @@
     }
     return out;
   }
-  function getMtfEntrySignal(minuteCandles,index,context,scenario){
+  function getMtfEntrySignal(minuteCandles,index,context,scenario,confirmationMode="previous"){
     if(!Array.isArray(minuteCandles)||!Number.isInteger(index)||index<21||!context||
-       !["continuation","reversal"].includes(scenario))return null;
-    const current=minuteCandles[index],previous=minuteCandles[index-1];
-    if(!current||!previous||![current.o,current.h,current.l,current.c,previous.h,previous.l,previous.c].every(Number.isFinite))return null;
+       !["continuation","reversal"].includes(scenario)||
+       !["previous","structure2","structure2-volume"].includes(confirmationMode))return null;
+    const current=minuteCandles[index],previous=minuteCandles[index-1],twoBack=minuteCandles[index-2];
+    if(!current||!previous||!twoBack||
+       ![current.o,current.h,current.l,current.c,previous.h,previous.l,previous.c,twoBack.h,twoBack.l].every(Number.isFinite))return null;
     const currentSma=smaClose(minuteCandles,index,21),previousSma=smaClose(minuteCandles,index-1,21);
     if(!Number.isFinite(currentSma)||!Number.isFinite(previousSma))return null;
+
+    // A: the original previous-candle breakout. B/C: clear the full range
+    // of both previous completed 1m candles.
+    const breakoutHigh=confirmationMode==="previous"?previous.h:Math.max(previous.h,twoBack.h);
+    const breakoutLow=confirmationMode==="previous"?previous.l:Math.min(previous.l,twoBack.l);
+    const breakLong=current.c>breakoutHigh,breakShort=current.c<breakoutLow;
+
+    // C: current completed candle volume must be strictly above 1.2x the
+    // mean volume of the 20 preceding completed candles (excluding current).
+    let volumeConfirmed=true;
+    if(confirmationMode==="structure2-volume"){
+      if(!Number.isFinite(current.v)||current.v<0)return null;
+      let volumeSum=0;
+      for(let k=index-20;k<index;k++){
+        const volume=minuteCandles[k]?.v;
+        if(!Number.isFinite(volume)||volume<0)return null;
+        volumeSum+=volume;
+      }
+      const averageVolume=volumeSum/20;
+      volumeConfirmed=averageVolume>0&&current.v>averageVolume*1.2;
+    }
+    if(!volumeConfirmed)return null;
+
     if(scenario==="continuation"){
       if(context.continuationDir===1&&current.l<=currentSma&&current.c>currentSma&&
-         current.c>current.o&&current.c>previous.h)return {dir:1,reason:"continuation"};
+         current.c>current.o&&breakLong)return {dir:1,reason:"continuation"};
       if(context.continuationDir===-1&&current.h>=currentSma&&current.c<currentSma&&
-         current.c<current.o&&current.c<previous.l)return {dir:-1,reason:"continuation"};
+         current.c<current.o&&breakShort)return {dir:-1,reason:"continuation"};
       return null;
     }
     if(context.reversalLong&&previous.c<=previousSma&&current.c>currentSma&&
-       current.c>current.o&&current.c>previous.h)return {dir:1,reason:"reversal"};
+       current.c>current.o&&breakLong)return {dir:1,reason:"reversal"};
     if(context.reversalShort&&previous.c>=previousSma&&current.c<currentSma&&
-       current.c<current.o&&current.c<previous.l)return {dir:-1,reason:"reversal"};
+       current.c<current.o&&breakShort)return {dir:-1,reason:"reversal"};
     return null;
   }
 
