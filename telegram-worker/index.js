@@ -136,7 +136,7 @@ function tfMs(tf) {
 }
 function price(n) { return Number(n).toLocaleString("en-US", { maximumFractionDigits: 8 }); }
 function isFlexibleRsiVpRule(rule) {
-  return Boolean(rule?.combo && Number(rule.comboCount) === 2 && rule.rsi && rule.vp && !rule.volume && !rule.sma);
+  return Boolean(rule?.pair === "SOL-USDT-SWAP" && rule?.tf === "15m" && rule?.combo && Number(rule.comboCount) === 2 && rule.rsi && rule.vp && !rule.volume && !rule.sma);
 }
 
 let state = { lastClosed: {}, lastAlertAt: {}, lastSmaTouch: {}, recentSignals: [], performanceSignals: [], comboRsiVpActive: {} };
