@@ -2,7 +2,7 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { recordPerformanceSignal, updatePerformanceOutcomes, buildPerformanceStats } from "./statistics.js";
-import { volumeProfileCrossings } from "./volume-profile.js";
+import { volumeProfileCrossings, volumeProfileProximity } from "./volume-profile.js";
 import { diagnoseComboReversal, shouldSendStandaloneTelegram } from "./combo-reversal.js";
 
 const PORT = Number(process.env.PORT || 3000);
@@ -270,6 +270,7 @@ async function processPair(pair, tf, rule) {
   if (isNewClosedCandle) {
     state.lastClosed[candleKey] = last.ts;
     const end = closed.length;
+    let rsiSignalDirection = null;
     if (rule.volume && end >= VOLUME_PERIOD + 1) {
       const base = closed.slice(end - VOLUME_PERIOD - 1, end - 1).map(c => c.v);
       const avg = average(base);
@@ -285,10 +286,12 @@ async function processPair(pair, tf, rule) {
       const prev = rsi(closed, RSI_PERIOD, end - 1);
       if (value != null && prev != null) {
         if (prev >= RSI_LOW && value < RSI_LOW) {
+          rsiSignalDirection = "LONG";
           if (shouldSendStandaloneTelegram(rule)) await emit("rsi", pair, tf, "LONG", last.c, `RSI: ${value.toFixed(1)} — выход ниже ${RSI_LOW}`);
           recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c, rule, closed);
         }
         if (prev <= RSI_HIGH && value > RSI_HIGH) {
+          rsiSignalDirection = "SHORT";
           if (shouldSendStandaloneTelegram(rule)) await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`);
           recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c, rule, closed);
         }
