@@ -320,11 +320,20 @@ async function processPair(pair, tf, rule) {
       rsiPeriod: RSI_PERIOD, rsiLow: RSI_LOW, rsiHigh: RSI_HIGH,
       atrPeriod: 14, vpPeriod: VP_PERIOD, vpRows: VP_ROWS, maxDistanceAtr: 0.25
     });
-    const signal = diagnosis.signal;
+    let signal = diagnosis.signal;
     if (!signal) {
       delete state.comboRsiVpActive[key];
       console.log("COMBO RSI+VP proximity waiting:", pair, tf, diagnosis.reason || "conditions not met");
-    } else {
+    } else if (rule.chopFilter) {
+      const chop = choppiness(closed, rule.chopPeriod);
+      const threshold = clamp(Number(rule.chopThreshold) || 61.8, 20, 100);
+      if (chop == null || chop >= threshold) {
+        signal = null;
+        delete state.comboRsiVpActive[key];
+        console.log("COMBO RSI+VP proximity blocked by CHOP:", pair, tf, chop == null ? "insufficient candles" : "CHOP " + chop.toFixed(1) + " >= " + threshold.toFixed(1));
+      }
+    }
+    if (signal) {
       const activeKey = signal.direction + ":" + signal.vpLevel;
       if (state.comboRsiVpActive[key] !== activeKey) {
         state.comboRsiVpActive[key] = activeKey;
