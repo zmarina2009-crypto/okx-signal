@@ -5,7 +5,7 @@ This is a separate Node.js worker. It does not change the browser chart, Live co
 ## What it does
 
 - Polls public OKX market candles from the server, so the phone/browser can be off.
-- Sends Telegram messages for SMA touch, Volume spike, RSI threshold-cross, and Volume Profile (VP) level-crossing alerts.
+- Sends Telegram messages for SMA touch, Volume spike, RSI threshold-cross, and Volume Profile (VP) level-crossing or near-level confirmations.
 - Optionally sends Combo alerts; when VP is enabled for a rule, it can be one of the directional Combo sources.
 - Saves processed candle timestamps, cooldown state, signal history, and signal outcomes to the persistent JSON state file.
 - Measures directional price return, maximum favourable excursion (MFE), and maximum adverse excursion (MAE) 1, 4, and 12 hours after each signal.
@@ -15,7 +15,7 @@ This is a separate Node.js worker. It does not change the browser chart, Live co
 
 The worker currently uses environment variables for its watchlist and alert settings. It does **not yet automatically import the browser's saved watchlists/settings**; browser localStorage is private to that browser. A later integration can add authenticated settings sync if desired.
 
-Volume Profile is calculated from prior fully closed candles using typical price `(high + low + close) / 3`, 30 volume bins by default, and a 70% value area. VP alerts are generated when a confirmed close crosses the selected POC / value-area level; the signal candle is not included in its own profile. VP can also contribute a directional source to Combo alerts.
+Volume Profile is calculated from prior fully closed candles using typical price `(high + low + close) / 3`, 30 volume bins by default, and a 70% value area. By default, VP alerts are generated when a confirmed close crosses the selected POC / value-area level; the signal candle is not included in its own profile. For a two-source RSI + VP Combo rule with only RSI and VP selected, the worker automatically enables a softer near-level mode: on the same confirmed candle as the RSI threshold-cross, the close must be within one VP-bin width of POC, VAL, or VAH. The RSI event supplies direction; VP confirms proximity. The signal candle is excluded from its own profile. This near-level confirmation is Combo-only for that rule and does not send standalone RSI/VP messages when comboOnly is enabled.
 
 All indicator families are evaluated on confirmed candles. SMA touch is detected from the completed candle's high/low range against the SMA, so it does not repaint while a candle is still forming. The direction follows the pre-touch trend (price above SMA => LONG; below SMA => SHORT).
 

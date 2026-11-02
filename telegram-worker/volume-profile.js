@@ -46,3 +46,32 @@ export function volumeProfileCrossings(bars, previousClose, close, mode = "poc",
   }
   return crossings;
 }
+
+
+/**
+ * Returns the nearest selected VP level when price is within a tolerance
+ * measured in profile-bin widths. Uses only the supplied (prior, closed) bars.
+ */
+export function volumeProfileProximity(bars, price, mode = "all", rowCount = 30, toleranceRows = 1) {
+  const data = (Array.isArray(bars) ? bars : []).filter(c => c && Number.isFinite(Number(c.h)) && Number.isFinite(Number(c.l)) && Number.isFinite(Number(c.c)));
+  const levels = volumeProfileLevels(data, rowCount);
+  const current = Number(price);
+  if (!levels || !Number.isFinite(current)) return [];
+  const lo = Math.min(...data.map(c => Number(c.l)));
+  const hi = Math.max(...data.map(c => Number(c.h)));
+  const rows = Math.max(10, Math.min(60, Math.floor(Number(rowCount) || 30)));
+  const binWidth = (hi - lo) / rows;
+  if (!(binWidth > 0)) return [];
+  const tolerance = binWidth * Math.max(0, Number(toleranceRows) || 0);
+  const selectedMode = String(mode || "all").toLowerCase();
+  const candidates = [];
+  if (selectedMode === "poc" || selectedMode === "all") candidates.push({ level: "POC", price: levels.poc });
+  if (selectedMode === "va" || selectedMode === "all") {
+    candidates.push({ level: "VAL", price: levels.val }, { level: "VAH", price: levels.vah });
+  }
+  return candidates
+    .map(item => ({ ...item, distance: Math.abs(current - item.price), tolerance }))
+    .filter(item => item.distance <= tolerance)
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 1);
+}

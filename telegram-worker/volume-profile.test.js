@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { volumeProfileCrossings, volumeProfileLevels } from "./volume-profile.js";
+import { volumeProfileCrossings, volumeProfileLevels, volumeProfileProximity } from "./volume-profile.js";
 
 const bars = [
   { h: 98, l: 92, c: 95, v: 100 }, { h: 99, l: 93, c: 96, v: 120 },
@@ -37,4 +37,24 @@ test("empty and zero-volume profiles do not produce signals", () => {
   const flat = bars.map(c => ({ ...c, v: 0 }));
   assert.equal(volumeProfileLevels(flat, 30), null);
   assert.deepEqual(volumeProfileCrossings(flat, 1, 2), []);
+});
+
+
+test("VP proximity detects the nearest level within one profile row", () => {
+  const levels = volumeProfileLevels(bars, 30);
+  const lo = Math.min(...bars.map(c => c.l));
+  const hi = Math.max(...bars.map(c => c.h));
+  const tolerance = (hi - lo) / 30;
+  const near = volumeProfileProximity(bars, levels.poc + tolerance * 0.5, "all", 30, 1);
+  assert.equal(near.length, 1);
+  assert.equal(near[0].level, "POC");
+  assert.ok(near[0].distance <= near[0].tolerance);
+});
+
+test("VP proximity rejects prices farther than one profile row", () => {
+  const levels = volumeProfileLevels(bars, 30);
+  const lo = Math.min(...bars.map(c => c.l));
+  const hi = Math.max(...bars.map(c => c.h));
+  const tolerance = (hi - lo) / 30;
+  assert.deepEqual(volumeProfileProximity(bars, levels.poc + tolerance * 3, "all", 30, 1), []);
 });

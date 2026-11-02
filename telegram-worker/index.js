@@ -2,7 +2,7 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { recordPerformanceSignal, updatePerformanceOutcomes, buildPerformanceStats } from "./statistics.js";
-import { volumeProfileCrossings } from "./volume-profile.js";
+import { volumeProfileCrossings, volumeProfileProximity } from "./volume-profile.js";
 import { diagnoseComboReversal, shouldSendStandaloneTelegram } from "./combo-reversal.js";
 
 const PORT = Number(process.env.PORT || 3000);
@@ -65,10 +65,12 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
     const allFour=comboCount===4;
     const comboMode=String(item.comboMode||"strict").toLowerCase()==="reversal"?"reversal":"strict";
     const comboOnly=item.comboOnly==null?(pair==="ZEC-USDT-SWAP"&&tf==="1m"):item.comboOnly===true;
+    const vpNear=item.vpNear===true || (item.vpNear==null && comboCount===2 && item.rsi===true && item.vp===true && item.volume!==true && item.sma!==true && item.combo===true);
     unique.set(key, {
       pair, tf,
       telegram: item.telegram == null ? true : item.telegram === true,
       comboOnly,
+      vpNear,
       volume: allFour || (item.volume == null ? ENABLE_VOLUME : item.volume === true),
       comboCount, comboWindowBars, comboMode,
       rsi: allFour || (item.rsi == null ? ENABLE_RSI : item.rsi === true),
@@ -270,6 +272,7 @@ async function processPair(pair, tf, rule) {
   if (isNewClosedCandle) {
     state.lastClosed[candleKey] = last.ts;
     const end = closed.length;
+    let rsiSignalDirection = null;
     if (rule.volume && end >= VOLUME_PERIOD + 1) {
       const base = closed.slice(end - VOLUME_PERIOD - 1, end - 1).map(c => c.v);
       const avg = average(base);
@@ -285,10 +288,12 @@ async function processPair(pair, tf, rule) {
       const prev = rsi(closed, RSI_PERIOD, end - 1);
       if (value != null && prev != null) {
         if (prev >= RSI_LOW && value < RSI_LOW) {
+          rsiSignalDirection = "LONG";
           if (shouldSendStandaloneTelegram(rule)) await emit("rsi", pair, tf, "LONG", last.c, `RSI: ${value.toFixed(1)} — выход ниже ${RSI_LOW}`);
           recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c, rule, closed);
         }
         if (prev <= RSI_HIGH && value > RSI_HIGH) {
+          rsiSignalDirection = "SHORT";
           if (shouldSendStandaloneTelegram(rule)) await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`);
           recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c, rule, closed);
         }
@@ -298,11 +303,21 @@ async function processPair(pair, tf, rule) {
       // The signal candle is excluded from its own profile to avoid look-ahead.
       const profileBars = closed.slice(0, -1).slice(-VP_PERIOD);
       const previous = closed.at(-2);
-      const crossings = volumeProfileCrossings(profileBars, previous?.c, last.c, VP_MODE, VP_ROWS);
-      for (const crossing of crossings) {
-        const detail = `Volume Profile ${crossing.level}: пересечение уровня ${price(crossing.price)}; close ${price(last.c)}`;
-        if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, crossing.direction, last.c, detail);
-        recordSignal(pair, tf, "vp", crossing.direction, last.ts, last.c, rule, closed);
+      if (rule.vpNear && rsiSignalDirection) {
+        const nearby = volumeProfileProximity(profileBars, last.c, "all", VP_ROWS, 1);
+        for (const level of nearby) {
+          const detail = `Volume Profile ${level.level}: цена рядом с уровнем ${price(level.price)} (дистанция ${price(level.distance)}, допуск 1 ряд); RSI подтверждает ${rsiSignalDirection}`;
+          if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, rsiSignalDirection, last.c, detail);
+          recordSignal(pair, tf, "vp", rsiSignalDirection, last.ts, last.c, rule, closed);
+          console.log("VP near-level confirmed:", pair, tf, level.level, rsiSignalDirection, "distance", level.distance, "tolerance", level.tolerance);
+        }
+      } else if (!rule.vpNear) {
+        const crossings = volumeProfileCrossings(profileBars, previous?.c, last.c, VP_MODE, VP_ROWS);
+        for (const crossing of crossings) {
+          const detail = `Volume Profile ${crossing.level}: пересечение уровня ${price(crossing.price)}; close ${price(last.c)}`;
+          if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, crossing.direction, last.c, detail);
+          recordSignal(pair, tf, "vp", crossing.direction, last.ts, last.c, rule, closed);
+        }
       }
     }
   }
@@ -380,7 +395,7 @@ const server = http.createServer((req, res) => {
   }
   if (requestUrl.pathname === "/config" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
+    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, vpNear, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, vpNear, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
     return;
   }
   if (requestUrl.pathname === "/config" && req.method === "PUT") {
