@@ -64,7 +64,7 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
     const comboWindowBars=comboCount===4?1:requestedComboWindowBars;
     const allFour=comboCount===4;
     const comboMode=String(item.comboMode||"strict").toLowerCase()==="reversal"?"reversal":"strict";
-    const comboOnly=item.comboOnly==null?(pair==="ZEC-USDT-SWAP"&&tf==="1m"):item.comboOnly===true;
+    const comboOnly=item.comboOnly==null?(pair==="ZEC-USDT-SWAP"&&tf==="1m"):item.comboOnly===true;\n    const vpNear=item.vpNear===true || (item.vpNear==null && comboCount===2 && item.rsi===true && item.vp===true && item.volume!==true && item.sma!==true && item.combo===true);
     unique.set(key, {
       pair, tf,
       telegram: item.telegram == null ? true : item.telegram === true,
@@ -298,11 +298,21 @@ async function processPair(pair, tf, rule) {
       // The signal candle is excluded from its own profile to avoid look-ahead.
       const profileBars = closed.slice(0, -1).slice(-VP_PERIOD);
       const previous = closed.at(-2);
-      const crossings = volumeProfileCrossings(profileBars, previous?.c, last.c, VP_MODE, VP_ROWS);
-      for (const crossing of crossings) {
-        const detail = `Volume Profile ${crossing.level}: пересечение уровня ${price(crossing.price)}; close ${price(last.c)}`;
-        if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, crossing.direction, last.c, detail);
-        recordSignal(pair, tf, "vp", crossing.direction, last.ts, last.c, rule, closed);
+      if (rule.vpNear && rsiSignalDirection) {
+        const nearby = volumeProfileProximity(profileBars, last.c, "all", VP_ROWS, 1);
+        for (const level of nearby) {
+          const detail = `Volume Profile ${level.level}: цена рядом с уровнем ${price(level.price)} (дистанция ${price(level.distance)}, допуск 1 ряд); RSI подтверждает ${rsiSignalDirection}`;
+          if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, rsiSignalDirection, last.c, detail);
+          recordSignal(pair, tf, "vp", rsiSignalDirection, last.ts, last.c, rule, closed);
+          console.log("VP near-level confirmed:", pair, tf, level.level, rsiSignalDirection, "distance", level.distance, "tolerance", level.tolerance);
+        }
+      } else if (!rule.vpNear) {
+        const crossings = volumeProfileCrossings(profileBars, previous?.c, last.c, VP_MODE, VP_ROWS);
+        for (const crossing of crossings) {
+          const detail = `Volume Profile ${crossing.level}: пересечение уровня ${price(crossing.price)}; close ${price(last.c)}`;
+          if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, crossing.direction, last.c, detail);
+          recordSignal(pair, tf, "vp", crossing.direction, last.ts, last.c, rule, closed);
+        }
       }
     }
   }
@@ -380,7 +390,7 @@ const server = http.createServer((req, res) => {
   }
   if (requestUrl.pathname === "/config" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
+    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, vpNear, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, vpNear, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
     return;
   }
   if (requestUrl.pathname === "/config" && req.method === "PUT") {
