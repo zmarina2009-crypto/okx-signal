@@ -9,11 +9,10 @@ function candlesFor(direction, count = 80) {
   });
 }
 
-const nearProfile = () => ({ poc: 90.5, val: 88, vah: 92 });
+const nearProfile = bars => { const close = Number(bars.at(-1).c); return { poc: close + 0.25, val: close - 2, vah: close + 2 }; };
 
 test("LONG when RSI is oversold and price is near POC", () => {
   const candles = candlesFor("LONG");
-  candles[candles.length - 1].c = 90;
   const result = evaluateRsiVpProximity(candles, { vpPeriod: 60 }, nearProfile);
   assert.equal(result.signal?.direction, "LONG");
   assert.equal(result.signal?.vpLevel, "POC");
@@ -37,8 +36,7 @@ test("does not signal when RSI is outside extreme zones", () => {
 
 test("does not signal when price is farther than 0.25 ATR from every VP level", () => {
   const candles = candlesFor("LONG");
-  candles[candles.length - 1].c = 90;
-  const result = evaluateRsiVpProximity(candles, { vpPeriod: 60 }, () => ({ poc: 100, val: 101, vah: 102 }));
+  const result = evaluateRsiVpProximity(candles, { vpPeriod: 60 }, () => ({ poc: 1000, val: 1001, vah: 1002 }));
   assert.equal(result.signal, null);
   assert.equal(result.reason, "цена далеко от уровней Volume Profile");
 });
