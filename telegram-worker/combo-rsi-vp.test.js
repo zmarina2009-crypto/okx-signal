@@ -14,7 +14,7 @@ const nearProfileShort = bars => { const close = Number(bars.at(-1).c); return {
 
 test("LONG when RSI is oversold and price is near POC", () => {
   const candles = candlesFor("LONG");
-  const result = evaluateRsiVpProximity(candles, { vpPeriod: 60 }, nearProfile);
+  const result = evaluateRsiVpProximity(candles, { vpPeriod: 60 }, nearProfileLong);
   assert.equal(result.signal?.direction, "LONG");
   assert.equal(result.signal?.vpLevel, "POC");
 });
@@ -43,7 +43,7 @@ test("does not signal when price is farther than 0.25 ATR from every VP level", 
 });
 
 test("does not signal with insufficient history", () => {
-  const result = evaluateRsiVpProximity(candlesFor("LONG", 20), { vpPeriod: 60 }, nearProfile);
+  const result = evaluateRsiVpProximity(candlesFor("LONG", 20), { vpPeriod: 60 }, nearProfileLong);
   assert.equal(result.signal, null);
   assert.equal(result.reason, "недостаточно истории");
 });
