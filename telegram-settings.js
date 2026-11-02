@@ -9,7 +9,7 @@
   function endpoint(){return String($("tgConfigEndpoint").value||"").trim().replace(/\/+$/,"");}
   function setStatus(message,kind="info"){const el=$("tgConfigStatus");if(!el)return;el.textContent=message;el.className="tg-config-status "+kind;}
   function make(tag,attrs={},text){const el=document.createElement(tag);Object.entries(attrs).forEach(([k,v])=>{if(k==="class")el.className=v;else if(k==="type"||k==="placeholder"||k==="aria-label"||k==="list"||k==="value")el.setAttribute(k,v);else el[k]=v});if(text!=null)el.textContent=text;return el;}
-  function normalizeRule(r){return {pair:String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf:String(r.tf||"15m").trim().toLowerCase(),telegram:r.telegram!==false,volume:r.volume===true,rsi:r.rsi===true,sma:r.sma===true,vp:r.vp===true,combo:r.combo===true,comboCount:Math.max(2,Math.min(4,Math.round(Number(r.comboCount)||2))),chopFilter:r.chopFilter===true,chopPeriod:Math.max(5,Math.min(50,Math.round(Number(r.chopPeriod)||14))),chopThreshold:Math.max(20,Math.min(100,Number(r.chopThreshold)||61.8))};}
+  function normalizeRule(r){return {pair:String(r.pair||"BTC-USDT-SWAP").trim().toUpperCase(),tf:String(r.tf||"15m").trim().toLowerCase(),telegram:r.telegram!==false,volume:r.volume===true,rsi:r.rsi===true,sma:r.sma===true,vp:r.vp===true,vpNear:r.vpNear===true || (r.vpNear==null && Number(r.comboCount||2)===2 && r.rsi===true && r.vp===true && r.volume!==true && r.sma!==true && r.combo===true),combo:r.combo===true,comboCount:Math.max(2,Math.min(4,Math.round(Number(r.comboCount)||2))),chopFilter:r.chopFilter===true,chopPeriod:Math.max(5,Math.min(50,Math.round(Number(r.chopPeriod)||14))),chopThreshold:Math.max(20,Math.min(100,Number(r.chopThreshold)||61.8))};}
   function renderSavedRules(){
     const root=$("tgSavedRulesList"),meta=$("tgSavedRulesMeta");
     if(!root||!meta)return;
@@ -45,7 +45,7 @@
         if(rule.volume)enabled.push("Объём");
         if(rule.rsi)enabled.push("RSI");
         if(rule.sma)enabled.push("SMA");
-        if(rule.vp)enabled.push("Volume Profile");
+        if(rule.vp)enabled.push(rule.vpNear?"Volume Profile рядом":"Volume Profile");
         if(rule.combo)enabled.push("COMBO "+rule.comboCount+"/4");
         if(rule.chopFilter)enabled.push("CHOP "+rule.chopPeriod+" / "+rule.chopThreshold);
         const state=rule.telegram?"TG включён":"TG выключен";
