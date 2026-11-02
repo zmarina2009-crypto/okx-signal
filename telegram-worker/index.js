@@ -4,6 +4,7 @@ import path from "node:path";
 import { recordPerformanceSignal, updatePerformanceOutcomes, buildPerformanceStats } from "./statistics.js";
 import { volumeProfileCrossings } from "./volume-profile.js";
 import { diagnoseComboReversal, shouldSendStandaloneTelegram } from "./combo-reversal.js";
+import { evaluateRsiVpProximity } from "./combo-rsi-vp.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -134,8 +135,11 @@ function tfMs(tf) {
   return Number(m[1]) * ({m:60_000,h:3_600_000,d:86_400_000,w:604_800_000})[m[2]];
 }
 function price(n) { return Number(n).toLocaleString("en-US", { maximumFractionDigits: 8 }); }
+function isFlexibleRsiVpRule(rule) {
+  return Boolean(rule?.combo && Number(rule.comboCount) === 2 && rule.rsi && rule.vp && !rule.volume && !rule.sma);
+}
 
-let state = { lastClosed: {}, lastAlertAt: {}, lastSmaTouch: {}, recentSignals: [], performanceSignals: [] };
+let state = { lastClosed: {}, lastAlertAt: {}, lastSmaTouch: {}, recentSignals: [], performanceSignals: [], comboRsiVpActive: {} };
 let busy = false;
 let stopped = false;
 
@@ -208,6 +212,7 @@ async function fetchCandles(pair, tf) {
 }
 function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) {
   recordPerformanceSignal(state, { pair, tf, kind, direction, ts, price: closePrice });
+  if (isFlexibleRsiVpRule(rule)) return;
   const required=clamp(Number(rule.comboCount ?? COMBO_COUNT),2,4);
   // In reversal mode, all four inputs are evaluated as closed-candle predicates below;
   // do not also aggregate the old event-based combo from standalone alerts.
@@ -303,6 +308,32 @@ async function processPair(pair, tf, rule) {
         const detail = `Volume Profile ${crossing.level}: пересечение уровня ${price(crossing.price)}; close ${price(last.c)}`;
         if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, crossing.direction, last.c, detail);
         recordSignal(pair, tf, "vp", crossing.direction, last.ts, last.c, rule, closed);
+      }
+    }
+  }
+
+  // Flexible COMBO 2/2: RSI remains in an extreme zone while price is near any VP level.
+  // This is intentionally evaluated once per newly closed candle, not from crossing events.
+  if (isNewClosedCandle && isFlexibleRsiVpRule(rule)) {
+    const key = pair + ":" + tf;
+    const diagnosis = evaluateRsiVpProximity(closed, {
+      rsiPeriod: RSI_PERIOD, rsiLow: RSI_LOW, rsiHigh: RSI_HIGH,
+      atrPeriod: 14, vpPeriod: VP_PERIOD, vpRows: VP_ROWS, maxDistanceAtr: 0.25
+    });
+    const signal = diagnosis.signal;
+    if (!signal) {
+      delete state.comboRsiVpActive[key];
+      console.log("COMBO RSI+VP proximity waiting:", pair, tf, diagnosis.reason || "conditions not met");
+    } else {
+      const activeKey = signal.direction + ":" + signal.vpLevel;
+      if (state.comboRsiVpActive[key] !== activeKey) {
+        state.comboRsiVpActive[key] = activeKey;
+        const detail = "RSI " + signal.rsi.toFixed(1) + " • цена рядом с " + signal.vpLevel +
+          " " + price(signal.vpPrice) + " • расстояние " + price(signal.vpDistance) +
+          " (лимит 0,25 ATR) • без требования пересечения";
+        recordPerformanceSignal(state, { pair, tf, kind: "combo", direction: signal.direction, ts: last.ts, price: last.c });
+        if (rule.telegram) await emit("combo", pair, tf, signal.direction, last.c, detail);
+        console.log("COMBO RSI+VP proximity fired:", pair, tf, signal.direction, signal.vpLevel, "RSI", signal.rsi.toFixed(1));
       }
     }
   }
