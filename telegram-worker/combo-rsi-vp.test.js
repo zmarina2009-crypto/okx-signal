@@ -9,7 +9,8 @@ function candlesFor(direction, count = 80) {
   });
 }
 
-const nearProfile = bars => { const close = Number(bars.at(-1).c); return { poc: close + 0.25, val: close - 2, vah: close + 2 }; };
+const nearProfileLong = bars => { const close = Number(bars.at(-1).c); return { poc: close - 0.75, val: close - 2, vah: close + 2 }; };
+const nearProfileShort = bars => { const close = Number(bars.at(-1).c); return { poc: close + 0.75, val: close - 2, vah: close + 2 }; };
 
 test("LONG when RSI is oversold and price is near POC", () => {
   const candles = candlesFor("LONG");
