@@ -64,11 +64,13 @@ function loadAlertRules(raw = process.env.OKX_ALERT_RULES) {
     const comboWindowBars=comboCount===4?1:requestedComboWindowBars;
     const allFour=comboCount===4;
     const comboMode=String(item.comboMode||"strict").toLowerCase()==="reversal"?"reversal":"strict";
-    const comboOnly=item.comboOnly==null?(pair==="ZEC-USDT-SWAP"&&tf==="1m"):item.comboOnly===true;\n    const vpNear=item.vpNear===true || (item.vpNear==null && comboCount===2 && item.rsi===true && item.vp===true && item.volume!==true && item.sma!==true && item.combo===true);
+    const comboOnly=item.comboOnly==null?(pair==="ZEC-USDT-SWAP"&&tf==="1m"):item.comboOnly===true;
+    const vpNear=item.vpNear===true || (item.vpNear==null && comboCount===2 && item.rsi===true && item.vp===true && item.volume!==true && item.sma!==true && item.combo===true);
     unique.set(key, {
       pair, tf,
       telegram: item.telegram == null ? true : item.telegram === true,
       comboOnly,
+      vpNear,
       volume: allFour || (item.volume == null ? ENABLE_VOLUME : item.volume === true),
       comboCount, comboWindowBars, comboMode,
       rsi: allFour || (item.rsi == null ? ENABLE_RSI : item.rsi === true),
