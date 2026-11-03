@@ -314,7 +314,7 @@
     }
     const key=pair+"|"+tf,state=vpRsiStates[key]||(vpRsiStates[key]={rsi:[],vp:[],emitted:[]});
     const tfMs=COMBO_TF_MS[String(tf).toLowerCase()]||900000;
-    if(direction&&!state.rsi.some(x=>x.ts===ts))state.rsi.push({ts,direction,value:currentRsi});
+    if(direction&&!state.rsi.some(x=>x.ts===ts))state.rsi.push({ts,direction,previous:previousRsi,value:currentRsi});
     candidates.forEach(x=>{if(!state.vp.some(v=>v.ts===ts&&v.direction===x.direction))state.vp.push({ts,direction:x.direction,level:x.level,price:x.price,distanceAtr:x.distanceAtr});});
     const horizon=tfMs*Math.max(1,Math.min(5,Number(cfg.vpRsiWindow)||3));
     state.rsi=state.rsi.filter(x=>ts-x.ts<=horizon&&ts>=x.ts).slice(-12);
@@ -323,7 +323,7 @@
     const match=state.rsi.filter(x=>!state.emitted.includes(x.ts)).map(r=>({r,level:state.vp.filter(v=>v.direction===r.direction&&Math.abs(v.ts-r.ts)<=horizon).sort((a,b)=>Math.abs(ts-a.ts)-Math.abs(ts-b.ts))[0]})).filter(x=>x.level).sort((a,b)=>Math.abs(ts-a.r.ts)-Math.abs(ts-b.r.ts))[0];
     if(match){
       state.emitted.push(match.r.ts);
-      const message="✨ COMBO VP + RSI "+match.r.direction+" · RSI "+previousRsi.toFixed(1)+" → "+currentRsi.toFixed(1)+" · рядом с "+match.level.level+" "+match.level.price.toFixed(4)+" · "+match.level.distanceAtr.toFixed(2)+" ATR · окно "+cfg.vpRsiWindow+" свечи · "+pair+" · "+tf;
+      const message="✨ COMBO VP + RSI "+match.r.direction+" · RSI "+match.r.previous.toFixed(1)+" → "+match.r.value.toFixed(1)+" · рядом с "+match.level.level+" "+match.level.price.toFixed(4)+" · "+match.level.distanceAtr.toFixed(2)+" ATR · окно "+cfg.vpRsiWindow+" свечи · "+pair+" · "+tf;
       fire("combo",message,"combo-vp-rsi:"+pair+":"+tf+":"+match.r.ts,{pair,tf,ts,price:close,entryPrice:close,direction:match.r.direction,label:"COMBO VP+RSI"});
       if(diagnostic)diagnostic.textContent="Последний сигнал: "+message;
       return true;
