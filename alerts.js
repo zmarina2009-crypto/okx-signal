@@ -2,12 +2,16 @@
 (function(){
   "use strict";
   const KEY="okx_alerts_v1";
-  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,vp:true,vpPeriod:60,vpRows:30,vpMode:"poc",comboEnabled:false,comboModeActive:false,comboCount:2,comboWindow:1,chopEnabled:true,chopPeriod:14,chopThreshold:61.8,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
+  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,vp:true,vpPeriod:60,vpRows:30,vpMode:"poc",comboEnabled:false,comboModeActive:false,comboComposition:"any",comboCount:2,comboWindow:1,vpRsiWindow:3,vpRsiAtrTolerance:0.35,vpRsiChopEnabled:false,chopEnabled:true,chopPeriod:14,chopThreshold:61.8,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
   let cfg=Object.assign({},defaults,(()=>{try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch{return{}}})());
   if(!Number.isFinite(Number(cfg.smaTolerance))||Number(cfg.smaTolerance)===.15)cfg.smaTolerance=0;
   cfg.vpPeriod=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));cfg.vpRows=Math.max(10,Math.min(60,Math.round(Number(cfg.vpRows)||30)));if(!["poc","va","all"].includes(cfg.vpMode))cfg.vpMode="poc";
+  if(!["any","vpRsi"].includes(cfg.comboComposition))cfg.comboComposition="any";
+  cfg.vpRsiWindow=Math.max(1,Math.min(5,Math.round(Number(cfg.vpRsiWindow)||3)));
+  cfg.vpRsiAtrTolerance=Math.max(0.1,Math.min(2,Number(cfg.vpRsiAtrTolerance)||0.35));
+  cfg.vpRsiChopEnabled=!!cfg.vpRsiChopEnabled;
   if(Number(cfg.comboCount)===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;cfg.comboWindow=1;}
-  let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[];
+  let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[],vpRsiStates={};
   const $=id=>document.getElementById(id);
   const esc=s=>String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
   function save(){localStorage.setItem(KEY,JSON.stringify(cfg))}
@@ -73,6 +77,16 @@
     if(loss===0)return 100;
     if(gain===0)return 0;
     return 100-(100/(1+gain/loss));
+  }
+  function atr(candles,n=14){
+    if(!Array.isArray(candles)||candles.length<n+1)return null;
+    let sum=0;
+    for(let i=candles.length-n;i<candles.length;i++){
+      const c=candles[i],prev=Number(candles[i-1]?.c),h=Number(c.h),l=Number(c.l);
+      if(![prev,h,l].every(Number.isFinite))return null;
+      sum+=Math.max(h-l,Math.abs(h-prev),Math.abs(l-prev));
+    }
+    return sum/n;
   }
   function volumeProfileLevels(bars,rowCount){
     const data=(Array.isArray(bars)?bars:[]).filter(x=>x&&Number.isFinite(Number(x.h))&&Number.isFinite(Number(x.l))&&Number.isFinite(Number(x.c)));
@@ -210,6 +224,63 @@
     log("combo",message);tone("combo");
     const badge=$("alertsLast");if(badge){badge.textContent=message;badge.className="alerts-last combo"}
   }
+  function evaluateVpRsiCombo(bars,pair,tf,closed){
+    const diagnostic=$("alertVpRsiDiagnostic");
+    if(cfg.comboComposition!=="vpRsi"||!cfg.comboEnabled){
+      if(diagnostic)diagnostic.textContent=cfg.comboEnabled?"VP + RSI · режим не выбран; выбери VP + RSI · гибкий.":"VP + RSI · комбо-алерт выключен.";
+      return false;
+    }
+    if(diagnostic)diagnostic.textContent="VP + RSI · проверяю закрытую свечу "+pair+" · "+tf+"…";
+    const wait=message=>{if(diagnostic)diagnostic.textContent="VP + RSI · ожидание: "+message+" · "+pair+" · "+tf;return false;};
+    const period=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));
+    const profileBars=bars.slice(0,-1).slice(-period);
+    if(profileBars.length<period)return wait("недостаточно истории VP "+profileBars.length+"/"+period);
+    const levels=volumeProfileLevels(profileBars,cfg.vpRows);
+    if(!levels)return wait("не удалось рассчитать профиль объёма");
+    const rsiPeriod=Math.max(2,Math.round(Number(cfg.rsiPeriod)||14));
+    const currentRsi=rsi(bars,rsiPeriod),previousRsi=rsi(bars.slice(0,-1),rsiPeriod);
+    if(currentRsi==null||previousRsi==null)return wait("недостаточно истории RSI");
+    let direction=null;
+    if(previousRsi<=Number(cfg.rsiLow)&&currentRsi>Number(cfg.rsiLow))direction="LONG";
+    else if(previousRsi>=Number(cfg.rsiHigh)&&currentRsi<Number(cfg.rsiHigh))direction="SHORT";
+    if(cfg.vpRsiChopEnabled){
+      const chop=choppiness(bars,cfg.chopPeriod),threshold=Math.max(20,Math.min(100,Number(cfg.chopThreshold)||61.8));
+      if(chop==null||chop>=threshold)return wait(chop==null?"недостаточно свечей для CHOP":"CHOP "+chop.toFixed(1)+" ≥ "+threshold.toFixed(1));
+    }
+    const averageRange=atr(bars,14);
+    if(!(averageRange>0))return wait("недостаточно данных для ATR(14)");
+    const close=Number(closed.c),ts=Number(closed.ts);
+    if(!Number.isFinite(close)||!Number.isFinite(ts))return wait("нет цены или времени закрытия свечи");
+    const tolerance=Math.max(0.1,Math.min(2,Number(cfg.vpRsiAtrTolerance)||0.35));
+    const candidates=[];
+    for(const side of ["LONG","SHORT"]){
+      const relevant=side==="LONG"?[["VAL",levels.val],["POC",levels.poc]]:[["VAH",levels.vah],["POC",levels.poc]];
+      const nearest=relevant.map(([name,price])=>({name,price:Number(price),distance:Math.abs(close-Number(price))})).filter(x=>Number.isFinite(x.price)).sort((a,b)=>a.distance-b.distance)[0];
+      if(nearest&&nearest.distance<=averageRange*tolerance)candidates.push({direction:side,level:nearest.name,price:nearest.price,distanceAtr:nearest.distance/averageRange});
+    }
+    const key=pair+"|"+tf,state=vpRsiStates[key]||(vpRsiStates[key]={rsi:[],vp:[],emitted:[]});
+    const tfMs=COMBO_TF_MS[String(tf).toLowerCase()]||900000;
+    if(direction&&!state.rsi.some(x=>x.ts===ts))state.rsi.push({ts,direction,previous:previousRsi,value:currentRsi});
+    candidates.forEach(x=>{if(!state.vp.some(v=>v.ts===ts&&v.direction===x.direction))state.vp.push({ts,direction:x.direction,level:x.level,price:x.price,distanceAtr:x.distanceAtr});});
+    const horizon=tfMs*Math.max(1,Math.min(5,Number(cfg.vpRsiWindow)||3));
+    state.rsi=state.rsi.filter(x=>ts-x.ts<=horizon&&ts>=x.ts).slice(-12);
+    state.vp=state.vp.filter(x=>ts-x.ts<=horizon&&ts>=x.ts).slice(-24);
+    state.emitted=state.emitted.slice(-30);
+    const match=state.rsi.filter(x=>!state.emitted.includes(x.ts)).map(r=>({r,level:state.vp.filter(v=>v.direction===r.direction&&Math.abs(v.ts-r.ts)<=horizon).sort((a,b)=>Math.abs(ts-a.ts)-Math.abs(ts-b.ts))[0]})).filter(x=>x.level).sort((a,b)=>Math.abs(ts-a.r.ts)-Math.abs(ts-b.r.ts))[0];
+    if(match){
+      state.emitted.push(match.r.ts);
+      const message="✨ COMBO VP + RSI "+match.r.direction+" · RSI "+match.r.previous.toFixed(1)+" → "+match.r.value.toFixed(1)+" · рядом с "+match.level.level+" "+match.level.price.toFixed(4)+" · "+match.level.distanceAtr.toFixed(2)+" ATR · окно "+cfg.vpRsiWindow+" свечи · "+pair+" · "+tf;
+      fire("combo",message,"combo-vp-rsi:"+pair+":"+tf+":"+match.r.ts,{pair,tf,ts,price:close,entryPrice:close,direction:match.r.direction,label:"COMBO VP+RSI"});
+      if(diagnostic)diagnostic.textContent="Последний сигнал: "+message;
+      return true;
+    }
+    if(direction){
+      if(diagnostic)diagnostic.textContent="VP + RSI · RSI "+direction+" подтверждён ("+previousRsi.toFixed(1)+" → "+currentRsi.toFixed(1)+"), но VP пока не рядом с уровнем. Допуск ≤ "+tolerance.toFixed(2)+" ATR · "+pair+" · "+tf;
+      return false;
+    }
+    const nearText=candidates.length?("VP рядом: "+candidates.map(x=>x.level+" "+x.direction+" ("+x.distanceAtr.toFixed(2)+" ATR)").join(", ")):("цена дальше "+tolerance.toFixed(2)+" ATR от релевантных уровней POC/VAL/VAH");
+    return wait("ждём выход RSI из зон "+cfg.rsiLow+"/"+cfg.rsiHigh+"; "+nearText);
+  }
   function fire(kind,text,key,marker){
     const comboSource=marker&&COMBO_SOURCES.includes(kind);
     const source=comboSource;
@@ -227,6 +298,14 @@
   function evaluate(s){
     const a=s.candles||[],live=s.liveCandle,pair=s.currentPair||"",tf=s.tf||"";
     const selected=new Set(cfg.selectedPairs||[]);
+    const diagnostic=$("alertVpRsiDiagnostic");
+    if(cfg.comboComposition==="vpRsi"&&cfg.comboEnabled&&diagnostic){
+      if(!pair)diagnostic.textContent="VP + RSI · ожидание: не определена текущая пара графика.";
+      else if(!selected.has(pair))diagnostic.textContent="VP + RSI · ожидание: "+pair+" не отмечена в парах для оповещений.";
+      else if(tf!==cfg.alertTf)diagnostic.textContent="VP + RSI · ожидание: таймфрейм графика "+tf+" не совпадает с таймфреймом оповещений "+cfg.alertTf+".";
+      else if(a.length<5)diagnostic.textContent="VP + RSI · ожидание: загружено только "+a.length+" свечей; нужно минимум 5.";
+      else diagnostic.textContent="VP + RSI · проверка активна: "+pair+" · "+tf+"; ожидаем закрытия новой свечи.";
+    }
     if(tf!==cfg.alertTf||!selected.has(pair))return;
     if(pair!==lastPair||tf!==lastTf){lastPair=pair;lastTf=tf;lastClosedTs=0;lastTouch=false}
     if(a.length<5)return;
@@ -255,6 +334,7 @@
           if(prev<=cfg.rsiHigh&&rv>cfg.rsiHigh)fire("rsi","📈 RSI OVERBOUGHT SHORT • выше "+cfg.rsiHigh+" → "+rv.toFixed(1)+" • "+pair+" • "+tf,"rsi-high:"+pair+":"+tf,{pair,tf,ts:closed.ts,price:Number(closed.c),direction:"SHORT",label:"RSI"});
         }
       }
+      evaluateVpRsiCombo(hist,pair,tf,closed);
       if(cfg.comboEnabled&&Number(cfg.comboCount)===4&&cfg.sma){
         const comboSmaPeriod=Math.max(2,+cfg.smaPeriod||21),comboSma=sma(hist,comboSmaPeriod),comboSmaPrice=Number(closed.c)||0;
         if(comboSma>0&&comboSmaPrice>0){
@@ -335,6 +415,7 @@
       '<div class="alerts-section"><label class="alerts-check"><input id="alertSma" type="checkbox"><span>SMA Touch</span></label><div class="alerts-grid"><label>Период<input id="alertSmaPeriod" type="number" min="2" value="'+cfg.smaPeriod+'"></label><label>Допуск %<input id="alertSmaTol" type="number" min="0" step=".05" value="'+cfg.smaTolerance+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertVP" type="checkbox"><span>Volume Profile</span></label><div class="alerts-grid"><label>История, свечей<input id="alertVPPeriod" type="number" min="20" max="300" value="'+cfg.vpPeriod+'"></label><label>Строк профиля<input id="alertVPRows" type="number" min="10" max="60" value="'+cfg.vpRows+'"></label><label>Сигнал<select id="alertVPMode"><option value="poc">Пересечение POC</option><option value="va">Пробой VAH / VAL</option><option value="all">Все уровни: POC, VAH, VAL</option></select></label></div><div class="alerts-note">Проверка только после закрытия свечи. Профиль рассчитывается по предшествующим свечам.</div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertCombo" type="checkbox"><span>✨ Комбо-алерт</span></label><div class="alerts-grid"><label>Совпадение<select id="alertComboCount"><option value="2">2 из 4 индикаторов</option><option value="3">3 из 4 индикаторов</option><option value="4">Все 4 индикатора</option></select></label><label>Окно<select id="alertComboWindow"><option value="1">1 свеча</option><option value="2">2 свечи</option><option value="3">3 свечи</option></select></label></div><div class="alerts-note">Сигналы должны совпасть по паре, таймфрейму и окну. Volume подтверждает активность; направление LONG/SHORT задают RSI, SMA и/или Volume Profile. Направления сработавших RSI, SMA и VP должны совпадать. Можно выбрать 2, 3 или все 4 источника: Volume, RSI, SMA и Volume Profile. Для COMBO 4/4 все четыре сигнала обязаны относиться к одной и той же закрытой свече; сигналы с разных свечей не складываются. Самостоятельные алерты всех четырёх источников работают отдельно.</div><button type="button" id="comboModeToggle" class="primary" style="width:100%;margin-top:8px">✨ Включить режим COMBO</button><div id="comboModeStatus" class="alerts-note" style="margin-top:6px">Обычные алерты работают независимо.</div></div>'+
+      '<div class="alerts-section"><b>Состав COMBO</b><label>Режим<select id="alertComboComposition"><option value="any">Общий режим: выбранное число из 4</option><option value="vpRsi">VP + RSI · гибкий</option></select></label><div class="alerts-grid"><label>Окно VP + RSI, свечей<input id="alertVpRsiWindow" type="number" min="1" max="5" step="1" value="'+cfg.vpRsiWindow+'"></label><label>Допуск к уровню VP, ATR<input id="alertVpRsiAtrTolerance" type="number" min=".1" max="2" step=".05" value="'+cfg.vpRsiAtrTolerance+'"></label></div><label class="alerts-check"><input id="alertVpRsiChop" type="checkbox">Фильтр CHOP для VP + RSI (по умолчанию выключен)</label><div id="alertVpRsiDiagnostic" class="alerts-note" role="status">VP + RSI: гибкий режим ожидает настройки.</div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertChopFilter" type="checkbox"><span>Фильтр флета CHOP для COMBO</span></label><div class="alerts-grid"><label>Период<input id="alertChopPeriod" type="number" min="5" max="50" step="1" value="'+cfg.chopPeriod+'"></label><label>Блокировать при CHOP ≥<input id="alertChopThreshold" type="number" min="20" max="100" step=".1" value="'+cfg.chopThreshold+'"></label></div><div class="alerts-note">Блокирует только COMBO при высоком CHOP. Отдельные индикаторные сигналы остаются доступными. Работает и на 1m: выбери 1m в таймфрейме оповещений.</div></div>'+
       '<div class="alerts-section"><div class="alerts-grid"><label>Громкость<input id="alertVolumeLevel" type="range" min="0" max="1" step=".05" value="'+cfg.volumeLevel+'"></label><label>Антиспам, сек<input id="alertCooldown" type="number" min="1" value="'+cfg.cooldown+'"></label></div><div class="alerts-actions"><button id="alertsSound" class="primary">🔊 Включить звук</button></div><div class="alerts-sound-tests"><button id="testVolume">⚡ Volume</button><button id="testRsi">📈 RSI</button><button id="testSma">〽️ SMA</button><button id="testVP">▥ VP</button><button id="testCombo">✨ Combo</button><button id="testAll">▶ Все сигналы</button></div><div class="alerts-note">Нажми кнопки, чтобы сравнить реальные звуки каждого сигнала.</div></div>'+
       '<div class="alerts-stats"><div><small>Price</small><b id="alertsPriceValue">—</b></div><div><small>SMA</small><b id="alertsSmaValue">—</b></div><div><small>RSI</small><b id="alertsRsiValue">—</b></div></div>'+
@@ -357,7 +438,29 @@
     ["alertVolume","alertRsi","alertSma"].forEach((id,i)=>{const el=$(id);el.checked=[cfg.volume,cfg.rsi,cfg.sma][i];el.onchange=()=>{if(cfg.comboCount===4&&!el.checked){el.checked=true;log("combo","Для COMBO 4/4 нельзя отключить один из четырёх индикаторов.");return;}if(i===0)cfg.volume=el.checked;if(i===1)cfg.rsi=el.checked;if(i===2)cfg.sma=el.checked;save()}});
     $("alertVP").checked=!!cfg.vp;$("alertVP").onchange=()=>{if(cfg.comboCount===4&&!$("alertVP").checked){$("alertVP").checked=true;log("combo","Для COMBO 4/4 нельзя отключить Volume Profile.");return;}cfg.vp=$("alertVP").checked;save()};$("alertVPMode").value=cfg.vpMode;
     $("alertCombo").checked=!!cfg.comboEnabled;
-    $("alertCombo").onchange=()=>{cfg.comboEnabled=$("alertCombo").checked;comboSignals=[];comboLastAt={};save()};
+    $("alertCombo").onchange=()=>{cfg.comboEnabled=$("alertCombo").checked;comboSignals=[];comboLastAt={};vpRsiStates={};save()};
+    function renderComboComposition(){
+      const flexible=cfg.comboComposition==="vpRsi";
+      $("alertComboComposition").value=flexible?"vpRsi":"any";
+      $("alertComboCount").disabled=flexible;
+      $("alertComboWindow").disabled=flexible||Number(cfg.comboCount)===4;
+      $("alertVpRsiWindow").disabled=!flexible;
+      $("alertVpRsiAtrTolerance").disabled=!flexible;
+      $("alertVpRsiChop").disabled=!flexible;
+      $("alertVpRsiChop").checked=!!cfg.vpRsiChopEnabled;
+      if(flexible){$("alertCombo").checked=!!cfg.comboEnabled;$("alertRsi").checked=!!cfg.rsi;$("alertVP").checked=!!cfg.vp;}
+    }
+    $("alertVpRsiChop").onchange=()=>{cfg.vpRsiChopEnabled=$("alertVpRsiChop").checked;vpRsiStates={};save()};
+    $("alertComboComposition").onchange=()=>{
+      cfg.comboComposition=$("alertComboComposition").value==="vpRsi"?"vpRsi":"any";
+      if(cfg.comboComposition==="vpRsi"){
+        cfg.comboCount=2;cfg.comboEnabled=true;cfg.rsi=true;cfg.vp=true;
+        $("alertCombo").checked=true;$("alertRsi").checked=true;$("alertVP").checked=true;
+        $("alertComboCount").value="2";
+      }
+      comboSignals=[];comboLastAt={};vpRsiStates={};save();renderComboComposition();
+      const badge=$("alertsLast");if(badge){badge.textContent=cfg.comboComposition==="vpRsi"?"Включён гибкий COMBO VP + RSI":"Включён общий режим COMBO";badge.className="alerts-last combo";}
+    };
     $("alertChopFilter").checked=!!cfg.chopEnabled;
     $("alertChopFilter").onchange=()=>{cfg.chopEnabled=$("alertChopFilter").checked;comboSignals=[];comboLastAt={};comboFilterLastAt={};save()};
     const comboModeButton=$("comboModeToggle"),comboModeStatus=$("comboModeStatus");
@@ -382,8 +485,9 @@
     renderComboMode();
     $("alertComboCount").value=String(cfg.comboCount||2);
     $("alertComboWindow").value=String(cfg.comboCount===4?1:(cfg.comboWindow||1));$("alertComboWindow").disabled=Number(cfg.comboCount)===4;
-    const bind=(id,key,parse)=>{const el=$(id);el.onchange=()=>{cfg[key]=parse(el.value);comboSignals=[];comboLastAt={};save()}};
-    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");$("alertComboCount").onchange=()=>{cfg.comboCount=Math.max(2,Math.min(4,+$("alertComboCount").value||2));if(cfg.comboCount!==4)$("alertComboWindow").disabled=false;if(cfg.comboCount===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;$("alertVolume").checked=$("alertRsi").checked=$("alertSma").checked=$("alertVP").checked=true;$("alertCombo").checked=true;cfg.comboWindow=1;$("alertComboWindow").value="1";$("alertComboWindow").disabled=true;}comboSignals=[];comboLastAt={};save();const badge=$("alertsLast");if(badge&&cfg.comboCount===4){badge.textContent="COMBO 4/4 включён: Volume + RSI + SMA + Volume Profile на одной закрытой свече";badge.className="alerts-last combo";}};bind("alertComboWindow","comboWindow",v=>cfg.comboCount===4?1:Math.max(1,Math.min(3,+v||1)));bind("alertChopPeriod","chopPeriod",v=>Math.max(5,Math.min(50,+v||14)));bind("alertChopThreshold","chopThreshold",v=>Math.max(20,Math.min(100,+v||61.8)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
+    renderComboComposition();
+    const bind=(id,key,parse)=>{const el=$(id);el.onchange=()=>{cfg[key]=parse(el.value);comboSignals=[];comboLastAt={};vpRsiStates={};save()}};
+    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");bind("alertVpRsiWindow","vpRsiWindow",v=>Math.max(1,Math.min(5,Math.round(+v||3))));bind("alertVpRsiAtrTolerance","vpRsiAtrTolerance",v=>Math.max(.1,Math.min(2,+v||.35)));$("alertComboCount").onchange=()=>{cfg.comboCount=Math.max(2,Math.min(4,+$("alertComboCount").value||2));if(cfg.comboCount!==4)$("alertComboWindow").disabled=false;if(cfg.comboCount===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;$("alertVolume").checked=$("alertRsi").checked=$("alertSma").checked=$("alertVP").checked=true;$("alertCombo").checked=true;cfg.comboWindow=1;$("alertComboWindow").value="1";$("alertComboWindow").disabled=true;}comboSignals=[];comboLastAt={};save();const badge=$("alertsLast");if(badge&&cfg.comboCount===4){badge.textContent="COMBO 4/4 включён: Volume + RSI + SMA + Volume Profile на одной закрытой свече";badge.className="alerts-last combo";}};bind("alertComboWindow","comboWindow",v=>cfg.comboCount===4?1:Math.max(1,Math.min(3,+v||1)));bind("alertChopPeriod","chopPeriod",v=>Math.max(5,Math.min(50,+v||14)));bind("alertChopThreshold","chopThreshold",v=>Math.max(20,Math.min(100,+v||61.8)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
     $("alertsSound").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("test");$("alertsSound").textContent="🔊 Звук включён";log("sma","Звук включён")}catch{$("alertsSound").textContent="⚠️ Звук недоступен"}};
     const testSound=async(kind,label)=>{try{await ensureAudio();cfg.sound=true;save();tone(kind);log(kind,"Тест звука: "+label)}catch{}};    $("testVolume").onclick=()=>testSound("volume","Volume");    $("testRsi").onclick=()=>testSound("rsi","RSI");    $("testSma").onclick=()=>testSound("sma","SMA21");    $("testVP").onclick=()=>testSound("vp","Volume Profile");    $("testCombo").onclick=()=>testSound("combo","Combo");    $("testAll").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("volume");setTimeout(()=>tone("rsi"),1100);setTimeout(()=>tone("sma"),2200);setTimeout(()=>tone("vp"),3300);log("vp","Тест звуков: Volume → RSI → SMA21 → Volume Profile")}catch{}};
   }
