@@ -283,8 +283,12 @@
     return true;
   }
   function evaluateVpRsiCombo(bars,pair,tf,closed){
-    if(cfg.comboComposition!=="vpRsi"||!cfg.comboEnabled)return false;
     const diagnostic=$("alertVpRsiDiagnostic");
+    if(cfg.comboComposition!=="vpRsi"||!cfg.comboEnabled){
+      if(diagnostic)diagnostic.textContent=cfg.comboEnabled?"VP + RSI · режим не выбран; выбери VP + RSI · гибкий.":"VP + RSI · комбо-алерт выключен.";
+      return false;
+    }
+    if(diagnostic)diagnostic.textContent="VP + RSI · проверяю закрытую свечу "+pair+" · "+tf+"…";
     const wait=message=>{if(diagnostic)diagnostic.textContent="VP + RSI · ожидание: "+message+" · "+pair+" · "+tf;return false;};
     const period=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));
     const profileBars=bars.slice(0,-1).slice(-period);
@@ -352,6 +356,14 @@
   function evaluate(s){
     const a=s.candles||[],live=s.liveCandle,pair=s.currentPair||"",tf=s.tf||"";
     const selected=new Set(cfg.selectedPairs||[]);
+    const diagnostic=$("alertVpRsiDiagnostic");
+    if(cfg.comboComposition==="vpRsi"&&cfg.comboEnabled&&diagnostic){
+      if(!pair)diagnostic.textContent="VP + RSI · ожидание: не определена текущая пара графика.";
+      else if(!selected.has(pair))diagnostic.textContent="VP + RSI · ожидание: "+pair+" не отмечена в парах для оповещений.";
+      else if(tf!==cfg.alertTf)diagnostic.textContent="VP + RSI · ожидание: таймфрейм графика "+tf+" не совпадает с таймфреймом оповещений "+cfg.alertTf+".";
+      else if(a.length<5)diagnostic.textContent="VP + RSI · ожидание: загружено только "+a.length+" свечей; нужно минимум 5.";
+      else diagnostic.textContent="VP + RSI · проверка активна: "+pair+" · "+tf+"; ожидаем закрытия новой свечи.";
+    }
     if(tf!==cfg.alertTf||!selected.has(pair))return;
     if(pair!==lastPair||tf!==lastTf){lastPair=pair;lastTf=tf;lastClosedTs=0;lastTouch=false}
     if(a.length<5)return;
