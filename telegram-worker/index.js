@@ -244,7 +244,7 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const stamp = new Date(now).toLocaleString("ru-RU", { timeZone: process.env.ALERT_TIMEZONE || "Europe/Moscow" });
-      await sendTelegram("🧪 OKX Signal Pro — тест Telegram\\nПроверка связи успешна.\\n" + stamp);
+      await sendTelegram("🧪 OKX Signal Pro — тест Telegram\nПроверка связи успешна.\n" + stamp);
       testLastSentAt = now;
       testLastSentAtByIp.set(clientIp, now);
       if (testLastSentAtByIp.size > 500) {
