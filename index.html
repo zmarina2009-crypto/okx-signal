@@ -479,7 +479,7 @@ function draw(e){window.candles=candles;window.chartState=chartState;
     try{marks=JSON.parse(localStorage.getItem("okx_v2_alert_markers")||"[]");if(!Array.isArray(marks))marks=[]}catch{}
     const tf=$("tf")?.value||"15m";
     let comboOnly=false;try{comboOnly=localStorage.getItem("okx_combo_mode_active")==="1"}catch(e){}
-    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||m.kind==="combo")).slice(-24);
+    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||["combo","scalping","bos"].includes(m.kind))).slice(-24);
     const indexByTs=new Map(series.map((c,i)=>[Number(c.ts),i]));
     visibleMarks.forEach(m=>{
       let gi=indexByTs.get(Number(m.ts));
@@ -855,7 +855,7 @@ addEventListener("okx-alert-marker",event=>{
   if(!marker||marker.pair!==currentPair||String(marker.tf).toLowerCase()!==String($("tf")?.value||"15m").toLowerCase())return;
   requestAnimationFrame(()=>{if(last)draw(last)});
 });setInterval(async()=>{let oldPair=currentPair;await loadMarkets();if(currentPair&&currentPair!==oldPair)refresh()},60000);// Cache cleanup is handled by service-worker activation; do not delete its active cache here.
-if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=76",{updateViaCache:"none"}).then(r=>r.update()).catch(()=>{});addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferred=e;$("install").style.display="block"});$("install").onclick=async()=>{if(deferred){deferred.prompt();deferred=null;$("install").style.display="none"}};window.OKXSignalApp={getState:()=>({candles,liveCandle,last,currentPair,tf:$("tf")?.value||"",direction}),getMarkets:()=>activeMarkets(),getAllMarkets:()=>MARKETS.slice(),fetchCandles:(pair,bar,limit=80)=>fetchC(pair,bar,limit)};renderJournal();(async()=>{await loadMarkets();if(currentPair)refresh()})();
+if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=78",{updateViaCache:"none"}).then(r=>r.update()).catch(()=>{});addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferred=e;$("install").style.display="block"});$("install").onclick=async()=>{if(deferred){deferred.prompt();deferred=null;$("install").style.display="none"}};window.OKXSignalApp={getState:()=>({candles,liveCandle,last,currentPair,tf:$("tf")?.value||"",direction}),getMarkets:()=>activeMarkets(),getAllMarkets:()=>MARKETS.slice(),fetchCandles:(pair,bar,limit=80)=>fetchC(pair,bar,limit)};renderJournal();(async()=>{await loadMarkets();if(currentPair)refresh()})();
 (function(){
   const baseDraw=draw;
   function drawVolumeProfile(){
@@ -933,7 +933,7 @@ if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=76",{
     draw(last);
   };
 })();
-</script><script src="./alerts.js?v=24"></script><script src="./telegram-settings.js?v=11"></script><script src="./backtester.js?v=24"></script><script src="./papertrader.js?v=7"></script><script src="./indicators.js?v=1"></script><script src="./collapsible.js?v=4"></script>
+</script><script src="./alerts.js?v=24"></script><script src="./scalping-trigger.js?v=1"></script><script src="./telegram-settings.js?v=11"></script><script src="./backtester.js?v=24"></script><script src="./papertrader.js?v=7"></script><script src="./indicators.js?v=1"></script><script src="./collapsible.js?v=4"></script>
 <script>
 (function(){
   const bar=document.getElementById("quickAccessBar");
