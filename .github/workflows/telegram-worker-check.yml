@@ -23,5 +23,7 @@ jobs:
         run: node --check telegram-worker/index.js
       - name: Check statistics module syntax
         run: node --check telegram-worker/statistics.js
+      - name: Check Telegram test UI syntax
+        run: node --check telegram-test.js
       - name: Check package metadata
         run: node -e "const p = require('./telegram-worker/package.json'); if (p.type !== 'module' || p.scripts.start !== 'node index.js') process.exit(1); console.log('package.json OK')"
