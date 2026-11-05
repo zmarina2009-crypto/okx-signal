@@ -218,8 +218,48 @@ async function cycle() {
     busy = false;
   }
 }
-const server = http.createServer((req, res) => {
+const testLastSentAtByIp = new Map();
+let testLastSentAt = 0;
+const TEST_ALLOWED_ORIGIN = "https://zmarina2009-crypto.github.io";
+
+const server = http.createServer(async (req, res) => {
   const requestUrl = new URL(req.url || "/", "http://localhost");
+  if (requestUrl.pathname === "/test" && req.method === "POST") {
+    const origin = req.headers.origin || "";
+    if (origin !== TEST_ALLOWED_ORIGIN) {
+      res.writeHead(403, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: "Origin not allowed" }));
+      return;
+    }
+    res.setHeader("access-control-allow-origin", TEST_ALLOWED_ORIGIN);
+    res.setHeader("vary", "Origin");
+    const forwardedFor = String(req.headers["x-forwarded-for"] || "");
+    const clientIp = (forwardedFor.split(",")[0] || req.socket.remoteAddress || "unknown").trim();
+    const now = Date.now();
+    const lastForIp = testLastSentAtByIp.get(clientIp) || 0;
+    if (now - testLastSentAt < 30_000 || now - lastForIp < 30_000) {
+      res.writeHead(429, { "content-type": "application/json; charset=utf-8", "retry-after": "30" });
+      res.end(JSON.stringify({ ok: false, error: "Test is rate limited. Try again in 30 seconds." }));
+      return;
+    }
+    try {
+      const stamp = new Date(now).toLocaleString("ru-RU", { timeZone: process.env.ALERT_TIMEZONE || "Europe/Moscow" });
+      await sendTelegram("🧪 OKX Signal Pro — тест Telegram\\nПроверка связи успешна.\\n" + stamp);
+      testLastSentAt = now;
+      testLastSentAtByIp.set(clientIp, now);
+      if (testLastSentAtByIp.size > 500) {
+        for (const [ip, time] of testLastSentAtByIp) if (now - time > 10 * 60_000) testLastSentAtByIp.delete(ip);
+      }
+      console.log("Telegram test message sent");
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      console.error("Telegram test send failed:", err.message);
+      res.writeHead(502, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: "Telegram delivery failed" }));
+    }
+    return;
+  }
   if (requestUrl.pathname === "/stats") {
     const days = requestUrl.searchParams.get("days") || "7";
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
