@@ -211,7 +211,7 @@
   }
 
   function addHistory(kind, pair, tf, direction, message, ts) {
-    const item = { kind, pair, tf, direction, message, ts: Number(ts) || Date.now() };
+    const item = { kind, pair, tf, direction, message, ts: Number(ts) || Date.now(), signalTs: Date.now() };
     history.push(item);
     history = history.slice(-100);
     try { localStorage.setItem(STATE_KEY + "_history", JSON.stringify(history)); } catch (_) {}
@@ -336,9 +336,14 @@
       const row = document.createElement("div");
       row.className = "st-history-row " + (entry.direction === "LONG" ? "is-long" : "is-short");
       const time = document.createElement("time");
-      time.textContent = new Date(Number(entry.ts)).toLocaleString("ru-RU", {
-        day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
+      const hasSignalTime = Number.isFinite(Number(entry.signalTs)) && Number(entry.signalTs) > 0;
+      const displayTs = hasSignalTime ? Number(entry.signalTs) : Number(entry.ts);
+      time.textContent = new Date(displayTs).toLocaleString("ru-RU", {
+        day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit"
       });
+      time.title = hasSignalTime
+        ? "Фактическое время фиксации сигнала"
+        : "Для старой записи сохранено только время свечи";
       const message = document.createElement("span");
       message.textContent = entry.message;
       row.append(time, message);
