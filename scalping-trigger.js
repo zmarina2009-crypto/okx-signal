@@ -21,7 +21,8 @@
     longEnabled: true,
     shortEnabled: true,
     soundEnabled: true,
-    cooldownSeconds: 60
+    cooldownSeconds: 60,
+    rsiClusterAtrMultiplier: 1
   };
 
   const $ = (id) => document.getElementById(id);
@@ -34,7 +35,15 @@
   };
 
   let cfg = Object.assign({}, DEFAULTS, safeParse(CFG_KEY, {}));
-  let state = Object.assign({ processed: {}, fired: [], lastAlertAt: {} }, safeParse(STATE_KEY, {}));
+  let state = Object.assign({
+    processed: {}, fired: [], lastAlertAt: {},
+    rsiClusters: {}, rsiClusterSuppressed: 0
+  }, safeParse(STATE_KEY, {}));
+  if (!state.processed || typeof state.processed !== "object") state.processed = {};
+  if (!Array.isArray(state.fired)) state.fired = [];
+  if (!state.lastAlertAt || typeof state.lastAlertAt !== "object") state.lastAlertAt = {};
+  if (!state.rsiClusters || typeof state.rsiClusters !== "object") state.rsiClusters = {};
+  state.rsiClusterSuppressed = Math.max(0, Number(state.rsiClusterSuppressed) || 0);
   let audioContext = null;
   let polling = false;
   let lastCheckAt = 0;
@@ -51,6 +60,7 @@
   cfg.rsiOverbought = clamp(Math.round(Number(cfg.rsiOverbought) || 70), 51, 99);
   cfg.swingLength = clamp(Math.round(Number(cfg.swingLength) || 3), 1, 20);
   cfg.cooldownSeconds = clamp(Math.round(Number(cfg.cooldownSeconds) || 60), 1, 86400);
+  cfg.rsiClusterAtrMultiplier = clamp(Number(cfg.rsiClusterAtrMultiplier) || 1, 0.25, 3);
   if (!["chart", "alerts"].includes(cfg.scope)) cfg.scope = "chart";
 
   function saveConfig() {
@@ -224,6 +234,7 @@
     renderHistory();
     const trigger = $("scalpTriggerButton");
     if (trigger) trigger.classList.add("has-signal");
+    return item;
   }
 
   function shouldEmit(key) {
@@ -235,15 +246,111 @@
   }
 
   function emit(kind, pair, tf, candle, direction, price, label, message, uniqueId) {
-    if ((direction === "LONG" && !cfg.longEnabled) || (direction === "SHORT" && !cfg.shortEnabled)) return;
-    if (state.fired.includes(uniqueId) || !shouldEmit([kind, pair, tf, direction].join("|"))) return;
+    if ((direction === "LONG" && !cfg.longEnabled) || (direction === "SHORT" && !cfg.shortEnabled)) return null;
+    if (state.fired.includes(uniqueId) || !shouldEmit([kind, pair, tf, direction].join("|"))) return null;
     state.fired.push(uniqueId);
     addChartMarker({
       pair, tf, ts: Number(candle.ts), price,
       entryPrice: Number(candle.c), direction, label, kind
     });
-    addHistory(kind, pair, tf, direction, message, candle.ts, price);
+    const historyItem = addHistory(kind, pair, tf, direction, message, candle.ts, price);
     tone(direction);
+    saveState();
+    return historyItem || null;
+  }
+
+  function averageTrueRange(bars, period) {
+    if (!Array.isArray(bars) || bars.length < 2) return null;
+    const start = Math.max(1, bars.length - Math.max(1, Number(period) || 14));
+    let total = 0, count = 0;
+    for (let i = start; i < bars.length; i++) {
+      const high = Number(bars[i].h);
+      const low = Number(bars[i].l);
+      const previousClose = Number(bars[i - 1].c);
+      if (![high, low, previousClose].every(Number.isFinite)) continue;
+      const range = Math.max(high - low, Math.abs(high - previousClose), Math.abs(low - previousClose));
+      if (Number.isFinite(range) && range >= 0) { total += range; count++; }
+    }
+    return count ? total / count : null;
+  }
+
+  function rsiClusterKey(pair, tf) {
+    return String(pair) + "|" + normalizeTf(tf);
+  }
+
+  function updateRsiCluster(pair, tf, candle, currentRsi) {
+    const key = rsiClusterKey(pair, tf);
+    const cluster = state.rsiClusters[key];
+    if (!cluster) return;
+    const close = Number(candle && candle.c);
+    if (!Number.isFinite(close) || !Number.isFinite(Number(cluster.anchorPrice))) return;
+
+    const rsi = Number(currentRsi);
+    if (Number.isFinite(rsi)) {
+      if (cluster.direction === "LONG" && rsi >= cluster.resetRsi) cluster.neutralSeen = true;
+      if (cluster.direction === "SHORT" && rsi <= cluster.resetRsi) cluster.neutralSeen = true;
+    }
+
+    const movedOutsideZone = Math.abs(close - Number(cluster.anchorPrice)) >= Number(cluster.radius);
+    if (cluster.neutralSeen && movedOutsideZone) {
+      delete state.rsiClusters[key];
+      saveState();
+    }
+  }
+
+  function mergeRsiRepeat(pair, tf, candle, direction) {
+    const key = rsiClusterKey(pair, tf);
+    const cluster = state.rsiClusters[key];
+    if (!cluster) return false;
+
+    const price = Number(candle && candle.c);
+    const distance = Number.isFinite(price) ? Math.abs(price - Number(cluster.anchorPrice)) : 0;
+    // A cluster stays active until RSI has reset AND price has left its original ATR zone.
+    if (distance >= Number(cluster.radius) && cluster.neutralSeen) {
+      delete state.rsiClusters[key];
+      return false;
+    }
+
+    cluster.suppressedCount = (Number(cluster.suppressedCount) || 0) + 1;
+    cluster.lastSuppressedTs = Number(candle && candle.ts) || Date.now();
+    cluster.lastSuppressedPrice = Number.isFinite(price) ? price : null;
+    cluster.lastSuppressedDirection = direction;
+    state.rsiClusterSuppressed = (Number(state.rsiClusterSuppressed) || 0) + 1;
+
+    const entry = history.find((item) =>
+      item && item.kind === "scalping" &&
+      item.pair === pair && normalizeTf(item.tf) === normalizeTf(tf) &&
+      Number(item.signalTs) === Number(cluster.historySignalTs));
+    if (entry) {
+      entry.mergedCount = (Number(entry.mergedCount) || 0) + 1;
+      entry.lastMergedTs = Date.now();
+      entry.lastMergedPrice = Number.isFinite(price) ? price : null;
+      entry.lastMergedDirection = direction;
+    }
+    renderHistory();
+    saveState();
+    updateStatus();
+    return true;
+  }
+
+  function startRsiCluster(pair, tf, candle, direction, price, bars, historyItem) {
+    const atr = averageTrueRange(bars, 14);
+    const fallbackFloor = Math.max(Math.abs(Number(price)) * 0.00025, 0.01);
+    const radius = Math.max((Number(atr) || 0) * cfg.rsiClusterAtrMultiplier, fallbackFloor);
+    const resetRsi = direction === "LONG"
+      ? Math.min(60, Math.max(cfg.rsiOversold + 10, 40))
+      : Math.max(40, Math.min(cfg.rsiOverbought - 10, 60));
+    state.rsiClusters[rsiClusterKey(pair, tf)] = {
+      direction,
+      anchorPrice: Number(price),
+      anchorTs: Number(candle && candle.ts) || Date.now(),
+      radius,
+      atr: Number(atr) || null,
+      resetRsi,
+      neutralSeen: false,
+      historySignalTs: Number(historyItem && historyItem.signalTs) || Date.now(),
+      suppressedCount: 0
+    };
     saveState();
   }
 
@@ -270,6 +377,7 @@
     const values = rsiSeries(bars, cfg.rsiLength);
     const currentRsi = values[values.length - 1];
     const previousRsi = values[values.length - 2];
+    updateRsiCluster(pair, tf, candle, currentRsi);
     const rsiLong = currentRsi != null &&
       (currentRsi <= cfg.rsiOversold || (previousRsi != null &&
         previousRsi <= cfg.rsiOversold && currentRsi > cfg.rsiOversold));
@@ -291,13 +399,15 @@
       if (rsiShort) candidates.push("SHORT");
       candidates.forEach((direction) => {
         if (cfg.requireBos && (!bos || bos.direction !== direction)) return;
+        if (mergeRsiRepeat(pair, tf, candle, direction)) return;
         const id = ["volume-rsi", pair, normalizeTf(tf), candleTs, direction].join("|");
         const text = (direction === "LONG" ? "⚡ LONG" : "⚡ SHORT") +
           " • Volume ×" + (volume / volumes).toFixed(2) +
           " + RSI " + Number(currentRsi).toFixed(1) +
           (cfg.requireBos ? " + BOS" : "") + " • " + pair + " • " + tf;
-        emit("scalping", pair, tf, candle, direction, Number(candle.c),
+        const emitted = emit("scalping", pair, tf, candle, direction, Number(candle.c),
           cfg.requireBos ? "VOL+RSI+BOS" : "VOL+RSI", text, id);
+        if (emitted) startRsiCluster(pair, tf, candle, direction, Number(candle.c), bars, emitted);
       });
     }
 
@@ -384,7 +494,9 @@
 
       const detail = document.createElement("div");
       detail.className = "st-history-detail";
-      detail.textContent = entry.message || "";
+      const mergedCount = Number(entry.mergedCount) || 0;
+      detail.textContent = (entry.message || "") +
+        (mergedCount ? " · Объединено повторов в этой ситуации: " + mergedCount : "");
 
       row.append(timeCell, pairCell, sourceCell, directionCell, priceCell, detail);
       historyNode.appendChild(row);
@@ -405,6 +517,7 @@
     const status = baseStatus +
       "\nПроверка: " + formatTime(lastCheckAt) +
       " • Сигналов в журнале: " + history.length + " / 100" +
+      "\nОбъединено RSI-повторов: " + (Number(state.rsiClusterSuppressed) || 0) +
       "\nПоследний сигнал: " + lastSignal;
     if (statusNode) statusNode.textContent = status;
     const button = $("scalpTriggerButton");
@@ -421,6 +534,7 @@
       stEnabled: "enabled", stScope: "scope", stVolumeRsiEnabled: "volumeRsiEnabled",
       stVolumePeriod: "volumePeriod", stVolumeMultiplier: "volumeMultiplier",
       stRsiLength: "rsiLength", stRsiOversold: "rsiOversold", stRsiOverbought: "rsiOverbought",
+      stRsiClusterAtr: "rsiClusterAtrMultiplier",
       stBosEnabled: "bosEnabled", stBosAlerts: "bosAlerts", stSwingLength: "swingLength",
       stRequireBos: "requireBos", stLongEnabled: "longEnabled", stShortEnabled: "shortEnabled",
       stSoundEnabled: "soundEnabled", stCooldown: "cooldownSeconds"
@@ -454,7 +568,9 @@
               '<div class="st-fields"><label>Период объёма<input id="stVolumePeriod" type="number" min="2" max="200"></label>' +
               '<label>Всплеск, множитель ×<input id="stVolumeMultiplier" type="number" min="1" max="20" step=".1"></label>' +
               '<label>RSI период<input id="stRsiLength" type="number" min="2" max="100"></label>' +
-              '<label>Уровни RSI<input id="stRsiOversold" type="number" min="1" max="49"> / <input id="stRsiOverbought" type="number" min="51" max="99"></label></div>' +
+              '<label>Уровни RSI<input id="stRsiOversold" type="number" min="1" max="49"> / <input id="stRsiOverbought" type="number" min="51" max="99"></label>' +
+              '<label>Зона объединения повторов, ATR ×<input id="stRsiClusterAtr" type="number" min="0.25" max="3" step="0.25"></label></div>' +
+              '<p class="st-hint">Повторные Volume + RSI в одной ценовой области объединяются. Новая ситуация разрешается после возврата RSI в нейтральную зону и выхода цены за границу области. По умолчанию граница — 1 ATR.</p>' +
               '<p class="st-hint">LONG: всплеск объёма + RSI ≤ нижней зоны или выход вверх через неё. SHORT: всплеск объёма + RSI ≥ верхней зоны или выход вниз через неё.</p></section>' +
             '<section class="st-card"><label class="st-check"><input id="stBosEnabled" type="checkbox"> <b>BOS · слом микроструктуры</b></label>' +
               '<div class="st-fields"><label>Размер swing (свечей слева/справа)<input id="stSwingLength" type="number" min="1" max="20"></label>' +
@@ -495,6 +611,7 @@
       stRsiLength: ["rsiLength", (v) => clamp(Math.round(Number(v) || 14), 2, 100)],
       stRsiOversold: ["rsiOversold", (v) => clamp(Math.round(Number(v) || 30), 1, 49)],
       stRsiOverbought: ["rsiOverbought", (v) => clamp(Math.round(Number(v) || 70), 51, 99)],
+      stRsiClusterAtr: ["rsiClusterAtrMultiplier", (v) => clamp(Number(v) || 1, 0.25, 3)],
       stBosEnabled: ["bosEnabled", (v) => v],
       stBosAlerts: ["bosAlerts", (v) => v],
       stSwingLength: ["swingLength", (v) => clamp(Math.round(Number(v) || 3), 1, 20)],
