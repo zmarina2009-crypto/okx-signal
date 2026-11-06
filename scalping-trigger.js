@@ -21,7 +21,8 @@
     longEnabled: true,
     shortEnabled: true,
     soundEnabled: true,
-    cooldownSeconds: 60
+    cooldownSeconds: 60,
+    rsiClusterAtrMultiplier: 1
   };
 
   const $ = (id) => document.getElementById(id);
@@ -34,7 +35,15 @@
   };
 
   let cfg = Object.assign({}, DEFAULTS, safeParse(CFG_KEY, {}));
-  let state = Object.assign({ processed: {}, fired: [], lastAlertAt: {} }, safeParse(STATE_KEY, {}));
+  let state = Object.assign({
+    processed: {}, fired: [], lastAlertAt: {},
+    rsiClusters: {}, rsiClusterSuppressed: 0
+  }, safeParse(STATE_KEY, {}));
+  if (!state.processed || typeof state.processed !== "object") state.processed = {};
+  if (!Array.isArray(state.fired)) state.fired = [];
+  if (!state.lastAlertAt || typeof state.lastAlertAt !== "object") state.lastAlertAt = {};
+  if (!state.rsiClusters || typeof state.rsiClusters !== "object") state.rsiClusters = {};
+  state.rsiClusterSuppressed = Math.max(0, Number(state.rsiClusterSuppressed) || 0);
   let audioContext = null;
   let polling = false;
   let lastCheckAt = 0;
@@ -51,6 +60,7 @@
   cfg.rsiOverbought = clamp(Math.round(Number(cfg.rsiOverbought) || 70), 51, 99);
   cfg.swingLength = clamp(Math.round(Number(cfg.swingLength) || 3), 1, 20);
   cfg.cooldownSeconds = clamp(Math.round(Number(cfg.cooldownSeconds) || 60), 1, 86400);
+  cfg.rsiClusterAtrMultiplier = clamp(Number(cfg.rsiClusterAtrMultiplier) || 1, 0.25, 3);
   if (!["chart", "alerts"].includes(cfg.scope)) cfg.scope = "chart";
 
   function saveConfig() {
@@ -211,12 +221,15 @@
     window.dispatchEvent(new CustomEvent("okx-alert-marker", { detail: marker }));
   }
 
-  function addHistory(kind, pair, tf, direction, message, ts, price) {
+  function addHistory(kind, pair, tf, direction, message, ts, price, options) {
+    const meta = options && typeof options === "object" ? options : {};
     const item = {
       kind, pair, tf, direction, message,
       price: Number.isFinite(Number(price)) && Number(price) > 0 ? Number(price) : null,
       ts: Number(ts) || Date.now(),
-      signalTs: Date.now()
+      signalTs: Date.now(),
+      notificationSuppressed: !!meta.notificationSuppressed,
+      suppressionReason: String(meta.suppressionReason || "")
     };
     history.push(item);
     history = history.slice(-100);
@@ -224,6 +237,7 @@
     renderHistory();
     const trigger = $("scalpTriggerButton");
     if (trigger) trigger.classList.add("has-signal");
+    return item;
   }
 
   function shouldEmit(key) {
@@ -235,15 +249,123 @@
   }
 
   function emit(kind, pair, tf, candle, direction, price, label, message, uniqueId) {
-    if ((direction === "LONG" && !cfg.longEnabled) || (direction === "SHORT" && !cfg.shortEnabled)) return;
-    if (state.fired.includes(uniqueId) || !shouldEmit([kind, pair, tf, direction].join("|"))) return;
+    if ((direction === "LONG" && !cfg.longEnabled) || (direction === "SHORT" && !cfg.shortEnabled)) return null;
+    if (state.fired.includes(uniqueId)) return null;
+
+    // The cooldown controls repeated delivery (marker + sound), not whether the
+    // qualifying signal is captured in the journal.
+    const notificationAllowed = shouldEmit([kind, pair, tf, direction].join("|"));
     state.fired.push(uniqueId);
-    addChartMarker({
-      pair, tf, ts: Number(candle.ts), price,
-      entryPrice: Number(candle.c), direction, label, kind
+
+    if (notificationAllowed) {
+      addChartMarker({
+        pair, tf, ts: Number(candle.ts), price,
+        entryPrice: Number(candle.c), direction, label, kind
+      });
+    }
+
+    const historyItem = addHistory(kind, pair, tf, direction, message, candle.ts, price, {
+      notificationSuppressed: !notificationAllowed,
+      suppressionReason: notificationAllowed ? "" : "Антиспам: повторное уведомление ограничено на " + cfg.cooldownSeconds + " сек."
     });
-    addHistory(kind, pair, tf, direction, message, candle.ts, price);
-    tone(direction);
+
+    if (notificationAllowed) tone(direction);
+    saveState();
+    return historyItem || null;
+  }
+
+  function averageTrueRange(bars, period) {
+    if (!Array.isArray(bars) || bars.length < 2) return null;
+    const start = Math.max(1, bars.length - Math.max(1, Number(period) || 14));
+    let total = 0, count = 0;
+    for (let i = start; i < bars.length; i++) {
+      const high = Number(bars[i].h);
+      const low = Number(bars[i].l);
+      const previousClose = Number(bars[i - 1].c);
+      if (![high, low, previousClose].every(Number.isFinite)) continue;
+      const range = Math.max(high - low, Math.abs(high - previousClose), Math.abs(low - previousClose));
+      if (Number.isFinite(range) && range >= 0) { total += range; count++; }
+    }
+    return count ? total / count : null;
+  }
+
+  function rsiClusterKey(pair, tf) {
+    return String(pair) + "|" + normalizeTf(tf);
+  }
+
+  function updateRsiCluster(pair, tf, candle, currentRsi) {
+    const key = rsiClusterKey(pair, tf);
+    const cluster = state.rsiClusters[key];
+    if (!cluster) return;
+    const close = Number(candle && candle.c);
+    if (!Number.isFinite(close) || !Number.isFinite(Number(cluster.anchorPrice))) return;
+
+    const rsi = Number(currentRsi);
+    if (Number.isFinite(rsi)) {
+      if (cluster.direction === "LONG" && rsi >= cluster.resetRsi) cluster.neutralSeen = true;
+      if (cluster.direction === "SHORT" && rsi <= cluster.resetRsi) cluster.neutralSeen = true;
+    }
+
+    const movedOutsideZone = Math.abs(close - Number(cluster.anchorPrice)) >= Number(cluster.radius);
+    if (cluster.neutralSeen && movedOutsideZone) {
+      delete state.rsiClusters[key];
+      saveState();
+    }
+  }
+
+  function mergeRsiRepeat(pair, tf, candle, direction) {
+    const key = rsiClusterKey(pair, tf);
+    const cluster = state.rsiClusters[key];
+    if (!cluster) return false;
+
+    const price = Number(candle && candle.c);
+    const distance = Number.isFinite(price) ? Math.abs(price - Number(cluster.anchorPrice)) : 0;
+    // A cluster stays active until RSI has reset AND price has left its original ATR zone.
+    if (distance >= Number(cluster.radius) && cluster.neutralSeen) {
+      delete state.rsiClusters[key];
+      return false;
+    }
+
+    cluster.suppressedCount = (Number(cluster.suppressedCount) || 0) + 1;
+    cluster.lastSuppressedTs = Number(candle && candle.ts) || Date.now();
+    cluster.lastSuppressedPrice = Number.isFinite(price) ? price : null;
+    cluster.lastSuppressedDirection = direction;
+    state.rsiClusterSuppressed = (Number(state.rsiClusterSuppressed) || 0) + 1;
+
+    const entry = history.find((item) =>
+      item && item.kind === "scalping" &&
+      item.pair === pair && normalizeTf(item.tf) === normalizeTf(tf) &&
+      Number(item.signalTs) === Number(cluster.historySignalTs));
+    if (entry) {
+      entry.mergedCount = (Number(entry.mergedCount) || 0) + 1;
+      entry.lastMergedTs = Date.now();
+      entry.lastMergedPrice = Number.isFinite(price) ? price : null;
+      entry.lastMergedDirection = direction;
+    }
+    renderHistory();
+    saveState();
+    updateStatus();
+    return true;
+  }
+
+  function startRsiCluster(pair, tf, candle, direction, price, bars, historyItem) {
+    const atr = averageTrueRange(bars, 14);
+    const fallbackFloor = Math.max(Math.abs(Number(price)) * 0.00025, 0.01);
+    const radius = Math.max((Number(atr) || 0) * cfg.rsiClusterAtrMultiplier, fallbackFloor);
+    const resetRsi = direction === "LONG"
+      ? Math.min(60, Math.max(cfg.rsiOversold + 10, 40))
+      : Math.max(40, Math.min(cfg.rsiOverbought - 10, 60));
+    state.rsiClusters[rsiClusterKey(pair, tf)] = {
+      direction,
+      anchorPrice: Number(price),
+      anchorTs: Number(candle && candle.ts) || Date.now(),
+      radius,
+      atr: Number(atr) || null,
+      resetRsi,
+      neutralSeen: false,
+      historySignalTs: Number(historyItem && historyItem.signalTs) || Date.now(),
+      suppressedCount: 0
+    };
     saveState();
   }
 
@@ -270,6 +392,7 @@
     const values = rsiSeries(bars, cfg.rsiLength);
     const currentRsi = values[values.length - 1];
     const previousRsi = values[values.length - 2];
+    updateRsiCluster(pair, tf, candle, currentRsi);
     const rsiLong = currentRsi != null &&
       (currentRsi <= cfg.rsiOversold || (previousRsi != null &&
         previousRsi <= cfg.rsiOversold && currentRsi > cfg.rsiOversold));
@@ -291,13 +414,15 @@
       if (rsiShort) candidates.push("SHORT");
       candidates.forEach((direction) => {
         if (cfg.requireBos && (!bos || bos.direction !== direction)) return;
+        if (mergeRsiRepeat(pair, tf, candle, direction)) return;
         const id = ["volume-rsi", pair, normalizeTf(tf), candleTs, direction].join("|");
         const text = (direction === "LONG" ? "⚡ LONG" : "⚡ SHORT") +
           " • Volume ×" + (volume / volumes).toFixed(2) +
           " + RSI " + Number(currentRsi).toFixed(1) +
           (cfg.requireBos ? " + BOS" : "") + " • " + pair + " • " + tf;
-        emit("scalping", pair, tf, candle, direction, Number(candle.c),
+        const emitted = emit("scalping", pair, tf, candle, direction, Number(candle.c),
           cfg.requireBos ? "VOL+RSI+BOS" : "VOL+RSI", text, id);
+        if (emitted) startRsiCluster(pair, tf, candle, direction, Number(candle.c), bars, emitted);
       });
     }
 
@@ -384,7 +509,19 @@
 
       const detail = document.createElement("div");
       detail.className = "st-history-detail";
-      detail.textContent = entry.message || "";
+      const mergedCount = Number(entry.mergedCount) || 0;
+      const lastMerged = Number(entry.lastMergedTs) > 0
+        ? " · Последний повтор: " + formatDateTime(entry.lastMergedTs) +
+          (Number(entry.lastMergedPrice) > 0
+            ? " @ " + Number(entry.lastMergedPrice).toLocaleString("ru-RU", { maximumFractionDigits: 8 })
+            : "")
+        : "";
+      const suppressed = entry.notificationSuppressed
+        ? " · " + (entry.suppressionReason || "Уведомление ограничено антиспамом")
+        : "";
+      detail.textContent = (entry.message || "") +
+        (mergedCount ? " · Объединено повторов в этой ситуации: " + mergedCount + lastMerged : "") +
+        suppressed;
 
       row.append(timeCell, pairCell, sourceCell, directionCell, priceCell, detail);
       historyNode.appendChild(row);
@@ -405,6 +542,7 @@
     const status = baseStatus +
       "\nПроверка: " + formatTime(lastCheckAt) +
       " • Сигналов в журнале: " + history.length + " / 100" +
+      "\nОбъединено RSI-повторов: " + (Number(state.rsiClusterSuppressed) || 0) +
       "\nПоследний сигнал: " + lastSignal;
     if (statusNode) statusNode.textContent = status;
     const button = $("scalpTriggerButton");
@@ -421,6 +559,7 @@
       stEnabled: "enabled", stScope: "scope", stVolumeRsiEnabled: "volumeRsiEnabled",
       stVolumePeriod: "volumePeriod", stVolumeMultiplier: "volumeMultiplier",
       stRsiLength: "rsiLength", stRsiOversold: "rsiOversold", stRsiOverbought: "rsiOverbought",
+      stRsiClusterAtr: "rsiClusterAtrMultiplier",
       stBosEnabled: "bosEnabled", stBosAlerts: "bosAlerts", stSwingLength: "swingLength",
       stRequireBos: "requireBos", stLongEnabled: "longEnabled", stShortEnabled: "shortEnabled",
       stSoundEnabled: "soundEnabled", stCooldown: "cooldownSeconds"
@@ -454,7 +593,9 @@
               '<div class="st-fields"><label>Период объёма<input id="stVolumePeriod" type="number" min="2" max="200"></label>' +
               '<label>Всплеск, множитель ×<input id="stVolumeMultiplier" type="number" min="1" max="20" step=".1"></label>' +
               '<label>RSI период<input id="stRsiLength" type="number" min="2" max="100"></label>' +
-              '<label>Уровни RSI<input id="stRsiOversold" type="number" min="1" max="49"> / <input id="stRsiOverbought" type="number" min="51" max="99"></label></div>' +
+              '<label>Уровни RSI<input id="stRsiOversold" type="number" min="1" max="49"> / <input id="stRsiOverbought" type="number" min="51" max="99"></label>' +
+              '<label>Зона объединения повторов, ATR ×<input id="stRsiClusterAtr" type="number" min="0.25" max="3" step="0.25"></label></div>' +
+              '<p class="st-hint">Повторные Volume + RSI в одной ценовой области объединяются. Новая ситуация разрешается после возврата RSI в нейтральную зону и выхода цены за границу области. По умолчанию граница — 1 ATR.</p>' +
               '<p class="st-hint">LONG: всплеск объёма + RSI ≤ нижней зоны или выход вверх через неё. SHORT: всплеск объёма + RSI ≥ верхней зоны или выход вниз через неё.</p></section>' +
             '<section class="st-card"><label class="st-check"><input id="stBosEnabled" type="checkbox"> <b>BOS · слом микроструктуры</b></label>' +
               '<div class="st-fields"><label>Размер swing (свечей слева/справа)<input id="stSwingLength" type="number" min="1" max="20"></label>' +
@@ -495,6 +636,7 @@
       stRsiLength: ["rsiLength", (v) => clamp(Math.round(Number(v) || 14), 2, 100)],
       stRsiOversold: ["rsiOversold", (v) => clamp(Math.round(Number(v) || 30), 1, 49)],
       stRsiOverbought: ["rsiOverbought", (v) => clamp(Math.round(Number(v) || 70), 51, 99)],
+      stRsiClusterAtr: ["rsiClusterAtrMultiplier", (v) => clamp(Number(v) || 1, 0.25, 3)],
       stBosEnabled: ["bosEnabled", (v) => v],
       stBosAlerts: ["bosAlerts", (v) => v],
       stSwingLength: ["swingLength", (v) => clamp(Math.round(Number(v) || 3), 1, 20)],
@@ -558,7 +700,7 @@
     const style = document.createElement("style");
     style.id = "scalpingTriggerCss";
     style.textContent =
-      ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number]{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{display:block!important;min-height:72px;border:1px solid #263547;border-radius:10px;overflow:hidden;background:#0b1118}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-columns,.st-history-row{display:grid;grid-template-columns:minmax(120px,1.35fr) minmax(120px,1.2fr) minmax(105px,1fr) minmax(76px,.65fr) minmax(90px,.8fr);gap:8px;align-items:center}.st-history-columns{padding:7px 10px;background:#0c141e;color:#8998a9;font-size:10px}.st-history-list{display:block;max-height:260px;overflow:auto}.st-history-row{padding:8px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.35}.st-history-cell{min-width:0;overflow-wrap:anywhere}.st-history-row .st-time{display:grid;gap:2px}.st-history-row time{color:#d0dbe6;font-variant-numeric:tabular-nums}.st-history-row small{color:#718296;font-size:9px}.st-history-direction{font-weight:800}.st-history-row .st-history-direction.is-long{color:#48d99a}.st-history-row .st-history-direction.is-short{color:#ff7b84}.st-history-price{font-variant-numeric:tabular-nums;font-weight:700}.st-history-detail{grid-column:1/-1;color:#8998a9;font-size:9px;overflow-wrap:anywhere}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-history-row{grid-template-columns:1fr;gap:3px}.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}.st-history-columns{display:none}.st-history-list{max-height:220px}.st-history-row{grid-template-columns:1fr 1fr;gap:6px 10px}.st-history-row .st-time{grid-column:1/-1}}";
+      ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number]{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{display:block!important;min-height:72px;border:1px solid #263547;border-radius:10px;overflow:hidden;background:#0b1118}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-columns,.st-history-row{display:grid;grid-template-columns:minmax(120px,1.35fr) minmax(120px,1.2fr) minmax(105px,1fr) minmax(76px,.65fr) minmax(90px,.8fr);gap:8px;align-items:center}.st-history-columns{padding:7px 10px;background:#0c141e;color:#8998a9;font-size:10px}.st-history-list{display:block;max-height:260px;overflow:auto}.st-history-row{padding:8px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.35}.st-history-cell{min-width:0;overflow-wrap:anywhere}.st-history-row .st-time{display:grid;gap:2px}.st-history-row time{color:#d0dbe6;font-variant-numeric:tabular-nums}.st-history-row small{color:#718296;font-size:9px}.st-history-direction{font-weight:800}.st-history-row .st-history-direction.is-long{color:#48d99a}.st-history-row .st-history-direction.is-short{color:#ff7b84}.st-history-price{font-variant-numeric:tabular-nums;font-weight:700}.st-history-detail{grid-column:1/-1;color:#8998a9;font-size:9px;overflow-wrap:anywhere}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}.st-history-columns{display:none}.st-history-list{max-height:220px}.st-history-row{grid-template-columns:1fr 1fr;gap:6px 10px}.st-history-row .st-time{grid-column:1/-1}}";
     document.head.appendChild(style);
   }
 
