@@ -324,32 +324,49 @@
 
   function renderHistory() {
     const countNode = $("stHistoryCount");
-    if (countNode) countNode.textContent = "История сигналов · " + history.length + " / 100";
+    if (countNode) countNode.textContent = "Журнал сигналов скальпинга · " + history.length + " / 100";
     if (!historyNode) return;
     historyNode.replaceChildren();
     const entries = history.slice().reverse();
     if (!entries.length) {
       const empty = document.createElement("div");
       empty.className = "st-empty";
-      empty.textContent = "Сигналов пока нет. Ожидаем закрытия свечи.";
+      empty.textContent = "Пока нет сигналов. Новые записи появятся здесь автоматически.";
       historyNode.appendChild(empty);
       return;
     }
     entries.forEach((entry) => {
       const row = document.createElement("div");
       row.className = "st-history-row " + (entry.direction === "LONG" ? "is-long" : "is-short");
+
       const time = document.createElement("time");
       const hasSignalTime = Number.isFinite(Number(entry.signalTs)) && Number(entry.signalTs) > 0;
       const displayTs = hasSignalTime ? Number(entry.signalTs) : Number(entry.ts);
+      time.dateTime = new Date(displayTs).toISOString();
       time.textContent = new Date(displayTs).toLocaleString("ru-RU", {
-        day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit"
+        day: "2-digit", month: "2-digit", year: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit"
       });
       time.title = hasSignalTime
         ? "Фактическое время фиксации сигнала"
         : "Для старой записи сохранено только время свечи";
-      const message = document.createElement("span");
-      message.textContent = entry.message;
-      row.append(time, message);
+
+      const details = document.createElement("div");
+      details.className = "st-history-details";
+      const headline = document.createElement("div");
+      headline.className = "st-history-headline";
+      const pairTf = document.createElement("strong");
+      pairTf.textContent = String(entry.pair || "—") + " · " + String(entry.tf || "—");
+      const direction = document.createElement("span");
+      direction.className = "st-history-direction";
+      direction.textContent = String(entry.direction || "—");
+      headline.append(pairTf, direction);
+
+      const description = document.createElement("div");
+      description.className = "st-history-description";
+      description.textContent = String(entry.message || entry.kind || "Сигнал скальпинга");
+      details.append(headline, description);
+      row.append(time, details);
       historyNode.appendChild(row);
     });
   }
@@ -432,7 +449,7 @@
             '<label>Антиспам, сек<input id="stCooldown" type="number" min="1" max="86400"></label>' +
           '</div></section>' +
           '<div id="stStatus" class="st-status">Подготовка…</div>' +
-          '<section class="st-history"><div class="st-history-head"><b id="stHistoryCount">История сигналов · 0 / 100</b><button type="button" id="stClearHistory">Очистить</button></div><div id="stHistoryList"></div></section>' +
+          '<section class="st-history"><div class="st-history-head"><b id="stHistoryCount">Журнал сигналов скальпинга · 0 / 100</b><button type="button" id="stClearHistory">Очистить</button></div><div id="stHistoryList"></div></section>' +
           '<p class="st-footnote">Маркеры появятся на основном графике выбранной пары и таймфрейма. Двойной щелчок по маркеру удаляет его, как и другие маркеры алертов. Этот модуль не меняет Telegram-правила, основной COMBO, Live или тестер.</p>' +
         '</div></section>';
     document.body.appendChild(modal);
@@ -519,7 +536,7 @@
     const style = document.createElement("style");
     style.id = "scalpingTriggerCss";
     style.textContent =
-      ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number]{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{border:1px solid #263547;border-radius:10px;overflow:hidden}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-row{display:grid;grid-template-columns:92px 1fr;gap:8px;padding:7px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.45}.st-history-row time{color:#8998a9;font-variant-numeric:tabular-nums}.st-history-row.is-long span{color:#48d99a}.st-history-row.is-short span{color:#ff7b84}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}}";
+      ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number]{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{border:1px solid #263547;border-radius:10px;overflow:hidden}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-row{display:grid;grid-template-columns:145px minmax(0,1fr);gap:10px;padding:9px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.45}.st-history-row time{color:#8998a9;font-variant-numeric:tabular-nums;white-space:nowrap}.st-history-details{min-width:0}.st-history-headline{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.st-history-headline strong{font-size:11px;color:#eaf0f6}.st-history-direction{font-weight:900;letter-spacing:.3px}.st-history-row.is-long .st-history-direction{color:#48d99a}.st-history-row.is-short .st-history-direction{color:#ff7b84}.st-history-description{margin-top:3px;color:#aab7c5;overflow-wrap:anywhere}.st-history-row.is-long .st-history-description{color:#83dcb4}.st-history-row.is-short .st-history-description{color:#f0a0a5}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-history-row{grid-template-columns:1fr;gap:3px}.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}}";
     document.head.appendChild(style);
   }
 
