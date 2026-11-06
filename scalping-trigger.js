@@ -366,9 +366,9 @@
       ? formatTime(history[history.length - 1].signalTs || history[history.length - 1].ts)
       : "—";
     const status = baseStatus +
-      "\\nПроверка: " + formatTime(lastCheckAt) +
+      "\nПроверка: " + formatTime(lastCheckAt) +
       " • Сигналов в журнале: " + history.length + " / 100" +
-      "\\nПоследний сигнал: " + lastSignal;
+      "\nПоследний сигнал: " + lastSignal;
     if (statusNode) statusNode.textContent = status;
     const button = $("scalpTriggerButton");
     if (button) {
