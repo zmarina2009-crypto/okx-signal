@@ -485,7 +485,7 @@ function draw(e){window.candles=candles;window.chartState=chartState;
     try{marks=JSON.parse(localStorage.getItem("okx_v2_alert_markers")||"[]");if(!Array.isArray(marks))marks=[]}catch{}
     const tf=$("tf")?.value||"15m";
     let comboOnly=false;try{comboOnly=localStorage.getItem("okx_combo_mode_active")==="1"}catch(e){}
-    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||["combo","scalping","bos"].includes(m.kind))).slice(-24);
+    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||["combo","scalping","bos"].includes(m.kind)||(Number(m.situationSources&&m.situationSources.bos)||0)>0)).slice(-24);
     const indexByTs=new Map(series.map((c,i)=>[Number(c.ts),i]));
     visibleMarks.forEach(m=>{
       let gi=indexByTs.get(Number(m.ts));
@@ -505,7 +505,9 @@ function draw(e){window.candles=candles;window.chartState=chartState;
       if(!Number.isFinite(x)||!Number.isFinite(anchor)||anchor<p.t-25||anchor>p.t+mainH+25)return;
       const isLong=m.direction==="LONG",color=isLong?"#27e58a":"#ff5f68";
       const ay=Math.max(p.t+10,Math.min(p.t+mainH-10,anchor+(isLong?20:-20)));
-      const label=(isLong?"↑ LONG":"↓ SHORT")+" · "+(m.label||m.kind||"ALERT")+" · "+(Number(m.touches)||1)+(m.kind==="sma"?" кас.":" сигн.");
+      const count=Math.max(1,Math.round(Number(m.eventCount)||Number(m.touches)||1));
+      const countText=count===1?"1 сигнал":count%10>=2&&count%10<=4&&(count%100<12||count%100>14)?count+" сигнала":count+" сигналов";
+      const label=(isLong?"↑ LONG":"↓ SHORT")+" · "+(m.label||m.kind||"ALERT")+" · "+countText;
       q.save();q.globalAlpha=1;q.lineWidth=2;q.strokeStyle=color;q.fillStyle=color;q.beginPath();
       if(isLong){q.moveTo(x,ay+9);q.lineTo(x,ay-5);q.moveTo(x-4,ay-1);q.lineTo(x,ay-6);q.lineTo(x+4,ay-1)}
       else{q.moveTo(x,ay-9);q.lineTo(x,ay+5);q.moveTo(x-4,ay+1);q.lineTo(x,ay+6);q.lineTo(x+4,ay+1)}
@@ -861,7 +863,7 @@ addEventListener("okx-alert-marker",event=>{
   if(!marker||marker.pair!==currentPair||String(marker.tf).toLowerCase()!==String($("tf")?.value||"15m").toLowerCase())return;
   requestAnimationFrame(()=>{if(last)draw(last)});
 });setInterval(async()=>{let oldPair=currentPair;await loadMarkets();if(currentPair&&currentPair!==oldPair)refresh()},60000);// Cache cleanup is handled by service-worker activation; do not delete its active cache here.
-if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=74",{updateViaCache:"none"}).then(r=>r.update()).catch(()=>{});addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferred=e;$("install").style.display="block"});$("install").onclick=async()=>{if(deferred){deferred.prompt();deferred=null;$("install").style.display="none"}};window.OKXSignalApp={getState:()=>({candles,liveCandle,last,currentPair,tf:$("tf")?.value||"",direction}),getMarkets:()=>activeMarkets(),fetchCandles:(pair,bar,limit=80)=>fetchC(pair,bar,limit)};renderJournal();(async()=>{await loadMarkets();if(currentPair)refresh()})();
+if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=75",{updateViaCache:"none"}).then(r=>r.update()).catch(()=>{});addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferred=e;$("install").style.display="block"});$("install").onclick=async()=>{if(deferred){deferred.prompt();deferred=null;$("install").style.display="none"}};window.OKXSignalApp={getState:()=>({candles,liveCandle,last,currentPair,tf:$("tf")?.value||"",direction}),getMarkets:()=>activeMarkets(),fetchCandles:(pair,bar,limit=80)=>fetchC(pair,bar,limit)};renderJournal();(async()=>{await loadMarkets();if(currentPair)refresh()})();
 (function(){
   const baseDraw=draw;
   function drawVolumeProfile(){
@@ -939,7 +941,7 @@ if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=74",{
     draw(last);
   };
 })();
-</script><script src="./alerts.js?v=22"></script><script src="./telegram-test.js?v=1"></script><script src="./scalping-trigger.js?v=6"></script><script src="./backtester.js?v=24"></script><script src="./papertrader.js?v=7"></script><script src="./indicators.js?v=1"></script><script src="./collapsible.js?v=4"></script>
+</script><script src="./alerts.js?v=23"></script><script src="./telegram-test.js?v=1"></script><script src="./scalping-trigger.js?v=7"></script><script src="./backtester.js?v=24"></script><script src="./papertrader.js?v=7"></script><script src="./indicators.js?v=1"></script><script src="./collapsible.js?v=4"></script>
 <script>
 (function(){
   const bar=document.getElementById("quickAccessBar");
