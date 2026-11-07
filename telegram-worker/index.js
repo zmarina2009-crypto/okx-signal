@@ -277,7 +277,7 @@ async function fetchCandles(pair, tf) {
     c: Number(row[4]), v: Number(row[5]), confirm: String(row[8]) === "1"
   })).filter(c => Number.isFinite(c.ts) && c.c > 0).sort((a, b) => a.ts - b.ts);
 }
-async function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) {
+function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) {
   recordPerformanceSignal(state, { pair, tf, kind, direction, ts, price: closePrice });
   const required=clamp(Number(rule.comboCount ?? COMBO_COUNT),2,4);
   // In reversal mode, all four inputs are evaluated as closed-candle predicates below;
@@ -324,7 +324,7 @@ async function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, can
   const comboPrice = directed[0].price || closePrice;
   const comboWindowDescription = required === 4 ? "одна и та же закрытая свеча" : "окно " + comboWindowBars + " свечи";
   recordPerformanceSignal(state, { pair, tf, kind: "combo", direction: directed[0].direction, ts: comboTs, price: comboPrice });
-  if (rule.telegram) await emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.length+"/4 • "+chosen.map(s => s.kind.toUpperCase()).join(" + ")+" • "+comboWindowDescription+(rule.chopFilter ? " • CHOP " + (choppiness(candles, rule.chopPeriod) ?? NaN).toFixed(1) : ""), { signalTs: comboTs, rule });
+  if (rule.telegram) void emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.length+"/4 • "+chosen.map(s => s.kind.toUpperCase()).join(" + ")+" • "+comboWindowDescription+(rule.chopFilter ? " • CHOP " + (choppiness(candles, rule.chopPeriod) ?? NaN).toFixed(1) : ""), { signalTs: comboTs, rule });
   state.recentSignals = state.recentSignals.filter(s => !(s.pair === pair && s.tf === tf && s.ts <= comboTs));
 }
 async function processPair(pair, tf, rule) {
@@ -349,7 +349,7 @@ async function processPair(pair, tf, rule) {
       if (multiple >= VOLUME_MULT) {
         const direction = last.c >= last.o ? "LONG" : "SHORT";
         if (shouldSendStandaloneTelegram(rule)) await emit("volume", pair, tf, direction, last.c, `Объём: ×${multiple.toFixed(1)} от среднего`, { signalTs: last.ts, rule });
-        await recordSignal(pair, tf, "volume", direction, last.ts, last.c, rule, closed);
+        recordSignal(pair, tf, "volume", direction, last.ts, last.c, rule, closed);
       }
     }
     if (rule.rsi) {
@@ -359,12 +359,12 @@ async function processPair(pair, tf, rule) {
         if (prev >= RSI_LOW && value < RSI_LOW) {
           rsiSignalDirection = "LONG";
           if (shouldSendStandaloneTelegram(rule)) await emit("rsi", pair, tf, "LONG", last.c, `RSI: ${value.toFixed(1)} — выход ниже ${RSI_LOW}`, { signalTs: last.ts, rule });
-          await recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c, rule, closed);
+          recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c, rule, closed);
         }
         if (prev <= RSI_HIGH && value > RSI_HIGH) {
           rsiSignalDirection = "SHORT";
           if (shouldSendStandaloneTelegram(rule)) await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`, { signalTs: last.ts, rule });
-          await recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c, rule, closed);
+          recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c, rule, closed);
         }
       }
     }
@@ -377,7 +377,7 @@ async function processPair(pair, tf, rule) {
         for (const level of nearby) {
           const detail = `Volume Profile ${level.level}: цена рядом с уровнем ${price(level.price)} (дистанция ${price(level.distance)}, допуск 1 ряд); RSI подтверждает ${rsiSignalDirection}`;
           if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, rsiSignalDirection, last.c, detail, { signalTs: last.ts, rule });
-          await recordSignal(pair, tf, "vp", rsiSignalDirection, last.ts, last.c, rule, closed);
+          recordSignal(pair, tf, "vp", rsiSignalDirection, last.ts, last.c, rule, closed);
           console.log("VP near-level confirmed:", pair, tf, level.level, rsiSignalDirection, "distance", level.distance, "tolerance", level.tolerance);
         }
       } else if (!rule.vpNear) {
@@ -385,7 +385,7 @@ async function processPair(pair, tf, rule) {
         for (const crossing of crossings) {
           const detail = `Volume Profile ${crossing.level}: пересечение уровня ${price(crossing.price)}; close ${price(last.c)}`;
           if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, crossing.direction, last.c, detail, { signalTs: last.ts, rule });
-          await recordSignal(pair, tf, "vp", crossing.direction, last.ts, last.c, rule, closed);
+          recordSignal(pair, tf, "vp", crossing.direction, last.ts, last.c, rule, closed);
         }
       }
     }
@@ -400,7 +400,7 @@ async function processPair(pair, tf, rule) {
       // Follow the pre-touch trend: above SMA => LONG; below SMA => SHORT.
       const direction = previous && previousSma != null && previous.c >= previousSma ? "LONG" : "SHORT";
       if (shouldSendStandaloneTelegram(rule)) await emit("sma", pair, tf, direction, last.c, `SMA${SMA_PERIOD}: ${price(m)} (закрытая свеча)`, { signalTs: last.ts, rule });
-      await recordSignal(pair, tf, "sma", direction, last.ts, last.c, rule, closed);
+      recordSignal(pair, tf, "sma", direction, last.ts, last.c, rule, closed);
     }
   }
   if (isNewClosedCandle && rule.combo && Number(rule.comboCount)===4 && rule.comboMode==="reversal") {
