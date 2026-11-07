@@ -174,8 +174,9 @@
     const rows=selected==="all"?telegramHistoryItems:telegramHistoryItems.filter(item=>item.status===selected);
     meta.textContent=rows.length+" из "+telegramHistoryItems.length+" записей · на сервере: "+historyTotal;
     if(!rows.length){
-      const tr=make("tr"),td=make("td",{class:"tg-history-empty",colSpan:"8"},
-        telegramHistoryItems.length?"Для выбранного статуса записей нет.":"История Telegram пока пуста.");
+      const tr=document.createElement("tr"),td=make("td",{class:"tg-history-empty"});
+      td.colSpan=8;
+      td.textContent=telegramHistoryItems.length?"Для выбранного статуса записей нет.":"История Telegram пока пуста.";
       tr.append(td);root.append(tr);return;
     }
     rows.forEach(item=>{
@@ -203,7 +204,11 @@
       if(!quiet){
         $("tgHistoryMeta").textContent="Не указан адрес worker";
         const root=$("tgHistoryRows");
-        if(root)root.replaceChildren(make("tr",{},make("td",{class:"tg-history-empty",colSpan:"8"},"Сначала укажи адрес Telegram worker в настройках выше.")));
+        if(root){
+          const tr=document.createElement("tr"),td=make("td",{class:"tg-history-empty"});
+          td.colSpan=8;td.textContent="Сначала укажи адрес Telegram worker в настройках выше.";
+          tr.append(td);root.replaceChildren(tr);
+        }
       }
       return;
     }
@@ -224,7 +229,11 @@
       $("tgHistoryUpdated").textContent="Ошибка: "+(error.message||error)+" · проверь URL и доступ worker.";
       if(!telegramHistoryItems.length){
         const root=$("tgHistoryRows");
-        if(root)root.replaceChildren(make("tr",{},make("td",{class:"tg-history-empty",colSpan:"8"},"Не удалось загрузить историю: "+(error.message||error))));
+        if(root){
+          const tr=document.createElement("tr"),td=make("td",{class:"tg-history-empty"});
+          td.colSpan=8;td.textContent="Не удалось загрузить историю: "+(error.message||error);
+          tr.append(td);root.replaceChildren(tr);
+        }
       }
     }finally{
       telegramHistoryBusy=false;
