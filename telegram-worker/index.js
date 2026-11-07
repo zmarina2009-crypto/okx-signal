@@ -400,7 +400,7 @@ async function processPair(pair, tf, rule) {
       // Follow the pre-touch trend: above SMA => LONG; below SMA => SHORT.
       const direction = previous && previousSma != null && previous.c >= previousSma ? "LONG" : "SHORT";
       if (shouldSendStandaloneTelegram(rule)) await emit("sma", pair, tf, direction, last.c, `SMA${SMA_PERIOD}: ${price(m)} (закрытая свеча)`, { signalTs: last.ts, rule });
-      recordSignal(pair, tf, "sma", direction, last.ts, last.c, rule, closed);
+      await recordSignal(pair, tf, "sma", direction, last.ts, last.c, rule, closed);
     }
   }
   if (isNewClosedCandle && rule.combo && Number(rule.comboCount)===4 && rule.comboMode==="reversal") {
