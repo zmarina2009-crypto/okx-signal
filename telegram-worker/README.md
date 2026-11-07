@@ -9,7 +9,7 @@ This is a separate Node.js worker. It does not change the browser chart, Live co
 - Optionally sends Combo alerts; when VP is enabled for a rule, it can be one of the directional Combo sources.
 - Saves processed candle timestamps, cooldown state, signal history, and signal outcomes to the persistent JSON state file.
 - Measures directional price return, maximum favourable excursion (MFE), and maximum adverse excursion (MAE) 1, 4, and 12 hours after each signal.
-- Exposes `/health` for a hosting health check and `/stats?days=7` for a JSON performance summary (up to 90 days).
+- Exposes `/health` for a hosting health check, `/stats?days=7` for a JSON performance summary (up to 90 days), and `/telegram-history?limit=100` for the latest Telegram delivery records.
 
 ## Important first-stage limitation
 
@@ -52,6 +52,14 @@ Create a Railway service from this repository and set the service root directory
 For OKX perpetual swaps, use instrument IDs ending in `-SWAP` (for example, `BTC-USDT-SWAP`). The default is `BTC-USDT-SWAP`; plain `BTC-USDT` refers to spot, not the perpetual market.
 
 The worker does not need OKX API keys: it uses public market data only. It does not place orders. Statistics start accumulating after this version is deployed; earlier alerts cannot be reconstructed automatically. Reported directional returns exclude fees, funding, and slippage. A separate simulated-trade report with defined stop/target rules is a later step.
+
+
+## Telegram delivery history
+
+- The worker stores the latest 500 Telegram delivery events in the same persistent `STATE_FILE` as the alert state. Each record includes signal time, pair, timeframe, direction, signal type, price, selected-rule snapshot, send-attempt time, result, and any Telegram error.
+- `GET /telegram-history?limit=100` returns the newest records first. The limit is bounded to 1–500. The endpoint contains delivery metadata only; bot tokens and chat IDs are never returned.
+- Status values: `attempting` (request started), `sent` (Telegram API accepted the message), `failed` (Telegram API or network error), `skipped_cooldown` (a repeated event was suppressed by the existing cooldown), and `unknown` (the worker restarted before it could save the final send result).
+- The history starts accumulating after this version is deployed. Older Telegram messages cannot be reconstructed retrospectively. Persistence uses the existing Railway volume mounted at `/data`; keep `STATE_FILE=/data/state.json` configured to retain history across deployments.
 
 ## Telegram setup
 

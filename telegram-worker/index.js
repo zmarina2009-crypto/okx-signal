@@ -1,6 +1,8 @@
 import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { appendTelegramHistory, listTelegramHistory, markInterruptedTelegramAttempts } from "./telegram-history.js";
 import { recordPerformanceSignal, updatePerformanceOutcomes, buildPerformanceStats } from "./statistics.js";
 import { volumeProfileCrossings, volumeProfileProximity } from "./volume-profile.js";
 import { diagnoseComboReversal, shouldSendStandaloneTelegram } from "./combo-reversal.js";
@@ -137,7 +139,7 @@ function tfMs(tf) {
 }
 function price(n) { return Number(n).toLocaleString("en-US", { maximumFractionDigits: 8 }); }
 
-let state = { lastClosed: {}, lastAlertAt: {}, lastSmaTouch: {}, recentSignals: [], performanceSignals: [] };
+let state = { lastClosed: {}, lastAlertAt: {}, lastSmaTouch: {}, recentSignals: [], performanceSignals: [], telegramHistory: [] };
 let busy = false;
 let stopped = false;
 
@@ -147,6 +149,12 @@ async function loadState() {
     if (parsed && typeof parsed === "object") {
       state = { ...state, ...parsed };
       if (Array.isArray(parsed.alertRules) && parsed.alertRules.length) ALERT_RULES = loadAlertRules(JSON.stringify(parsed.alertRules));
+      const interrupted = markInterruptedTelegramAttempts(state);
+      if (interrupted) {
+        console.warn("Telegram delivery result unknown after restart:", interrupted, "incomplete attempts");
+        try { await saveState(); }
+        catch (err) { console.error("Could not persist interrupted Telegram attempts:", err.message); }
+      }
     }
   } catch {}
 }
@@ -170,28 +178,89 @@ async function sendTelegram(text) {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || !body.ok) throw new Error(body.description || `Telegram HTTP ${response.status}`);
+  return { messageId: body?.result?.message_id ?? null };
 }
-async function emit(kind, pair, tf, direction, closePrice, details = "") {
+function telegramRuleSnapshot(rule) {
+  if (!rule) return null;
+  return {
+    telegram: rule.telegram === true,
+    comboOnly: rule.comboOnly === true,
+    volume: rule.volume === true,
+    rsi: rule.rsi === true,
+    sma: rule.sma === true,
+    vp: rule.vp === true,
+    vpNear: rule.vpNear === true,
+    combo: rule.combo === true,
+    comboCount: Number(rule.comboCount) || null,
+    comboMode: rule.comboMode || null,
+    chopFilter: rule.chopFilter === true
+  };
+}
+async function persistTelegramState(stage, historyId) {
+  try { await saveState(); }
+  catch (err) {
+    console.error("Telegram history persistence failed:", stage, "historyId=" + historyId, err.message);
+  }
+}
+async function emit(kind, pair, tf, direction, closePrice, details = "", metadata = {}) {
   const key = [kind, pair, tf, direction].join(":");
   const now = Date.now();
-  if (now - (state.lastAlertAt[key] || 0) < COOLDOWN_MS) return;
+  const signalTs = Number(metadata.signalTs);
+  const entry = {
+    id: randomUUID(),
+    createdAt: new Date(now).toISOString(),
+    signalTs: Number.isFinite(signalTs) && signalTs > 0 ? signalTs : null,
+    signalAt: Number.isFinite(signalTs) && signalTs > 0 ? new Date(signalTs).toISOString() : null,
+    pair,
+    tf,
+    direction,
+    kind,
+    price: Number(closePrice),
+    details: String(details || "").slice(0, 1200),
+    rule: telegramRuleSnapshot(metadata.rule),
+    status: "attempting",
+    attemptedAt: new Date(now).toISOString(),
+    finishedAt: null,
+    telegramMessageId: null,
+    error: null
+  };
+
+  if (now - (state.lastAlertAt[key] || 0) < COOLDOWN_MS) {
+    entry.status = "skipped_cooldown";
+    entry.finishedAt = new Date().toISOString();
+    entry.error = "Отправка пропущена: действует cooldown для этого типа сигнала.";
+    appendTelegramHistory(state, entry);
+    await persistTelegramState("cooldown", entry.id);
+    console.log("Telegram skipped (cooldown):", key, "historyId=" + entry.id);
+    return;
+  }
+
   state.lastAlertAt[key] = now;
+  appendTelegramHistory(state, entry);
+  // Persist the attempt before the network request, so a worker restart cannot erase it.
+  await persistTelegramState("before-send", entry.id);
   const emoji = direction === "LONG" ? "🟢" : "🔴";
-  const text = [
-    `OKX SIGNAL PRO • ${kind.toUpperCase()}`,
-    `${emoji} ${direction}  |  ${pair}  |  ${tf}`,
-    `Цена: ${price(closePrice)}`,
+  const message = [
+    "OKX SIGNAL PRO • " + kind.toUpperCase(),
+    emoji + " " + direction + "  |  " + pair + "  |  " + tf,
+    "Цена: " + price(closePrice),
     details,
     new Date(now).toLocaleString("ru-RU", { timeZone: process.env.ALERT_TIMEZONE || "Europe/Berlin" })
   ].filter(Boolean).join("\n");
   try {
-    await sendTelegram(text);
-    console.log("Sent:", key);
+    const result = await sendTelegram(message);
+    entry.status = "sent";
+    entry.finishedAt = new Date().toISOString();
+    entry.telegramMessageId = result.messageId;
+    console.log("Sent:", key, "historyId=" + entry.id);
   } catch (err) {
-    console.error("Telegram send failed:", err.message);
+    entry.status = "failed";
+    entry.finishedAt = new Date().toISOString();
+    entry.error = String(err?.message || err || "Telegram delivery failed").slice(0, 600);
+    console.error("Telegram send failed:", key, "historyId=" + entry.id, entry.error);
     delete state.lastAlertAt[key];
   }
-  await saveState();
+  await persistTelegramState("after-send", entry.id);
 }
 async function fetchCandles(pair, tf) {
   const url = new URL("https://www.okx.com/api/v5/market/candles");
@@ -208,7 +277,7 @@ async function fetchCandles(pair, tf) {
     c: Number(row[4]), v: Number(row[5]), confirm: String(row[8]) === "1"
   })).filter(c => Number.isFinite(c.ts) && c.c > 0).sort((a, b) => a.ts - b.ts);
 }
-function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) {
+async function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) {
   recordPerformanceSignal(state, { pair, tf, kind, direction, ts, price: closePrice });
   const required=clamp(Number(rule.comboCount ?? COMBO_COUNT),2,4);
   // In reversal mode, all four inputs are evaluated as closed-candle predicates below;
@@ -255,7 +324,7 @@ function recordSignal(pair, tf, kind, direction, ts, closePrice, rule, candles) 
   const comboPrice = directed[0].price || closePrice;
   const comboWindowDescription = required === 4 ? "одна и та же закрытая свеча" : "окно " + comboWindowBars + " свечи";
   recordPerformanceSignal(state, { pair, tf, kind: "combo", direction: directed[0].direction, ts: comboTs, price: comboPrice });
-  if (rule.telegram) void emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.length+"/4 • "+chosen.map(s => s.kind.toUpperCase()).join(" + ")+" • "+comboWindowDescription+(rule.chopFilter ? " • CHOP " + (choppiness(candles, rule.chopPeriod) ?? NaN).toFixed(1) : ""));
+  if (rule.telegram) await emit("combo", pair, tf, directed[0].direction, comboPrice, chosen.length+"/4 • "+chosen.map(s => s.kind.toUpperCase()).join(" + ")+" • "+comboWindowDescription+(rule.chopFilter ? " • CHOP " + (choppiness(candles, rule.chopPeriod) ?? NaN).toFixed(1) : ""), { signalTs: comboTs, rule });
   state.recentSignals = state.recentSignals.filter(s => !(s.pair === pair && s.tf === tf && s.ts <= comboTs));
 }
 async function processPair(pair, tf, rule) {
@@ -279,8 +348,8 @@ async function processPair(pair, tf, rule) {
       const multiple = avg > 0 ? last.v / avg : 0;
       if (multiple >= VOLUME_MULT) {
         const direction = last.c >= last.o ? "LONG" : "SHORT";
-        if (shouldSendStandaloneTelegram(rule)) await emit("volume", pair, tf, direction, last.c, `Объём: ×${multiple.toFixed(1)} от среднего`);
-        recordSignal(pair, tf, "volume", direction, last.ts, last.c, rule, closed);
+        if (shouldSendStandaloneTelegram(rule)) await emit("volume", pair, tf, direction, last.c, `Объём: ×${multiple.toFixed(1)} от среднего`, { signalTs: last.ts, rule });
+        await recordSignal(pair, tf, "volume", direction, last.ts, last.c, rule, closed);
       }
     }
     if (rule.rsi) {
@@ -289,13 +358,13 @@ async function processPair(pair, tf, rule) {
       if (value != null && prev != null) {
         if (prev >= RSI_LOW && value < RSI_LOW) {
           rsiSignalDirection = "LONG";
-          if (shouldSendStandaloneTelegram(rule)) await emit("rsi", pair, tf, "LONG", last.c, `RSI: ${value.toFixed(1)} — выход ниже ${RSI_LOW}`);
-          recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c, rule, closed);
+          if (shouldSendStandaloneTelegram(rule)) await emit("rsi", pair, tf, "LONG", last.c, `RSI: ${value.toFixed(1)} — выход ниже ${RSI_LOW}`, { signalTs: last.ts, rule });
+          await recordSignal(pair, tf, "rsi", "LONG", last.ts, last.c, rule, closed);
         }
         if (prev <= RSI_HIGH && value > RSI_HIGH) {
           rsiSignalDirection = "SHORT";
-          if (shouldSendStandaloneTelegram(rule)) await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`);
-          recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c, rule, closed);
+          if (shouldSendStandaloneTelegram(rule)) await emit("rsi", pair, tf, "SHORT", last.c, `RSI: ${value.toFixed(1)} — выход выше ${RSI_HIGH}`, { signalTs: last.ts, rule });
+          await recordSignal(pair, tf, "rsi", "SHORT", last.ts, last.c, rule, closed);
         }
       }
     }
@@ -307,16 +376,16 @@ async function processPair(pair, tf, rule) {
         const nearby = volumeProfileProximity(profileBars, last.c, "all", VP_ROWS, 1);
         for (const level of nearby) {
           const detail = `Volume Profile ${level.level}: цена рядом с уровнем ${price(level.price)} (дистанция ${price(level.distance)}, допуск 1 ряд); RSI подтверждает ${rsiSignalDirection}`;
-          if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, rsiSignalDirection, last.c, detail);
-          recordSignal(pair, tf, "vp", rsiSignalDirection, last.ts, last.c, rule, closed);
+          if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, rsiSignalDirection, last.c, detail, { signalTs: last.ts, rule });
+          await recordSignal(pair, tf, "vp", rsiSignalDirection, last.ts, last.c, rule, closed);
           console.log("VP near-level confirmed:", pair, tf, level.level, rsiSignalDirection, "distance", level.distance, "tolerance", level.tolerance);
         }
       } else if (!rule.vpNear) {
         const crossings = volumeProfileCrossings(profileBars, previous?.c, last.c, VP_MODE, VP_ROWS);
         for (const crossing of crossings) {
           const detail = `Volume Profile ${crossing.level}: пересечение уровня ${price(crossing.price)}; close ${price(last.c)}`;
-          if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, crossing.direction, last.c, detail);
-          recordSignal(pair, tf, "vp", crossing.direction, last.ts, last.c, rule, closed);
+          if (shouldSendStandaloneTelegram(rule)) await emit("vp", pair, tf, crossing.direction, last.c, detail, { signalTs: last.ts, rule });
+          await recordSignal(pair, tf, "vp", crossing.direction, last.ts, last.c, rule, closed);
         }
       }
     }
@@ -330,7 +399,7 @@ async function processPair(pair, tf, rule) {
       const previousSma = sma(closed.slice(0, -1), SMA_PERIOD);
       // Follow the pre-touch trend: above SMA => LONG; below SMA => SHORT.
       const direction = previous && previousSma != null && previous.c >= previousSma ? "LONG" : "SHORT";
-      if (shouldSendStandaloneTelegram(rule)) await emit("sma", pair, tf, direction, last.c, `SMA${SMA_PERIOD}: ${price(m)} (закрытая свеча)`);
+      if (shouldSendStandaloneTelegram(rule)) await emit("sma", pair, tf, direction, last.c, `SMA${SMA_PERIOD}: ${price(m)} (закрытая свеча)`, { signalTs: last.ts, rule });
       recordSignal(pair, tf, "sma", direction, last.ts, last.c, rule, closed);
     }
   }
@@ -356,7 +425,7 @@ async function processPair(pair, tf, rule) {
         const vpLabel=reversal.vpLevel==="VAL"?"VAL":"VAH";
         const detail="Разворот 4/4 • объём ×"+reversal.volumeMultiple.toFixed(1)+" • RSI "+reversal.rsi.toFixed(1)+" • "+(reversal.direction==="LONG"?"цена ниже":"цена выше")+" SMA"+SMA_PERIOD+" "+price(reversal.sma)+" • возле "+vpLabel+" "+price(reversal.vpPrice)+" • одна закрытая свеча"+(rule.chopFilter?" • CHOP "+chopValue.toFixed(1):"");
         recordPerformanceSignal(state,{pair,tf,kind:"combo",direction:reversal.direction,ts:last.ts,price:last.c});
-        if (rule.telegram) await emit("combo",pair,tf,reversal.direction,last.c,detail);
+        if (rule.telegram) await emit("combo",pair,tf,reversal.direction,last.c,detail,{ signalTs:last.ts, rule });
         console.log("COMBO 4/4 reversal fired:",pair,tf,reversal.direction,"sameClosedCandle",last.ts);
       }
     }
@@ -387,6 +456,13 @@ const server = http.createServer((req, res) => {
     res.setHeader("access-control-allow-headers", "content-type, authorization");
   }
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+  if (requestUrl.pathname === "/telegram-history" && req.method === "GET") {
+    const requestedLimit = Number(requestUrl.searchParams.get("limit") || 100);
+    const history = listTelegramHistory(state, requestedLimit);
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    res.end(JSON.stringify(history, null, 2));
+    return;
+  }
   if (requestUrl.pathname === "/stats") {
     const days = requestUrl.searchParams.get("days") || "7";
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
