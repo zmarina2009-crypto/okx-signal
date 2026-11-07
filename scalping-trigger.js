@@ -48,6 +48,7 @@
   let polling = false;
   let lastCheckAt = 0;
   let modal = null;
+  let journalModal = null;
   let statusNode = null;
   let historyNode = null;
   let history = safeParse(STATE_KEY + "_history", []);
@@ -453,8 +454,12 @@
   }
 
   function renderHistory() {
-    const countNode = $("stHistoryCount");
+    const countNode = $("stJournalHistoryCount");
     if (countNode) countNode.textContent = "Журнал сигналов · " + history.length + " / 100";
+    const buttonCountNode = $("stJournalButtonCount");
+    if (buttonCountNode) buttonCountNode.textContent = String(history.length);
+    const journalButton = $("scalpJournalButton");
+    if (journalButton) journalButton.title = "Открыть журнал сигналов · " + history.length + " / 100";
     if (!historyNode) return;
     historyNode.replaceChildren();
 
@@ -610,14 +615,11 @@
             '<label>Антиспам, сек<input id="stCooldown" type="number" min="1" max="86400"></label>' +
           '</div></section>' +
           '<div id="stStatus" class="st-status">Подготовка…</div>' +
-          '<section class="st-history" aria-label="Журнал сигналов"><div class="st-history-head"><b id="stHistoryCount">Журнал сигналов · 0 / 100</b><button type="button" id="stClearHistory">Очистить</button></div>' +
-            '<div class="st-history-columns" aria-hidden="true"><span>Свеча / фиксация</span><span>Пара / ТФ</span><span>Источник</span><span>Сигнал</span><span>Цена</span></div>' +
-            '<div id="stHistoryList" class="st-history-list" role="log" aria-live="polite"></div></section>' +
+          '<p class="st-footnote">Журнал сигналов открывается в отдельном окне по кнопке «📒 Журнал» рядом с настройками скальпинга. Записи сохраняются независимо от открытия окна.</p>' +
           '<p class="st-footnote">Маркеры появятся на основном графике выбранной пары и таймфрейма. Двойной щелчок по маркеру удаляет его, как и другие маркеры алертов. Этот модуль не меняет Telegram-правила, основной COMBO, Live или тестер.</p>' +
         '</div></section>';
     document.body.appendChild(modal);
     statusNode = $("stStatus");
-    historyNode = $("stHistoryList");
     syncControls();
     renderHistory();
 
@@ -657,6 +659,39 @@
         if (id === "stScope") poll();
       });
     });
+  }
+
+  function buildJournalModal() {
+    if ($("scalpingJournalModal")) return;
+    journalModal = document.createElement("div");
+    journalModal.id = "scalpingJournalModal";
+    journalModal.className = "st-backdrop";
+    journalModal.hidden = true;
+    journalModal.innerHTML =
+      '<section class="st-window st-journal-window" role="dialog" aria-modal="true" aria-labelledby="stJournalTitle">' +
+        '<header class="st-header"><div><h2 id="stJournalTitle">📒 Журнал сигналов скальпинга</h2>' +
+          '<p>Все зафиксированные сигналы модуля, время сигнальной свечи и время обнаружения.</p></div>' +
+          '<button type="button" id="stJournalClose" aria-label="Закрыть журнал">✕</button></header>' +
+        '<div class="st-journal-body">' +
+          '<section class="st-history" aria-label="Записи журнала">' +
+            '<div class="st-history-head"><b id="stJournalHistoryCount">Журнал сигналов · 0 / 100</b><button type="button" id="stClearHistory">Очистить</button></div>' +
+            '<div class="st-history-columns" aria-hidden="true"><span>Свеча / фиксация</span><span>Пара / ТФ</span><span>Источник</span><span>Сигнал</span><span>Цена</span></div>' +
+            '<div id="stHistoryList" class="st-history-list" role="log" aria-live="polite"></div>' +
+          '</section>' +
+          '<p class="st-footnote">Сохраняются последние 100 записей на этом устройстве. Закрытие окна не останавливает мониторинг и не удаляет историю.</p>' +
+        '</div>' +
+      '</section>';
+    document.body.appendChild(journalModal);
+    historyNode = $("stHistoryList");
+    renderHistory();
+
+    $("stJournalClose").onclick = closeJournalModal;
+    journalModal.addEventListener("click", (event) => {
+      if (event.target === journalModal) closeJournalModal();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && journalModal && !journalModal.hidden) closeJournalModal();
+    });
     $("stClearHistory").onclick = () => {
       history = [];
       try { localStorage.setItem(STATE_KEY + "_history", "[]"); } catch (_) {}
@@ -667,25 +702,37 @@
 
   function addOpenButton() {
     const nav = $("quickAccessBar");
-    if (!nav || $("scalpTriggerButton")) return;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.id = "scalpTriggerButton";
-    button.innerHTML = "⚡ <span>Скальпинг</span>";
-    button.title = "Открыть Volume + RSI + BOS";
-    button.onclick = openModal;
-    const alertsButton = nav.querySelector('[data-quick-target="alertsPanel"]');
-    if (alertsButton) alertsButton.insertAdjacentElement("afterend", button);
-    else nav.appendChild(button);
+    if (!nav) return;
+    let button = $("scalpTriggerButton");
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.id = "scalpTriggerButton";
+      button.innerHTML = "⚡ <span>Скальпинг</span>";
+      button.title = "Открыть настройки скальпинга";
+      button.onclick = openModal;
+      const alertsButton = nav.querySelector('[data-quick-target="alertsPanel"]');
+      if (alertsButton) alertsButton.insertAdjacentElement("afterend", button);
+      else nav.appendChild(button);
+    }
+    if (!$("scalpJournalButton")) {
+      const journalButton = document.createElement("button");
+      journalButton.type = "button";
+      journalButton.id = "scalpJournalButton";
+      journalButton.innerHTML = '📒 <span>Журнал</span> <span id="stJournalButtonCount" class="st-journal-count">0</span>';
+      journalButton.title = "Открыть журнал сигналов";
+      journalButton.onclick = openJournalModal;
+      button.insertAdjacentElement("afterend", journalButton);
+    }
   }
 
   function openModal() {
     if (!modal) buildModal();
     if (!modal) return;
+    closeJournalModal();
     modal.hidden = false;
     document.body.classList.add("st-modal-open");
     syncControls();
-    renderHistory();
     poll();
   }
 
@@ -695,20 +742,37 @@
     document.body.classList.remove("st-modal-open");
   }
 
+  function openJournalModal() {
+    if (!journalModal) buildJournalModal();
+    if (!journalModal) return;
+    closeModal();
+    journalModal.hidden = false;
+    document.body.classList.add("st-modal-open");
+    renderHistory();
+  }
+
+  function closeJournalModal() {
+    if (!journalModal) return;
+    journalModal.hidden = true;
+    document.body.classList.remove("st-modal-open");
+  }
+
   function injectCss() {
     if ($("scalpingTriggerCss")) return;
     const style = document.createElement("style");
     style.id = "scalpingTriggerCss";
     style.textContent =
-      ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number]{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{display:block!important;min-height:72px;border:1px solid #263547;border-radius:10px;overflow:hidden;background:#0b1118}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-columns,.st-history-row{display:grid;grid-template-columns:minmax(120px,1.35fr) minmax(120px,1.2fr) minmax(105px,1fr) minmax(76px,.65fr) minmax(90px,.8fr);gap:8px;align-items:center}.st-history-columns{padding:7px 10px;background:#0c141e;color:#8998a9;font-size:10px}.st-history-list{display:block;max-height:260px;overflow:auto}.st-history-row{padding:8px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.35}.st-history-cell{min-width:0;overflow-wrap:anywhere}.st-history-row .st-time{display:grid;gap:2px}.st-history-row time{color:#d0dbe6;font-variant-numeric:tabular-nums}.st-history-row small{color:#718296;font-size:9px}.st-history-direction{font-weight:800}.st-history-row .st-history-direction.is-long{color:#48d99a}.st-history-row .st-history-direction.is-short{color:#ff7b84}.st-history-price{font-variant-numeric:tabular-nums;font-weight:700}.st-history-detail{grid-column:1/-1;color:#8998a9;font-size:9px;overflow-wrap:anywhere}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}.st-history-columns{display:none}.st-history-list{max-height:220px}.st-history-row{grid-template-columns:1fr 1fr;gap:6px 10px}.st-history-row .st-time{grid-column:1/-1}}";
+      ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-journal-window{width:min(980px,100%)}.st-journal-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-journal-window .st-history-list{max-height:min(68vh,640px)}.st-journal-count{display:inline-flex;min-width:17px;height:17px;align-items:center;justify-content:center;margin-left:3px;padding:0 5px;border-radius:999px;background:#1a2a3a;color:#b8d8f5;font-size:10px;font-weight:700}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number]{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{display:block!important;min-height:72px;border:1px solid #263547;border-radius:10px;overflow:hidden;background:#0b1118}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-columns,.st-history-row{display:grid;grid-template-columns:minmax(120px,1.35fr) minmax(120px,1.2fr) minmax(105px,1fr) minmax(76px,.65fr) minmax(90px,.8fr);gap:8px;align-items:center}.st-history-columns{padding:7px 10px;background:#0c141e;color:#8998a9;font-size:10px}.st-history-list{display:block;max-height:260px;overflow:auto}.st-history-row{padding:8px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.35}.st-history-cell{min-width:0;overflow-wrap:anywhere}.st-history-row .st-time{display:grid;gap:2px}.st-history-row time{color:#d0dbe6;font-variant-numeric:tabular-nums}.st-history-row small{color:#718296;font-size:9px}.st-history-direction{font-weight:800}.st-history-row .st-history-direction.is-long{color:#48d99a}.st-history-row .st-history-direction.is-short{color:#ff7b84}.st-history-price{font-variant-numeric:tabular-nums;font-weight:700}.st-history-detail{grid-column:1/-1;color:#8998a9;font-size:9px;overflow-wrap:anywhere}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}.st-history-columns{display:none}.st-history-list{max-height:220px}.st-journal-window .st-history-list{max-height:none;flex:1}.st-journal-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-journal-body{padding:12px;flex:1}.st-history-row{grid-template-columns:1fr 1fr;gap:6px 10px}.st-history-row .st-time{grid-column:1/-1}}";
     document.head.appendChild(style);
   }
 
   function start() {
     injectCss();
     addOpenButton();
+    buildJournalModal();
     buildModal();
     updateStatus();
+    renderHistory();
     poll();
     window.setInterval(poll, 15000);
     window.addEventListener("okx-markets-loaded", updateStatus);
