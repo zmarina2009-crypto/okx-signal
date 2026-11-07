@@ -7,10 +7,10 @@
   if(!Number.isFinite(Number(cfg.smaTolerance))||Number(cfg.smaTolerance)===.15)cfg.smaTolerance=0;
   if(!["strict","reversal"].includes(cfg.comboMode))cfg.comboMode="strict";
   cfg.vpPeriod=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));cfg.vpRows=Math.max(10,Math.min(60,Math.round(Number(cfg.vpRows)||30)));if(!["poc","va","all"].includes(cfg.vpMode))cfg.vpMode="poc";
-  if(Number(cfg.comboCount)===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;cfg.comboWindow=1;}
+  if(Number(cfg.comboCount)===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboWindow=1;}
   if(!["any","vpRsi"].includes(cfg.comboComposition))cfg.comboComposition="any";
   cfg.vpRsiWindow=Math.max(1,Math.min(5,Math.round(Number(cfg.vpRsiWindow)||3)));cfg.vpRsiAtrTolerance=Math.max(.1,Math.min(2,Number(cfg.vpRsiAtrTolerance)||.35));
-  if(cfg.comboComposition==="vpRsi"){cfg.comboCount=2;cfg.comboEnabled=true;cfg.rsi=true;cfg.vp=true;}
+  if(cfg.comboComposition==="vpRsi"){cfg.comboCount=2;cfg.rsi=true;cfg.vp=true;}
   let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[],vpRsiStates={};
   const $=id=>document.getElementById(id);
   const esc=s=>String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
@@ -497,7 +497,7 @@
     ["alertVolume","alertRsi","alertSma"].forEach((id,i)=>{const el=$(id);el.checked=[cfg.volume,cfg.rsi,cfg.sma][i];el.onchange=()=>{if(cfg.comboCount===4&&!el.checked){el.checked=true;log("combo","Для COMBO 4/4 нельзя отключить один из четырёх индикаторов.");return;}if(i===0)cfg.volume=el.checked;if(i===1)cfg.rsi=el.checked;if(i===2)cfg.sma=el.checked;save()}});
     $("alertVP").checked=!!cfg.vp;$("alertVP").onchange=()=>{if(cfg.comboCount===4&&!$("alertVP").checked){$("alertVP").checked=true;log("combo","Для COMBO 4/4 нельзя отключить Volume Profile.");return;}cfg.vp=$("alertVP").checked;save()};$("alertVPMode").value=cfg.vpMode;
     $("alertCombo").checked=!!cfg.comboEnabled;
-    $("alertCombo").onchange=()=>{cfg.comboEnabled=$("alertCombo").checked;comboSignals=[];comboLastAt={};vpRsiStates={};save()};
+    $("alertCombo").onchange=()=>{cfg.comboEnabled=$("alertCombo").checked;comboSignals=[];comboLastAt={};vpRsiStates={};if(!cfg.comboEnabled){cfg.comboModeActive=false;try{localStorage.setItem("okx_combo_mode_active","0")}catch(e){}window.dispatchEvent(new CustomEvent("okx-combo-mode-change",{detail:{active:false}}));renderComboMode();renderAlertLog();const badge=$("alertsLast");if(badge){badge.textContent="COMBO OFF — новые комбо-сигналы отключены";badge.className="alerts-last";}}save()};
     function renderComboComposition(){
       const flexible=cfg.comboComposition==="vpRsi";
       $("alertComboComposition").value=flexible?"vpRsi":"any";
@@ -512,7 +512,7 @@
     $("alertVpRsiChop").onchange=()=>{cfg.vpRsiChopEnabled=$("alertVpRsiChop").checked;vpRsiStates={};save()};
     $("alertComboComposition").onchange=()=>{
       cfg.comboComposition=$("alertComboComposition").value==="vpRsi"?"vpRsi":"any";
-      if(cfg.comboComposition==="vpRsi"){cfg.comboCount=2;cfg.comboEnabled=true;cfg.rsi=true;cfg.vp=true;$("alertCombo").checked=true;$("alertRsi").checked=true;$("alertVP").checked=true;}
+      if(cfg.comboComposition==="vpRsi"){cfg.comboCount=2;cfg.rsi=true;cfg.vp=true;$("alertRsi").checked=true;$("alertVP").checked=true;}
       comboSignals=[];comboLastAt={};vpRsiStates={};save();renderComboComposition();
       const badge=$("alertsLast");if(badge){badge.textContent=cfg.comboComposition==="vpRsi"?"Включён гибкий COMBO VP + RSI":"Включён общий режим COMBO";badge.className="alerts-last combo";}
     };
@@ -534,12 +534,13 @@
       comboModeButton.textContent=cfg.comboModeActive?"■ Выключить режим COMBO":"✨ Включить режим COMBO";
       comboModeButton.classList.toggle("primary",!!cfg.comboModeActive);
       comboModeButton.style.borderColor=cfg.comboModeActive?"#4b3b68":"";
-      comboModeStatus.textContent=cfg.comboModeActive?"COMBO ACTIVE — на графике и в журнале только сигналы выбранного комбо; отдельные алерты и звуки подавлены.":"COMBO OFF — Volume, RSI и SMA работают независимо.";
+      comboModeStatus.textContent=cfg.comboModeActive?"COMBO ACTIVE — на графике и в журнале только сигналы выбранного комбо; отдельные алерты и звуки подавлены.":"COMBO OFF — Volume, RSI, SMA и Volume Profile работают независимо.";
     }
-    if(cfg.comboModeActive){cfg.comboEnabled=true;$("alertCombo").checked=true;}
+    if(cfg.comboModeActive&&!cfg.comboEnabled){cfg.comboModeActive=false;}
+     $("alertCombo").checked=!!cfg.comboEnabled;
     comboModeButton.onclick=()=>{
+      if(!cfg.comboModeActive&&!cfg.comboEnabled){const badge=$("alertsLast");if(badge){badge.textContent="Сначала включи галочку «Комбо-алерт», затем можно включить режим COMBO.";badge.className="alerts-last";}return;}
       cfg.comboModeActive=!cfg.comboModeActive;
-      if(cfg.comboModeActive){cfg.comboEnabled=true;$("alertCombo").checked=true;}
       comboSignals=[];comboLastAt={};save();
       try{localStorage.setItem("okx_combo_mode_active",cfg.comboModeActive?"1":"0")}catch(e){}
       window.dispatchEvent(new CustomEvent("okx-combo-mode-change",{detail:{active:cfg.comboModeActive}}));
@@ -549,12 +550,12 @@
     try{localStorage.setItem("okx_combo_mode_active",cfg.comboModeActive?"1":"0")}catch(e){}
     renderComboMode();
     renderComboMethod();
-    if(Number(cfg.comboCount)===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;cfg.comboWindow=1;}
+    if(Number(cfg.comboCount)===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboWindow=1;}
     $("alertComboCount").value=String(cfg.comboCount||2);
     $("alertComboWindow").value=String(cfg.comboCount===4?1:(cfg.comboWindow||1));$("alertComboWindow").disabled=Number(cfg.comboCount)===4;
-    if(Number(cfg.comboCount)===4){$("alertVolume").checked=$("alertRsi").checked=$("alertSma").checked=$("alertVP").checked=true;$("alertCombo").checked=true;save();}
+    if(Number(cfg.comboCount)===4){$("alertVolume").checked=$("alertRsi").checked=$("alertSma").checked=$("alertVP").checked=true;save();}
     const bind=(id,key,parse)=>{const el=$(id);el.onchange=()=>{cfg[key]=parse(el.value);comboSignals=[];comboLastAt={};save()}};
-    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");bind("alertVpRsiWindow","vpRsiWindow",v=>{vpRsiStates={};return Math.max(1,Math.min(5,Math.round(+v||3)))});bind("alertVpRsiAtrTolerance","vpRsiAtrTolerance",v=>{vpRsiStates={};return Math.max(.1,Math.min(2,+v||.35))});renderComboComposition();$("alertComboCount").onchange=()=>{cfg.comboCount=Math.max(2,Math.min(4,+$("alertComboCount").value||2));renderComboMethod();if(cfg.comboCount!==4)$("alertComboWindow").disabled=false;if(cfg.comboCount===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;$("alertVolume").checked=$("alertRsi").checked=$("alertSma").checked=$("alertVP").checked=true;$("alertCombo").checked=true;cfg.comboWindow=1;$("alertComboWindow").value="1";$("alertComboWindow").disabled=true;}comboSignals=[];comboLastAt={};vpRsiStates={};save();renderComboComposition();const badge=$("alertsLast");if(badge&&cfg.comboCount===4){badge.textContent="COMBO 4/4 включён: Volume + RSI + SMA + Volume Profile на одной закрытой свече";badge.className="alerts-last combo";}};bind("alertComboWindow","comboWindow",v=>cfg.comboCount===4?1:Math.max(1,Math.min(3,+v||1)));bind("alertChopPeriod","chopPeriod",v=>Math.max(5,Math.min(50,+v||14)));bind("alertChopThreshold","chopThreshold",v=>Math.max(20,Math.min(100,+v||61.8)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
+    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");bind("alertVpRsiWindow","vpRsiWindow",v=>{vpRsiStates={};return Math.max(1,Math.min(5,Math.round(+v||3)))});bind("alertVpRsiAtrTolerance","vpRsiAtrTolerance",v=>{vpRsiStates={};return Math.max(.1,Math.min(2,+v||.35))});renderComboComposition();$("alertComboCount").onchange=()=>{cfg.comboCount=Math.max(2,Math.min(4,+$("alertComboCount").value||2));renderComboMethod();if(cfg.comboCount!==4)$("alertComboWindow").disabled=false;if(cfg.comboCount===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;$("alertVolume").checked=$("alertRsi").checked=$("alertSma").checked=$("alertVP").checked=true;cfg.comboWindow=1;$("alertComboWindow").value="1";$("alertComboWindow").disabled=true;}comboSignals=[];comboLastAt={};vpRsiStates={};save();renderComboComposition();const badge=$("alertsLast");if(badge&&cfg.comboCount===4){badge.textContent="Настроен состав COMBO 4/4: Volume + RSI + SMA + Volume Profile. Для запуска включи галочку «Комбо-алерт»."; badge.className="alerts-last combo";}};bind("alertComboWindow","comboWindow",v=>cfg.comboCount===4?1:Math.max(1,Math.min(3,+v||1)));bind("alertChopPeriod","chopPeriod",v=>Math.max(5,Math.min(50,+v||14)));bind("alertChopThreshold","chopThreshold",v=>Math.max(20,Math.min(100,+v||61.8)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
     $("alertsSound").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("test");$("alertsSound").textContent="🔊 Звук включён";log("sma","Звук включён")}catch{$("alertsSound").textContent="⚠️ Звук недоступен"}};
     const testSound=async(kind,label)=>{try{await ensureAudio();cfg.sound=true;save();tone(kind);log(kind,"Тест звука: "+label)}catch{}};    $("testVolume").onclick=()=>testSound("volume","Volume");    $("testRsi").onclick=()=>testSound("rsi","RSI");    $("testSma").onclick=()=>testSound("sma","SMA21");    $("testVP").onclick=()=>testSound("vp","Volume Profile");    $("testCombo").onclick=()=>testSound("combo","Combo");    $("testAll").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("volume");setTimeout(()=>tone("rsi"),1100);setTimeout(()=>tone("sma"),2200);setTimeout(()=>tone("vp"),3300);log("vp","Тест звуков: Volume → RSI → SMA21 → Volume Profile")}catch{}};
   }
