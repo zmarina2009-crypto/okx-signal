@@ -184,6 +184,7 @@
     marker.touches=eventCount;
     marker.anchorPrice=Number(marker.anchorPrice)>0?Number(marker.anchorPrice):entry;
     marker.lastEntryPrice=Number(marker.lastEntryPrice)>0?Number(marker.lastEntryPrice):entry;
+    marker.firstTs=Number(marker.firstTs)||Number(marker.ts)||now();
     marker.lastEventTs=Number(marker.lastEventTs)||Number(marker.ts)||now();
     marker.zoneRadius=markerRadius(marker.anchorPrice,{zoneRadius:marker.zoneRadius});
     marker.tolerance=marker.zoneRadius;
@@ -221,8 +222,11 @@
     const incomingTs=Number(incoming.lastEventTs)||Number(incoming.ts)||now();
     if(incomingTs>=Number(target.lastEventTs||target.ts||0)){
       target.lastEventTs=incomingTs;
+      target.ts=incomingTs;
       target.lastEntryPrice=markerEntryPrice(incoming);
-      target.lastEventPrice=Number(incoming.price)||target.lastEventPrice||null;
+      target.entryPrice=markerEntryPrice(incoming);
+      target.lastEventPrice=Number(incoming.lastEventPrice)||Number(incoming.price)||target.lastEventPrice||null;
+      target.price=target.lastEventPrice;
     }
     const ids=[...(target.situationEventIds||[]),...(incoming.situationEventIds||[incoming.id].filter(Boolean))];
     target.situationEventIds=[...new Set(ids.filter(Boolean))].slice(-250);
@@ -275,7 +279,7 @@
     if(source){
       const incoming={
         id,pair:meta.pair,tf,kind:meta.kind,direction:meta.direction,price,entryPrice,ts,
-        anchorPrice:entryPrice,lastEntryPrice:entryPrice,lastEventTs:ts,
+        anchorPrice:entryPrice,lastEntryPrice:entryPrice,lastEventPrice:price,firstTs:ts,lastEventTs:ts,
         zoneRadius:tolerance,tolerance,situationSources:{vpPoc:source==="vpPoc"?1:0,bos:source==="bos"?1:0},
         eventCount:1,touches:1,label:source==="vpPoc"?"VP POC":"BOS",
         situationEventIds:[id],
