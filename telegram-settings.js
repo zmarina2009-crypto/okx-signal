@@ -152,6 +152,85 @@
       $("tgConfigToken").value="";
     }catch(e){setStatus("Не удалось сохранить: "+(e.message||e)+". Проверь CONFIG_API_TOKEN и CORS.","error")}
   }
+  let telegramHistoryItems=[];
+  let telegramHistoryBusy=false;
+  const historyStatusLabels={
+    attempting:"Отправляется",
+    sent:"Отправлено",
+    failed:"Ошибка",
+    skipped_cooldown:"Пропущено · cooldown",
+    unknown:"Неизвестно после перезапуска"
+  };
+  function historyTime(value){
+    if(!value)return "—";
+    const date=new Date(value);
+    return Number.isNaN(date.getTime())?"—":date.toLocaleString("ru-RU",{dateStyle:"short",timeStyle:"medium"});
+  }
+  function renderTelegramHistory(){
+    const root=$("tgHistoryRows"),meta=$("tgHistoryMeta"),filter=$("tgHistoryFilter");
+    if(!root||!meta||!filter)return;
+    root.replaceChildren();
+    const selected=filter.value||"all";
+    const rows=selected==="all"?telegramHistoryItems:telegramHistoryItems.filter(item=>item.status===selected);
+    meta.textContent=rows.length+" из "+telegramHistoryItems.length+" записей · на сервере: "+historyTotal;
+    if(!rows.length){
+      const tr=make("tr"),td=make("td",{class:"tg-history-empty",colSpan:"8"},
+        telegramHistoryItems.length?"Для выбранного статуса записей нет.":"История Telegram пока пуста.");
+      tr.append(td);root.append(tr);return;
+    }
+    rows.forEach(item=>{
+      const tr=make("tr");
+      tr.append(make("td",{class:"time"},historyTime(item.signalAt||item.createdAt)));
+      tr.append(make("td",{class:"time"},historyTime(item.attemptedAt)));
+      tr.append(make("td",{class:"pair"},item.pair||"—"));
+      tr.append(make("td",{},item.tf||"—"));
+      const direction=String(item.direction||"").toUpperCase();
+      tr.append(make("td",{class:"direction "+(direction==="LONG"?"long":direction==="SHORT"?"short":"")},direction||"—"));
+      tr.append(make("td",{},String(item.kind||"—").toUpperCase()));
+      const statusCell=make("td");
+      statusCell.append(make("span",{class:"tg-history-status "+String(item.status||"").replace(/[^a-z_]/g,"")},historyStatusLabels[item.status]||item.status||"Неизвестно"));
+      tr.append(statusCell);
+      const info=make("td",{class:item.error?"tg-history-error":"tg-history-details"},item.error||item.details||"—");
+      if(item.error||item.details)info.title=String(item.error||item.details);
+      tr.append(info);
+      root.append(tr);
+    });
+  }
+  let historyTotal=0;
+  async function readTelegramHistory(quiet=false){
+    if(telegramHistoryBusy)return;
+    if(!endpoint()){
+      if(!quiet){
+        $("tgHistoryMeta").textContent="Не указан адрес worker";
+        const root=$("tgHistoryRows");
+        if(root)root.replaceChildren(make("tr",{},make("td",{class:"tg-history-empty",colSpan:"8"},"Сначала укажи адрес Telegram worker в настройках выше.")));
+      }
+      return;
+    }
+    telegramHistoryBusy=true;
+    const button=$("tgHistoryRefresh");
+    if(button){button.disabled=true;if(!quiet)button.textContent="Загружаем…";}
+    try{
+      const response=await fetch(endpoint()+"/telegram-history?limit=100",{cache:"no-store"});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw Error(data.error||("HTTP "+response.status));
+      if(!Array.isArray(data.items))throw Error("Сервер вернул неверный формат истории");
+      telegramHistoryItems=data.items;
+      historyTotal=Number(data.total)||telegramHistoryItems.length;
+      renderTelegramHistory();
+      $("tgHistoryUpdated").textContent="Обновлено: "+historyTime(new Date().toISOString())+" · автообновление 30 сек.";
+    }catch(error){
+      $("tgHistoryMeta").textContent="Не удалось загрузить";
+      $("tgHistoryUpdated").textContent="Ошибка: "+(error.message||error)+" · проверь URL и доступ worker.";
+      if(!telegramHistoryItems.length){
+        const root=$("tgHistoryRows");
+        if(root)root.replaceChildren(make("tr",{},make("td",{class:"tg-history-empty",colSpan:"8"},"Не удалось загрузить историю: "+(error.message||error))));
+      }
+    }finally{
+      telegramHistoryBusy=false;
+      if(button){button.disabled=false;button.textContent="↻ Обновить";}
+    }
+  }
   async function testTelegram(){
     if(!endpoint()){setStatus("Укажи адрес Telegram worker в Railway.","warn");return}
     const token=$("tgConfigToken").value.trim();
@@ -185,6 +264,8 @@
     $("tgConfigSave").addEventListener("click",saveConfig);
     $("tgConfigAdd").addEventListener("click",addRule);
     $("tgConfigTest").addEventListener("click",testTelegram);
+    $("tgHistoryRefresh").addEventListener("click",()=>readTelegramHistory(false));
+    $("tgHistoryFilter").addEventListener("change",renderTelegramHistory);
     fillPairOptions();render();renderSavedRules();
     window.addEventListener("okx-markets-loaded",fillPairOptions);
     // The public OKX markets arrive asynchronously. Retry while waiting, and
@@ -196,7 +277,8 @@
       if((!list||!list.options.length)&&attempts++<30)setTimeout(retryPairOptions,500);
     };
     retryPairOptions();
-    if(saved.trim())readConfig();
+    if(saved.trim()){readConfig();readTelegramHistory();}
+    window.setInterval(()=>{if(document.visibilityState==="visible"&&endpoint())readTelegramHistory(true);},30000);
   }
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init,{once:true});else init();
 })();
