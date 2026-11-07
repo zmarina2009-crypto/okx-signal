@@ -137,32 +137,170 @@
   }
   const MARKER_KEY="okx_v2_alert_markers";
   const MARKER_RETENTION_MS=7*24*60*60*1000;
+  const MARKER_TF_MS={"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000};
+  const SITUATION_MAX_GAP_BARS=30;
+  function normalizeMarkerTf(tf){return String(tf||"15m").toLowerCase()}
+  function markerSource(meta){
+    const kind=String(meta&&meta.kind||"").toLowerCase();
+    const label=String(meta&&meta.label||"").toUpperCase();
+    if(kind==="bos")return "bos";
+    if(kind==="vp"&&/\bPOC\b/.test(label))return "vpPoc";
+    return "";
+  }
+  function markerSources(marker){
+    const saved=marker&&marker.situationSources;
+    if(saved&&typeof saved==="object"){
+      return {vpPoc:Math.max(0,Math.round(Number(saved.vpPoc)||0)),bos:Math.max(0,Math.round(Number(saved.bos)||0))};
+    }
+    const source=markerSource(marker);
+    return {vpPoc:source==="vpPoc"?1:0,bos:source==="bos"?1:0};
+  }
+  function sourceCountTotal(counts){return (Number(counts.vpPoc)||0)+(Number(counts.bos)||0)}
+  function markerEntryPrice(marker){
+    const entry=Number(marker&&marker.entryPrice);
+    const price=Number(marker&&marker.price);
+    return Number.isFinite(entry)&&entry>0?entry:price;
+  }
+  function markerRadius(price,meta){
+    const supplied=Math.abs(Number(meta&&meta.zoneRadius)||0);
+    return Math.max(supplied,Math.abs(Number(price)||0)*.0008,1e-8);
+  }
+  function situationLabel(counts){
+    const names=[];
+    if(Number(counts.vpPoc)>0)names.push("VP POC");
+    if(Number(counts.bos)>0)names.push("BOS");
+    return names.join(" + ")||"Сигнал";
+  }
+  function isSituationMarker(marker){
+    const counts=markerSources(marker);
+    return sourceCountTotal(counts)>0;
+  }
+  function normalizeSituationMarker(marker){
+    const counts=markerSources(marker);
+    const entry=markerEntryPrice(marker);
+    const eventCount=Math.max(1,Number(marker.eventCount)||sourceCountTotal(counts)||1);
+    marker.situationSources=counts;
+    marker.eventCount=eventCount;
+    marker.touches=eventCount;
+    marker.anchorPrice=Number(marker.anchorPrice)>0?Number(marker.anchorPrice):entry;
+    marker.lastEntryPrice=Number(marker.lastEntryPrice)>0?Number(marker.lastEntryPrice):entry;
+    marker.firstTs=Number(marker.firstTs)||Number(marker.ts)||now();
+    marker.lastEventTs=Number(marker.lastEventTs)||Number(marker.ts)||now();
+    marker.zoneRadius=markerRadius(marker.anchorPrice,{zoneRadius:marker.zoneRadius});
+    marker.tolerance=marker.zoneRadius;
+    marker.label=situationLabel(counts);
+    if(!Array.isArray(marker.situationEventIds))marker.situationEventIds=marker.id?[marker.id]:[];
+    if(!Array.isArray(marker.situationEvents)){
+      const source=markerSource(marker);
+      marker.situationEvents=[{id:marker.id||"",kind:source==="vpPoc"?"vp":"bos",label:marker.label,ts:Number(marker.ts)||now(),entryPrice:entry,direction:marker.direction}];
+    }
+    return marker;
+  }
+  function markerMatchesSituation(existing,incoming,entry,tolerance,ts){
+    if(!isSituationMarker(existing))return false;
+    if(existing.pair!==incoming.pair||normalizeMarkerTf(existing.tf)!==normalizeMarkerTf(incoming.tf)||existing.direction!==incoming.direction)return false;
+    const lastTs=Number(existing.lastEventTs)||Number(existing.ts)||0;
+    const gap=Number(ts)-lastTs;
+    const maxGap=(MARKER_TF_MS[normalizeMarkerTf(incoming.tf)]||900000)*SITUATION_MAX_GAP_BARS;
+    if(gap<0||gap>maxGap)return false;
+    const anchor=Number(existing.anchorPrice)||markerEntryPrice(existing);
+    const radius=Math.max(Number(existing.zoneRadius)||0,tolerance);
+    return Number.isFinite(anchor)&&Math.abs(entry-anchor)<=radius;
+  }
+  function mergeSituationMarker(target,incoming){
+    const previousCount=Math.max(1,Number(target.eventCount)||sourceCountTotal(markerSources(target))||1);
+    const targetCounts=markerSources(target),incomingCounts=markerSources(incoming);
+    targetCounts.vpPoc+=incomingCounts.vpPoc;
+    targetCounts.bos+=incomingCounts.bos;
+    const incomingCount=Math.max(1,Number(incoming.eventCount)||sourceCountTotal(incomingCounts)||1);
+    target.eventCount=previousCount+incomingCount;
+    target.situationSources=targetCounts;
+    target.touches=target.eventCount;
+    target.label=situationLabel(targetCounts);
+    target.zoneRadius=Math.max(Number(target.zoneRadius)||0,Number(incoming.zoneRadius)||0);
+    target.tolerance=target.zoneRadius;
+    const incomingTs=Number(incoming.lastEventTs)||Number(incoming.ts)||now();
+    if(incomingTs>=Number(target.lastEventTs||target.ts||0)){
+      target.lastEventTs=incomingTs;
+      target.ts=incomingTs;
+      target.lastEntryPrice=markerEntryPrice(incoming);
+      target.entryPrice=markerEntryPrice(incoming);
+      target.lastEventPrice=Number(incoming.lastEventPrice)||Number(incoming.price)||target.lastEventPrice||null;
+      target.price=target.lastEventPrice;
+    }
+    const ids=[...(target.situationEventIds||[]),...(incoming.situationEventIds||[incoming.id].filter(Boolean))];
+    target.situationEventIds=[...new Set(ids.filter(Boolean))].slice(-250);
+    const events=[...(target.situationEvents||[]),...(incoming.situationEvents||[])];
+    if(!incoming.situationEvents&&incoming.id)events.push({id:incoming.id,kind:incoming.kind,label:incoming.label,ts:incoming.ts,entryPrice:markerEntryPrice(incoming),direction:incoming.direction});
+    target.situationEvents=events.slice(-20);
+    target.mergedCount=Math.max(0,target.eventCount-1);
+    return target;
+  }
+  function consolidateStoredMarkers(marks){
+    const result=[];
+    const ordered=marks.slice().sort((a,b)=>(Number(a.ts)||0)-(Number(b.ts)||0));
+    ordered.forEach(original=>{
+      if(!isSituationMarker(original)){result.push(original);return}
+      const candidate=normalizeSituationMarker(Object.assign({},original));
+      const entry=markerEntryPrice(candidate),ts=Number(candidate.lastEventTs)||Number(candidate.ts)||now();
+      const radius=markerRadius(entry,{zoneRadius:candidate.zoneRadius});
+      const duplicateIds=new Set(candidate.situationEventIds||[]);
+      const existing=result.slice().reverse().find(item=>
+        markerMatchesSituation(item,candidate,entry,radius,ts)&&
+        !(item.situationEventIds||[]).some(id=>duplicateIds.has(id))
+      );
+      if(existing)mergeSituationMarker(existing,candidate);
+      else result.push(candidate);
+    });
+    return result.sort((a,b)=>(Number(a.lastEventTs)||Number(a.ts)||0)-(Number(b.lastEventTs)||Number(b.ts)||0)).slice(-500);
+  }
   function pruneStoredMarkers(){
     let marks=[];try{marks=JSON.parse(localStorage.getItem(MARKER_KEY)||"[]");if(!Array.isArray(marks))marks=[]}catch{}
     const cutoff=Date.now()-MARKER_RETENTION_MS;
-    const clean=marks.filter(m=>m&&Number(m.ts)>=cutoff&&m.pair&&m.tf&&["LONG","SHORT"].includes(m.direction)).slice(-500);
-    if(clean.length!==marks.length||clean.some((m,i)=>m!==marks[i]))try{localStorage.setItem(MARKER_KEY,JSON.stringify(clean))}catch{}
+    const clean=marks.filter(m=>m&&Number(m.lastEventTs||m.ts)>=cutoff&&m.pair&&m.tf&&["LONG","SHORT"].includes(m.direction));
+    const consolidated=consolidateStoredMarkers(clean);
+    try{if(JSON.stringify(consolidated)!==JSON.stringify(marks))localStorage.setItem(MARKER_KEY,JSON.stringify(consolidated))}catch{}
   }
   pruneStoredMarkers();
   function recordAlertMarker(meta){
-    if(!meta||!meta.pair||!meta.tf||!["LONG","SHORT"].includes(meta.direction))return;
+    if(!meta||!meta.pair||!meta.tf||!["LONG","SHORT"].includes(meta.direction))return null;
     const price=Number(meta.price),ts=Number(meta.ts)||now();
-    if(!Number.isFinite(price)||price<=0)return;
-    let marks=[];
-    try{marks=JSON.parse(localStorage.getItem(MARKER_KEY)||"[]");if(!Array.isArray(marks))marks=[]}catch{}
-    const cutoff=Date.now()-MARKER_RETENTION_MS;
-    marks=marks.filter(m=>m&&Number(m.ts)>=cutoff&&m.pair&&m.tf&&["LONG","SHORT"].includes(m.direction)).slice(-500);
-    const id=[meta.pair,meta.tf,meta.kind,ts,meta.direction].join("|");
-    if(marks.some(m=>m.id===id))return;
-    const tolerance=Math.max(price*.0008,.01);
-    const same=marks.filter(m=>m.pair===meta.pair&&m.tf===meta.tf&&m.kind===meta.kind&&Math.abs(Number(m.price)-price)<=Math.max(tolerance,Number(m.tolerance)||0));
-    const touches=1+same.length;
+    if(!Number.isFinite(price)||price<=0)return null;
     const entryPrice=Number(meta.entryPrice)>0?Number(meta.entryPrice):price;
-    const marker={id,pair:meta.pair,tf:meta.tf,kind:meta.kind,direction:meta.direction,price,entryPrice,ts,touches,label:meta.label||meta.kind,tolerance};
+    const tolerance=markerRadius(entryPrice,meta);
+    const tf=normalizeMarkerTf(meta.tf);
+    const id=[meta.pair,tf,meta.kind,ts,meta.direction].join("|");
+    let marks=[];try{marks=JSON.parse(localStorage.getItem(MARKER_KEY)||"[]");if(!Array.isArray(marks))marks=[]}catch{}
+    const cutoff=Date.now()-MARKER_RETENTION_MS;
+    marks=marks.filter(m=>m&&Number(m.lastEventTs||m.ts)>=cutoff&&m.pair&&m.tf&&["LONG","SHORT"].includes(m.direction));
+    const duplicate=marks.find(m=>m.id===id||(Array.isArray(m.situationEventIds)&&m.situationEventIds.includes(id)));
+    if(duplicate)return {marker:duplicate,merged:true,duplicate:true};
+    const source=markerSource(meta);
+    if(source){
+      const incoming={
+        id,pair:meta.pair,tf,kind:meta.kind,direction:meta.direction,price,entryPrice,ts,
+        anchorPrice:entryPrice,lastEntryPrice:entryPrice,lastEventPrice:price,firstTs:ts,lastEventTs:ts,
+        zoneRadius:tolerance,tolerance,situationSources:{vpPoc:source==="vpPoc"?1:0,bos:source==="bos"?1:0},
+        eventCount:1,touches:1,label:source==="vpPoc"?"VP POC":"BOS",
+        situationEventIds:[id],
+        situationEvents:[{id,kind:meta.kind,label:meta.label||meta.kind,ts,price,entryPrice,direction:meta.direction}]
+      };
+      const match=marks.slice().reverse().find(m=>markerMatchesSituation(m,incoming,entryPrice,tolerance,ts));
+      let marker,merged=false;
+      if(match){marker=mergeSituationMarker(match,incoming);merged=true}
+      else{marker=incoming;marks.push(marker)}
+      try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-500)))}catch{}
+      window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:marker}));
+      return {marker,merged,duplicate:false};
+    }
+    const same=marks.filter(m=>m.pair===meta.pair&&normalizeMarkerTf(m.tf)===tf&&m.kind===meta.kind&&m.direction===meta.direction&&Math.abs(markerEntryPrice(m)-entryPrice)<=Math.max(tolerance,Number(m.tolerance)||0));
+    const marker={id,pair:meta.pair,tf,kind:meta.kind,direction:meta.direction,price,entryPrice,ts,touches:1+same.length,label:meta.label||meta.kind,tolerance};
     marks.push(marker);
     try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-500)))}catch{}
     window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:marker}));
+    return {marker,merged:false,duplicate:false};
   }
+  window.OKXSignalMarkers=Object.assign({},window.OKXSignalMarkers||{},{add:recordAlertMarker});
   const COMBO_SOURCES=["volume","rsi","sma","vp"];
   const COMBO_TF_MS={"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000};
   function observeCombo(kind,marker){
@@ -290,8 +428,9 @@
       if(source)observeCombo(kind,marker);
       return;
     }
-    if(marker)recordAlertMarker(Object.assign({},marker,{kind}));
-    log(kind,text);tone(kind);
+    const markerResult=marker?recordAlertMarker(Object.assign({},marker,{kind})):null;
+    log(kind,text);
+    if(!markerResult||!markerResult.merged)tone(kind);
     const badge=$("alertsLast");if(badge){badge.textContent=text;badge.className="alerts-last "+kind}
     if(source)observeCombo(kind,marker);
   }
@@ -365,7 +504,8 @@
           }
           crossings.forEach(c=>{
             const message=(c.direction==="LONG"?"🟢 LONG":"🔴 SHORT")+" • VP "+c.level+" crossed at "+c.price.toFixed(2)+" • close "+close.toFixed(2)+" • "+pair+" • "+tf;
-            fire("vp",message,"vp:"+pair+":"+tf+":"+c.level,{pair,tf,ts:closed.ts,price:close,direction:c.direction,label:"VP "+c.level});
+            const zoneRadius=Math.max((atr(hist,14)||0)*1.25,close*.00025);
+            fire("vp",message,"vp:"+pair+":"+tf+":"+c.level,{pair,tf,ts:closed.ts,price:close,entryPrice:close,zoneRadius,direction:c.direction,label:"VP "+c.level});
           });
         }
       }

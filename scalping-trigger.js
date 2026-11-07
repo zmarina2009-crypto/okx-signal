@@ -201,32 +201,35 @@
   }
 
   function addChartMarker(meta) {
-    if (!meta || !meta.pair || !meta.tf || !["LONG", "SHORT"].includes(meta.direction)) return;
-    const price = Number(meta.price), ts = Number(meta.ts);
-    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(ts)) return;
-    let marks = safeParse(MARKER_KEY, []);
-    if (!Array.isArray(marks)) marks = [];
-    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    marks = marks.filter((item) => item && Number(item.ts) >= cutoff &&
-      item.pair && item.tf && ["LONG", "SHORT"].includes(item.direction));
-    const id = ["scalping-trigger", meta.pair, meta.tf, meta.kind, ts, meta.direction, meta.label].join("|");
-    if (marks.some((item) => item.id === id)) return;
-    const marker = {
-      id, pair: meta.pair, tf: normalizeTf(meta.tf), kind: meta.kind,
-      direction: meta.direction, price, entryPrice: Number(meta.entryPrice) || price,
-      ts, touches: 1, label: meta.label, tolerance: Math.max(price * 0.0008, 0.01)
-    };
+    if (window.OKXSignalMarkers && typeof window.OKXSignalMarkers.add === "function") {
+      return window.OKXSignalMarkers.add(meta);
+    }
+    if (!meta || !meta.pair || !meta.tf || !["LONG", "SHORT"].includes(meta.direction)) return null;
+    const price=Number(meta.price),ts=Number(meta.ts),entryPrice=Number(meta.entryPrice)>0?Number(meta.entryPrice):price;
+    if(!Number.isFinite(price)||price<=0||!Number.isFinite(ts))return null;
+    let marks=safeParse(MARKER_KEY,[]);
+    if(!Array.isArray(marks))marks=[];
+    const id=["scalping-trigger",meta.pair,normalizeTf(meta.tf),meta.kind,ts,meta.direction,meta.label].join("|");
+    if(marks.some(item=>item&&item.id===id))return {duplicate:true,merged:true};
+    const tolerance=Math.max(Math.abs(Number(meta.zoneRadius)||0),Math.abs(entryPrice)*.0008,1e-8);
+    const marker={id,pair:meta.pair,tf:normalizeTf(meta.tf),kind:meta.kind,direction:meta.direction,price,entryPrice,ts,touches:1,eventCount:1,label:meta.label,tolerance};
     marks.push(marker);
-    try { localStorage.setItem(MARKER_KEY, JSON.stringify(marks.slice(-500))); } catch (_) {}
-    window.dispatchEvent(new CustomEvent("okx-alert-marker", { detail: marker }));
+    try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-500)))}catch(_){}
+    window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:marker}));
+    return {marker,merged:false};
   }
 
-  function addHistory(kind, pair, tf, direction, message, ts, price) {
+  function addHistory(kind, pair, tf, direction, message, ts, price, situationResult) {
+    const situationMarker=situationResult&&situationResult.marker;
     const item = {
       kind, pair, tf, direction, message,
       price: Number.isFinite(Number(price)) && Number(price) > 0 ? Number(price) : null,
       ts: Number(ts) || Date.now(),
-      signalTs: Date.now()
+      signalTs: Date.now(),
+      situationId:situationMarker&&situationMarker.id||null,
+      situationLabel:situationMarker&&situationMarker.label||"",
+      mergedIntoSituation:!!(situationResult&&situationResult.merged),
+      situationEventCount:Number(situationMarker&&situationMarker.eventCount)||1
     };
     history.push(item);
     history = history.slice(-100);
@@ -245,16 +248,16 @@
     return true;
   }
 
-  function emit(kind, pair, tf, candle, direction, price, label, message, uniqueId) {
+  function emit(kind, pair, tf, candle, direction, price, label, message, uniqueId, zoneRadius) {
     if ((direction === "LONG" && !cfg.longEnabled) || (direction === "SHORT" && !cfg.shortEnabled)) return null;
     if (state.fired.includes(uniqueId) || !shouldEmit([kind, pair, tf, direction].join("|"))) return null;
     state.fired.push(uniqueId);
-    addChartMarker({
+    const situationResult=addChartMarker({
       pair, tf, ts: Number(candle.ts), price,
-      entryPrice: Number(candle.c), direction, label, kind
+      entryPrice: Number(candle.c), direction, label, kind, zoneRadius
     });
-    const historyItem = addHistory(kind, pair, tf, direction, message, candle.ts, price);
-    tone(direction);
+    const historyItem = addHistory(kind, pair, tf, direction, message, candle.ts, price, situationResult);
+    if(!situationResult||!situationResult.merged)tone(direction);
     saveState();
     return historyItem || null;
   }
@@ -388,9 +391,10 @@
     const bos = detectBos(bars);
     if (bos && cfg.bosEnabled && cfg.bosAlerts) {
       const pivotId = ["bos", pair, normalizeTf(tf), bos.direction, bos.pivotTs].join("|");
+      const bosZoneRadius=Math.max((averageTrueRange(bars,14)||0)*1.25,Math.abs(Number(candle.c)||0)*.00025);
       emit("bos", pair, tf, candle, bos.direction, bos.level, bos.label,
         (bos.direction === "LONG" ? "🟢 " : "🔴 ") + bos.label + " • пробой " +
-        bos.level.toFixed(6) + " • " + pair + " • " + tf, pivotId);
+        bos.level.toFixed(6) + " • " + pair + " • " + tf, pivotId, bosZoneRadius);
     }
 
     if (cfg.volumeRsiEnabled && volumeSpike) {
@@ -495,7 +499,11 @@
       const detail = document.createElement("div");
       detail.className = "st-history-detail";
       const mergedCount = Number(entry.mergedCount) || 0;
-      detail.textContent = (entry.message || "") +
+      const situationText=entry.situationId
+        ? " · Торговая ситуация: "+(entry.situationLabel||"VP POC / BOS")+
+          (entry.mergedIntoSituation?" · добавлено к группе":"")+" · событий: "+(Number(entry.situationEventCount)||1)
+        : "";
+      detail.textContent = (entry.message || "") + situationText +
         (mergedCount ? " · Объединено повторов в этой ситуации: " + mergedCount : "");
 
       row.append(timeCell, pairCell, sourceCell, directionCell, priceCell, detail);
