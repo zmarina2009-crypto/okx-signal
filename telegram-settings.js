@@ -132,6 +132,7 @@
       if(!r.ok)throw Error("HTTP "+r.status);
       const data=await r.json();if(!Array.isArray(data.rules))throw Error("Сервер вернул неверный формат");
       rules=data.rules.map(normalizeRule);serverRules=rules.map(normalizeRule);render();renderSavedRules();setStatus("Загружено с сервера: "+rules.length+" правил.","ok");
+      void readTelegramHistory(true);
     }catch(e){serverRules=null;renderSavedRules();setStatus("Не удалось загрузить настройки: "+(e.message||e)+". Проверь адрес, CORS и доступность сервера.","error")}
   }
   async function saveConfig(){
