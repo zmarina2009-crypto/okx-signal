@@ -536,14 +536,45 @@ const server = http.createServer((req, res) => {
       "Telegram-воркер работает и может отправлять уведомления.",
       "Время: " + new Date().toLocaleString("ru-RU", { timeZone: process.env.ALERT_TIMEZONE || "Europe/Berlin" })
     ].join("\n");
-    void sendTelegram(testMessage).then(() => {
+    const historyEntry = {
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+      signalTs: null,
+      signalAt: null,
+      pair: "TEST",
+      tf: "—",
+      direction: "—",
+      kind: "TEST",
+      price: null,
+      details: "Контрольная тестовая отправка Telegram",
+      rule: null,
+      status: "attempting",
+      attemptedAt: new Date().toISOString(),
+      finishedAt: null,
+      telegramMessageId: null,
+      error: null
+    };
+    appendTelegramHistory(state, historyEntry);
+    // Save the test attempt before contacting Telegram, just like a real alert.
+    await persistTelegramState("test-before-send", historyEntry.id);
+    try {
+      const result = await sendTelegram(testMessage);
+      historyEntry.status = "sent";
+      historyEntry.finishedAt = new Date().toISOString();
+      historyEntry.telegramMessageId = result.messageId;
+      await persistTelegramState("test-after-send", historyEntry.id);
+      console.log("Telegram test sent and recorded: historyId=" + historyEntry.id);
       res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      res.end(JSON.stringify({ ok: true, sent: true, message: "Test message sent." }));
-    }).catch(err => {
-      console.error("Telegram test send failed:", err.message);
+      res.end(JSON.stringify({ ok: true, sent: true, historyId: historyEntry.id, message: "Test message sent and recorded in history." }));
+    } catch (err) {
+      historyEntry.status = "failed";
+      historyEntry.finishedAt = new Date().toISOString();
+      historyEntry.error = String(err?.message || err || "Telegram delivery failed").slice(0, 600);
+      await persistTelegramState("test-after-failure", historyEntry.id);
+      console.error("Telegram test send failed:", err.message, "historyId=" + historyEntry.id);
       res.writeHead(502, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      res.end(JSON.stringify({ ok: false, error: err.message || "Telegram delivery failed." }));
-    });
+      res.end(JSON.stringify({ ok: false, historyId: historyEntry.id, error: err.message || "Telegram delivery failed." }));
+    }
     return;
   }
   if (requestUrl.pathname === "/health") {
