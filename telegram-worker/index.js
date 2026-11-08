@@ -452,7 +452,7 @@ async function cycle() {
     busy = false;
   }
 }
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const requestUrl = new URL(req.url || "/", "http://localhost");
   const origin = req.headers.origin || "";
   if (CONFIG_ALLOWED_ORIGINS.has(origin)) {
