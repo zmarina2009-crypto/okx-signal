@@ -555,6 +555,18 @@ const server = http.createServer((req, res) => {
   res.end("OKX Signal Pro Telegram worker is running.\n");
 });
 await loadState();
+const stateFileDiagnostics = await fs.stat(STATE_FILE)
+  .then(info => ({ exists: true, sizeBytes: info.size }))
+  .catch(() => ({ exists: false, sizeBytes: 0 }));
+const telegramHistoryEntries = Array.isArray(state.telegramHistory) ? state.telegramHistory : [];
+console.log("State diagnostics:", JSON.stringify({
+  stateFile: STATE_FILE,
+  volumeMountPath: process.env.RAILWAY_VOLUME_MOUNT_PATH || null,
+  stateFileExists: stateFileDiagnostics.exists,
+  stateFileSizeBytes: stateFileDiagnostics.sizeBytes,
+  telegramHistoryEntries: telegramHistoryEntries.length,
+  latestHistoryAttemptAt: telegramHistoryEntries.at(-1)?.attemptedAt || null
+}));
 server.listen(PORT, () => {
   console.log(`Worker listening on ${PORT}; pairs=${PAIRS.join(",")}; timeframes=${TIMEFRAMES.join(",")}; interval=${POLL_MS}ms`);
   if (!BOT_TOKEN || !CHAT_ID) console.warn("Telegram credentials are not configured; set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.");
