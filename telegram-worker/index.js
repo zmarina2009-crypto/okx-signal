@@ -12,6 +12,12 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
 const CONFIG_API_TOKEN = process.env.CONFIG_API_TOKEN || "";
 const CONFIG_ALLOWED_ORIGIN = process.env.CONFIG_ALLOWED_ORIGIN || "https://zmarina2009-crypto.github.io";
+const CONFIG_ALLOWED_ORIGINS = new Set([
+  ...String(CONFIG_ALLOWED_ORIGIN).split(","),
+  ...String(process.env.CONFIG_ALLOWED_ORIGINS || "").split(","),
+  "https://zmarina2009-crypto.github.io",
+  "https://okx-signal-production-14d9.up.railway.app"
+].map(value => value.trim()).filter(Boolean));
 const PAIRS = csv(process.env.OKX_PAIRS || "BTC-USDT-SWAP");
 const TIMEFRAMES = csv(process.env.OKX_TIMEFRAMES || "15m");
 const POLL_MS = Math.max(10_000, Number(process.env.POLL_INTERVAL_MS || 20_000));
@@ -449,8 +455,8 @@ async function cycle() {
 const server = http.createServer((req, res) => {
   const requestUrl = new URL(req.url || "/", "http://localhost");
   const origin = req.headers.origin || "";
-  if (origin === CONFIG_ALLOWED_ORIGIN) {
-    res.setHeader("access-control-allow-origin", CONFIG_ALLOWED_ORIGIN);
+  if (CONFIG_ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader("access-control-allow-origin", origin);
     res.setHeader("vary", "Origin");
     res.setHeader("access-control-allow-methods", "GET, PUT, POST, OPTIONS");
     res.setHeader("access-control-allow-headers", "content-type, authorization");
