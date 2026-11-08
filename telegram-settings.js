@@ -3,6 +3,7 @@
   "use strict";
   const $=id=>document.getElementById(id);
   const endpointKey="okx_telegram_config_endpoint_v1";
+  const defaultWorkerEndpoint="https://telegram-worker-production-2d09.up.railway.app";
   const tfOptions=["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","1w"];
   let rules=[];
   let serverRules=null;
@@ -267,8 +268,9 @@
     rules.push({pair,tf:"1m",telegram:true,comboOnly:pair==="ZEC-USDT-SWAP",volume:true,rsi:true,sma:false,vp:false,combo:true,comboCount:2,comboWindowBars:1,comboMode:"strict",chopFilter:true,chopPeriod:14,chopThreshold:61.8});render();
   }
   function init(){
-    const saved=localStorage.getItem(endpointKey)||"";
+    const saved=localStorage.getItem(endpointKey)||defaultWorkerEndpoint;
     $("tgConfigEndpoint").value=saved;
+    if(!localStorage.getItem(endpointKey))localStorage.setItem(endpointKey,saved);
     $("tgConfigEndpoint").addEventListener("change",()=>{localStorage.setItem(endpointKey,endpoint());serverRules=null;renderSavedRules();});
     $("tgConfigLoad").addEventListener("click",readConfig);
     $("tgConfigSave").addEventListener("click",saveConfig);
