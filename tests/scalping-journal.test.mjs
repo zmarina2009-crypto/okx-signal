@@ -33,7 +33,8 @@ test("each original scalping event is stored as its own journal row", () => {
   const rows = api.getHistory();
   assert.equal(rows.length, 2);
   assert.notEqual(rows[0].signalTs, undefined);
-  assert.notEqual(rows[0].signalTs, rows[1].signalTs);
+  assert.equal(rows[0].message, "Volume + RSI");
+  assert.equal(rows[1].message, "Volume + RSI repeat");
   assert.equal(first.kind, "scalping");
   assert.equal(second.kind, "scalping");
 });
