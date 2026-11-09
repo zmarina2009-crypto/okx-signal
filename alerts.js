@@ -312,6 +312,11 @@
     return {marker,merged:false,duplicate:false};
   }
   window.OKXSignalMarkers=Object.assign({},window.OKXSignalMarkers||{},{add:recordAlertMarker});
+  // Deterministic test seam: enabled only by the Node test harness, never in the app.
+  if(window.__OKX_ALERTS_TEST__){
+    window.__OKXAlertsTest={add:recordAlertMarker,clear:()=>localStorage.removeItem(MARKER_KEY),read:()=>JSON.parse(localStorage.getItem(MARKER_KEY)||"[]")};
+    return;
+  }
   const COMBO_SOURCES=["volume","rsi","sma","vp"];
   const COMBO_TF_MS={"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000};
   function observeCombo(kind,marker){
