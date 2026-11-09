@@ -72,7 +72,7 @@
     state.fired = (Array.isArray(state.fired) ? state.fired : []).slice(-500);
     try {
       localStorage.setItem(STATE_KEY, JSON.stringify(state));
-      localStorage.setItem(STATE_KEY + "_history", JSON.stringify(history.slice(-100)));
+      localStorage.setItem(STATE_KEY + "_history", JSON.stringify(history.slice(-500)));
     } catch (_) {}
   }
 
@@ -233,7 +233,7 @@
       situationEventCount:Number(situationMarker&&situationMarker.eventCount)||1
     };
     history.push(item);
-    history = history.slice(-100);
+    history = history.slice(-500);
     try { localStorage.setItem(STATE_KEY + "_history", JSON.stringify(history)); } catch (_) {}
     renderHistory();
     const trigger = $("scalpTriggerButton");
@@ -320,6 +320,11 @@
     cluster.lastSuppressedPrice = Number.isFinite(price) ? price : null;
     cluster.lastSuppressedDirection = direction;
     state.rsiClusterSuppressed = (Number(state.rsiClusterSuppressed) || 0) + 1;
+
+    // Keep every repeated RSI trigger as a journal event even though its chart marker is merged.
+    addHistory("rsi-repeat", pair, tf, direction,
+      "Повтор RSI в текущей торговой ситуации · маркер объединён · повтор №" + cluster.suppressedCount,
+      candle && candle.ts, price, null);
 
     const entry = history.find((item) =>
       item && item.kind === "scalping" &&
@@ -444,7 +449,7 @@
 
   function renderHistory() {
     const countNode = $("stHistoryCount");
-    if (countNode) countNode.textContent = "Журнал сигналов · " + history.length + " / 100";
+    if (countNode) countNode.textContent = "Журнал сигналов · " + history.length + " / 500";
     if (!historyNode) return;
     historyNode.replaceChildren();
 
@@ -525,7 +530,7 @@
       : "—";
     const status = baseStatus +
       "\nПроверка: " + formatTime(lastCheckAt) +
-      " • Сигналов в журнале: " + history.length + " / 100" +
+      " • Сигналов в журнале: " + history.length + " / 500" +
       "\nОбъединено RSI-повторов: " + (Number(state.rsiClusterSuppressed) || 0) +
       "\nПоследний сигнал: " + lastSignal;
     if (statusNode) statusNode.textContent = status;
