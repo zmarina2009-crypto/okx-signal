@@ -211,7 +211,8 @@
     if(!Array.isArray(marks))marks=[];
     const id=["scalping-trigger",meta.pair,normalizeTf(meta.tf),meta.kind,ts,meta.direction,meta.label].join("|");
     if(marks.some(item=>item&&item.id===id))return {duplicate:true,merged:true};
-    const tolerance=Math.max(Math.abs(Number(meta.zoneRadius)||0),Math.abs(entryPrice)*.0008,1e-8);
+    const atrRadius=Math.abs(Number(meta.zoneRadius)||0);
+    const tolerance=Math.max(atrRadius,Math.abs(entryPrice)*.00025,1e-8);
     const marker={id,pair:meta.pair,tf:normalizeTf(meta.tf),kind:meta.kind,direction:meta.direction,price,entryPrice,ts,touches:1,eventCount:1,label:meta.label,tolerance};
     marks.push(marker);
     try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-500)))}catch(_){}
