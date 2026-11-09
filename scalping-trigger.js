@@ -305,7 +305,7 @@
   function mergeRsiRepeat(pair, tf, candle, direction) {
     const key = rsiClusterKey(pair, tf);
     const cluster = state.rsiClusters[key];
-    if (!cluster) return false;
+    if (!cluster || cluster.direction !== direction) return false;
 
     const price = Number(candle && candle.c);
     const distance = Number.isFinite(price) ? Math.abs(price - Number(cluster.anchorPrice)) : 0;
