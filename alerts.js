@@ -147,7 +147,7 @@
     const kind=String(meta&&meta.kind||"").toLowerCase();
     const label=String(meta&&meta.label||"").toUpperCase();
     if(kind==="bos")return "bos";
-    if(kind==="vp")return /\\bPOC\\b/.test(label)?"vpPoc":"vpOther";
+    if(kind==="vp")return /\bPOC\b/.test(label)?"vpPoc":"vpOther";
     if(SITUATION_SOURCES.includes(kind))return kind;
     return "";
   }
