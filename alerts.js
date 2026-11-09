@@ -138,24 +138,36 @@
   const MARKER_KEY="okx_v2_alert_markers";
   const MARKER_RETENTION_MS=7*24*60*60*1000;
   const MARKER_TF_MS={"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000};
-  const SITUATION_MAX_GAP_BARS=30;
+  // A situation is local to one pair, timeframe, direction and ATR-sized price zone.
+  const SITUATION_MAX_GAP_BARS=8;
+  const SITUATION_SOURCES=["volume","rsi","sma","vpPoc","vpOther","bos","combo","scalping"];
+  const SITUATION_SOURCE_LABELS={volume:"Volume",rsi:"RSI",sma:"SMA21",vpPoc:"VP POC",vpOther:"VP",bos:"BOS",combo:"COMBO",scalping:"Scalping"};
   function normalizeMarkerTf(tf){return String(tf||"15m").toLowerCase()}
   function markerSource(meta){
     const kind=String(meta&&meta.kind||"").toLowerCase();
     const label=String(meta&&meta.label||"").toUpperCase();
     if(kind==="bos")return "bos";
-    if(kind==="vp"&&/\bPOC\b/.test(label))return "vpPoc";
+    if(kind==="vp")return /\\bPOC\\b/.test(label)?"vpPoc":"vpOther";
+    if(SITUATION_SOURCES.includes(kind))return kind;
     return "";
   }
   function markerSources(marker){
+    const counts=Object.fromEntries(SITUATION_SOURCES.map(key=>[key,0]));
     const saved=marker&&marker.situationSources;
     if(saved&&typeof saved==="object"){
-      return {vpPoc:Math.max(0,Math.round(Number(saved.vpPoc)||0)),bos:Math.max(0,Math.round(Number(saved.bos)||0))};
+      SITUATION_SOURCES.forEach(key=>{counts[key]=Math.max(0,Math.round(Number(saved[key])||0))});
+      // Migrate the original VP POC + BOS marker format without losing counts.
+      if(!Object.keys(saved).some(key=>SITUATION_SOURCES.includes(key))){
+        counts.vpPoc=Math.max(0,Math.round(Number(saved.vpPoc)||0));
+        counts.bos=Math.max(0,Math.round(Number(saved.bos)||0));
+      }
+      return counts;
     }
     const source=markerSource(marker);
-    return {vpPoc:source==="vpPoc"?1:0,bos:source==="bos"?1:0};
+    if(source)counts[source]=1;
+    return counts;
   }
-  function sourceCountTotal(counts){return (Number(counts.vpPoc)||0)+(Number(counts.bos)||0)}
+  function sourceCountTotal(counts){return SITUATION_SOURCES.reduce((sum,key)=>sum+(Number(counts[key])||0),0)}
   function markerEntryPrice(marker){
     const entry=Number(marker&&marker.entryPrice);
     const price=Number(marker&&marker.price);
@@ -166,9 +178,7 @@
     return Math.max(supplied,Math.abs(Number(price)||0)*.0008,1e-8);
   }
   function situationLabel(counts){
-    const names=[];
-    if(Number(counts.vpPoc)>0)names.push("VP POC");
-    if(Number(counts.bos)>0)names.push("BOS");
+    const names=SITUATION_SOURCES.filter(key=>Number(counts[key])>0).map(key=>SITUATION_SOURCE_LABELS[key]);
     return names.join(" + ")||"Сигнал";
   }
   function isSituationMarker(marker){
@@ -191,8 +201,7 @@
     marker.label=situationLabel(counts);
     if(!Array.isArray(marker.situationEventIds))marker.situationEventIds=marker.id?[marker.id]:[];
     if(!Array.isArray(marker.situationEvents)){
-      const source=markerSource(marker);
-      marker.situationEvents=[{id:marker.id||"",kind:source==="vpPoc"?"vp":"bos",label:marker.label,ts:Number(marker.ts)||now(),entryPrice:entry,direction:marker.direction}];
+      marker.situationEvents=[{id:marker.id||"",kind:marker.kind||"signal",label:marker.label,ts:Number(marker.ts)||now(),entryPrice:entry,direction:marker.direction}];
     }
     return marker;
   }
@@ -210,8 +219,7 @@
   function mergeSituationMarker(target,incoming){
     const previousCount=Math.max(1,Number(target.eventCount)||sourceCountTotal(markerSources(target))||1);
     const targetCounts=markerSources(target),incomingCounts=markerSources(incoming);
-    targetCounts.vpPoc+=incomingCounts.vpPoc;
-    targetCounts.bos+=incomingCounts.bos;
+    SITUATION_SOURCES.forEach(key=>{targetCounts[key]=(Number(targetCounts[key])||0)+(Number(incomingCounts[key])||0)});
     const incomingCount=Math.max(1,Number(incoming.eventCount)||sourceCountTotal(incomingCounts)||1);
     target.eventCount=previousCount+incomingCount;
     target.situationSources=targetCounts;
@@ -281,7 +289,7 @@
         id,pair:meta.pair,tf,kind:meta.kind,direction:meta.direction,price,entryPrice,ts,
         anchorPrice:entryPrice,lastEntryPrice:entryPrice,lastEventPrice:price,firstTs:ts,lastEventTs:ts,
         zoneRadius:tolerance,tolerance,situationSources:{vpPoc:source==="vpPoc"?1:0,bos:source==="bos"?1:0},
-        eventCount:1,touches:1,label:source==="vpPoc"?"VP POC":"BOS",
+        eventCount:1,touches:1,label:SITUATION_SOURCE_LABELS[source]||source,
         situationEventIds:[id],
         situationEvents:[{id,kind:meta.kind,label:meta.label||meta.kind,ts,price,entryPrice,direction:meta.direction}]
       };
