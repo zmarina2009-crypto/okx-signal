@@ -213,7 +213,9 @@
     const maxGap=(MARKER_TF_MS[normalizeMarkerTf(incoming.tf)]||900000)*SITUATION_MAX_GAP_BARS;
     if(gap<0||gap>maxGap)return false;
     const anchor=Number(existing.anchorPrice)||markerEntryPrice(existing);
-    const radius=Math.max(Number(existing.zoneRadius)||0,tolerance);
+    // Keep the original situation boundary fixed: a later high-ATR candle must not
+    // stretch an old zone and accidentally absorb a separate trading setup.
+    const radius=Number(existing.zoneRadius)>0?Number(existing.zoneRadius):tolerance;
     return Number.isFinite(anchor)&&Math.abs(entry-anchor)<=radius;
   }
   function mergeSituationMarker(target,incoming){
@@ -225,7 +227,8 @@
     target.situationSources=targetCounts;
     target.touches=target.eventCount;
     target.label=situationLabel(targetCounts);
-    target.zoneRadius=Math.max(Number(target.zoneRadius)||0,Number(incoming.zoneRadius)||0);
+    // The first signal defines the ATR zone; later events do not widen it.
+    target.zoneRadius=Number(target.zoneRadius)||Number(incoming.zoneRadius)||0;
     target.tolerance=target.zoneRadius;
     const incomingTs=Number(incoming.lastEventTs)||Number(incoming.ts)||now();
     if(incomingTs>=Number(target.lastEventTs||target.ts||0)){
