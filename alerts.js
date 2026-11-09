@@ -175,7 +175,7 @@
   }
   function markerRadius(price,meta){
     const supplied=Math.abs(Number(meta&&meta.zoneRadius)||0);
-    return Math.max(supplied,Math.abs(Number(price)||0)*.0008,1e-8);
+    return Math.max(supplied,Math.abs(Number(price)||0)*.00025,1e-8);
   }
   function situationLabel(counts){
     const names=SITUATION_SOURCES.filter(key=>Number(counts[key])>0).map(key=>SITUATION_SOURCE_LABELS[key]);
@@ -288,7 +288,7 @@
       const incoming={
         id,pair:meta.pair,tf,kind:meta.kind,direction:meta.direction,price,entryPrice,ts,
         anchorPrice:entryPrice,lastEntryPrice:entryPrice,lastEventPrice:price,firstTs:ts,lastEventTs:ts,
-        zoneRadius:tolerance,tolerance,situationSources:{vpPoc:source==="vpPoc"?1:0,bos:source==="bos"?1:0},
+        zoneRadius:tolerance,tolerance,situationSources:Object.fromEntries(SITUATION_SOURCES.map(key=>[key,key===source?1:0])),
         eventCount:1,touches:1,label:SITUATION_SOURCE_LABELS[source]||source,
         situationEventIds:[id],
         situationEvents:[{id,kind:meta.kind,label:meta.label||meta.kind,ts,price,entryPrice,direction:meta.direction}]
@@ -436,7 +436,11 @@
       if(source)observeCombo(kind,marker);
       return;
     }
-    const markerResult=marker?recordAlertMarker(Object.assign({},marker,{kind})):null;
+    const markerWithZone=marker?Object.assign({},marker,{
+      kind,
+      zoneRadius:Number(marker.zoneRadius)||Math.max((atr(currentComboCandles,14)||0)*.75,Math.abs(Number(marker.entryPrice||marker.price)||0)*.00025)
+    }):null;
+    const markerResult=markerWithZone?recordAlertMarker(markerWithZone):null;
     log(kind,text);
     if(!markerResult||!markerResult.merged)tone(kind);
     const badge=$("alertsLast");if(badge){badge.textContent=text;badge.className="alerts-last "+kind}
