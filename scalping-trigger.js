@@ -693,6 +693,19 @@
     document.head.appendChild(style);
   }
 
+  if (window.__OKX_SCALPING_TEST__) {
+    window.__OKXScalpingTest = {
+      addHistory,
+      mergeRsiRepeat,
+      getHistory: () => history.slice(),
+      setHistory: (items) => { history = Array.isArray(items) ? items.slice() : []; },
+      setState: (value) => { state = Object.assign({}, state, value || {}); },
+      getState: () => JSON.parse(JSON.stringify(state)),
+      setConfig: (value) => { cfg = Object.assign({}, cfg, value || {}); }
+    };
+    return;
+  }
+
   function start() {
     injectCss();
     addOpenButton();
