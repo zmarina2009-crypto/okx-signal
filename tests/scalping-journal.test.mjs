@@ -83,3 +83,24 @@ test("journal keeps the newest 500 events without collapsing repeats", () => {
   assert.match(rows[0].message, /5$/);
   assert.match(rows[499].message, /504$/);
 });
+
+test("journal persists every event, including individual repeats", () => {
+  const api = createHarness();
+  api.addHistory("scalping", "SUI-USDT-SWAP", "1m", "LONG", "Volume + RSI", 1000, 100, null);
+  api.addHistory("rsi-repeat", "SUI-USDT-SWAP", "1m", "LONG", "RSI repeat", 2000, 100.5, null);
+  const stored = api.getPersistedHistory();
+  assert.equal(stored.length, 2);
+  assert.deepEqual(stored.map((item) => item.kind), ["scalping", "rsi-repeat"]);
+});
+
+test("journal UI is a separate window with its own quick-access button", () => {
+  assert.match(source, /function buildJournalModal\\(\\)/);
+  assert.match(source, /id = "scalpingJournalModal"/);
+  assert.match(source, /id = "scalpJournalButton"/);
+  assert.match(source, /journalButton\\.onclick = openJournalModal/);
+  const settingsStart = source.indexOf("function buildModal()");
+  const journalStart = source.indexOf("function buildJournalModal()");
+  const settingsEnd = source.indexOf("function addOpenButton()");
+  assert.ok(settingsStart >= 0 && journalStart >= 0 && settingsEnd > journalStart);
+  assert.doesNotMatch(source.slice(settingsStart, journalStart), /id="stHistoryList"/);
+});
