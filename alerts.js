@@ -767,7 +767,8 @@
       setConfig:value=>{cfg=Object.assign({},cfg,value||{});},
       setComboCandles:bars=>{currentComboCandles=Array.isArray(bars)?bars:[];},
       resetCombo:()=>{comboSignals=[];comboLastAt={};comboFilterLastAt={};lastAlertAt={};pairState={};},
-      getAlertLog:()=>alertLogEntries.slice()
+      getAlertLog:()=>alertLogEntries.slice(),
+      getComboSignals:()=>comboSignals.slice()
     };
     return;
   }
