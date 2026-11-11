@@ -279,53 +279,89 @@
     return count ? total / count : null;
   }
 
-  function rsiClusterKey(pair, tf) {
-    return String(pair) + "|" + normalizeTf(tf);
+  function rsiClusterKey(pair, tf, direction) {
+    return String(pair) + "|" + normalizeTf(tf) + "|" + String(direction || "").toUpperCase();
+  }
+
+  function migrateLegacyRsiClusters(pair, tf) {
+    const legacyKey = String(pair) + "|" + normalizeTf(tf);
+    const legacy = state.rsiClusters[legacyKey];
+    if (!legacy) return;
+    const direction = String(legacy.direction || "").toUpperCase();
+    if (!["LONG", "SHORT"].includes(direction)) return;
+    const nextKey = rsiClusterKey(pair, tf, direction);
+    if (!state.rsiClusters[nextKey]) state.rsiClusters[nextKey] = legacy;
+    delete state.rsiClusters[legacyKey];
   }
 
   function updateRsiCluster(pair, tf, candle, currentRsi) {
-    const key = rsiClusterKey(pair, tf);
-    const cluster = state.rsiClusters[key];
-    if (!cluster) return;
+    migrateLegacyRsiClusters(pair, tf);
+    const clusters = ["LONG", "SHORT"].map(direction => ({
+      direction,
+      key: rsiClusterKey(pair, tf, direction),
+      cluster: state.rsiClusters[rsiClusterKey(pair, tf, direction)]
+    })).filter(item => item.cluster);
+    if (!clusters.length) return;
     const close = Number(candle && candle.c);
-    if (!Number.isFinite(close) || !Number.isFinite(Number(cluster.anchorPrice))) return;
+    if (!Number.isFinite(close)) return;
 
     const rsi = Number(currentRsi);
-    if (Number.isFinite(rsi)) {
-      if (cluster.direction === "LONG" && rsi >= cluster.resetRsi) cluster.neutralSeen = true;
-      if (cluster.direction === "SHORT" && rsi <= cluster.resetRsi) cluster.neutralSeen = true;
-    }
-
-    const movedOutsideZone = Math.abs(close - Number(cluster.anchorPrice)) >= Number(cluster.radius);
-    if (cluster.neutralSeen && movedOutsideZone) {
-      delete state.rsiClusters[key];
-      saveState();
-    }
+    let changed = false;
+    clusters.forEach(({direction, key, cluster}) => {
+      if (!Number.isFinite(Number(cluster.anchorPrice))) return;
+      if (Number.isFinite(rsi)) {
+        if (direction === "LONG" && rsi >= cluster.resetRsi) cluster.neutralSeen = true;
+        if (direction === "SHORT" && rsi <= cluster.resetRsi) cluster.neutralSeen = true;
+      }
+      const movedOutsideZone = Math.abs(close - Number(cluster.anchorPrice)) >= Number(cluster.radius);
+      if (cluster.neutralSeen && movedOutsideZone) {
+        delete state.rsiClusters[key];
+        changed = true;
+      }
+    });
+    if (changed) saveState();
   }
 
   function mergeRsiRepeat(pair, tf, candle, direction) {
-    const key = rsiClusterKey(pair, tf);
+    migrateLegacyRsiClusters(pair, tf);
+    const key = rsiClusterKey(pair, tf, direction);
     const cluster = state.rsiClusters[key];
-    if (!cluster || cluster.direction !== direction) return false;
+    if (!cluster) return false;
+
+    const eventTs = Number(candle && candle.ts) || Date.now();
+    const tfMs = ({"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000})[normalizeTf(tf)] || 900000;
+    const anchorTs = Number(cluster.anchorTs) || Number(cluster.historySignalTs) || eventTs;
+    // RSI suppression must respect the same eight-bar situation horizon as chart grouping.
+    if (eventTs < anchorTs || eventTs - anchorTs > tfMs * 8) {
+      delete state.rsiClusters[key];
+      saveState();
+      return false;
+    }
 
     const price = Number(candle && candle.c);
     const distance = Number.isFinite(price) ? Math.abs(price - Number(cluster.anchorPrice)) : 0;
     // A cluster stays active until RSI has reset AND price has left its original ATR zone.
     if (distance >= Number(cluster.radius) && cluster.neutralSeen) {
       delete state.rsiClusters[key];
+      saveState();
       return false;
     }
 
     cluster.suppressedCount = (Number(cluster.suppressedCount) || 0) + 1;
-    cluster.lastSuppressedTs = Number(candle && candle.ts) || Date.now();
+    cluster.lastSuppressedTs = eventTs;
     cluster.lastSuppressedPrice = Number.isFinite(price) ? price : null;
     cluster.lastSuppressedDirection = direction;
     state.rsiClusterSuppressed = (Number(state.rsiClusterSuppressed) || 0) + 1;
 
-    // Keep every repeated RSI trigger as a journal event even though its chart marker is merged.
+    // Add the repeat to the shared marker aggregator before writing its journal row.
+    const situationResult = addChartMarker({
+      pair, tf, ts: eventTs, price,
+      entryPrice: price, direction, label: "RSI · повтор",
+      kind: "rsi", zoneRadius: Number(cluster.radius) || 0
+    });
     addHistory("rsi-repeat", pair, tf, direction,
       "Повтор RSI в текущей торговой ситуации · маркер объединён · повтор №" + cluster.suppressedCount,
-      candle && candle.ts, price, null);
+      eventTs, price, situationResult);
 
     const entry = history.find((item) =>
       item && item.kind === "scalping" &&
@@ -343,14 +379,16 @@
     return true;
   }
 
-  function startRsiCluster(pair, tf, candle, direction, price, bars, historyItem) {
+  function startRsiCluster(pair, tf, candle, direction, price, bars, historyItem, zoneRadius) {
     const atr = averageTrueRange(bars, 14);
-    const fallbackFloor = Math.max(Math.abs(Number(price)) * 0.00025, 0.01);
-    const radius = Math.max((Number(atr) || 0) * cfg.rsiClusterAtrMultiplier, fallbackFloor);
+    const fallbackFloor = Math.max(Math.abs(Number(price)) * 0.00025, 1e-8);
+    const radius = Number(zoneRadius) > 0
+      ? Number(zoneRadius)
+      : Math.max((Number(atr) || 0) * cfg.rsiClusterAtrMultiplier, fallbackFloor);
     const resetRsi = direction === "LONG"
       ? Math.min(60, Math.max(cfg.rsiOversold + 10, 40))
       : Math.max(40, Math.min(cfg.rsiOverbought - 10, 60));
-    state.rsiClusters[rsiClusterKey(pair, tf)] = {
+    state.rsiClusters[rsiClusterKey(pair, tf, direction)] = {
       direction,
       anchorPrice: Number(price),
       anchorTs: Number(candle && candle.ts) || Date.now(),
@@ -359,6 +397,7 @@
       resetRsi,
       neutralSeen: false,
       historySignalTs: Number(historyItem && historyItem.signalTs) || Date.now(),
+      situationId: historyItem && historyItem.situationId || null,
       suppressedCount: 0
     };
     saveState();
@@ -416,9 +455,14 @@
           " • Volume ×" + (volume / volumes).toFixed(2) +
           " + RSI " + Number(currentRsi).toFixed(1) +
           (cfg.requireBos ? " + BOS" : "") + " • " + pair + " • " + tf;
+        const atrRadius = Math.max(
+          (averageTrueRange(bars, 14) || 0) * cfg.rsiClusterAtrMultiplier,
+          Math.abs(Number(candle.c) || 0) * 0.00025,
+          1e-8
+        );
         const emitted = emit("scalping", pair, tf, candle, direction, Number(candle.c),
-          cfg.requireBos ? "VOL+RSI+BOS" : "VOL+RSI", text, id);
-        if (emitted) startRsiCluster(pair, tf, candle, direction, Number(candle.c), bars, emitted);
+          cfg.requireBos ? "VOL+RSI+BOS" : "VOL+RSI", text, id, atrRadius);
+        if (emitted) startRsiCluster(pair, tf, candle, direction, Number(candle.c), bars, emitted, atrRadius);
       });
     }
 
@@ -777,6 +821,10 @@
     window.__OKXScalpingTest = {
       addHistory,
       mergeRsiRepeat,
+      emit,
+      evaluateBars,
+      averageTrueRange,
+      rsiClusterKey,
       getHistory: () => history.slice(),
       getPersistedHistory: () => JSON.parse(localStorage.getItem(STATE_KEY + "_history") || "[]"),
       setHistory: (items) => { history = Array.isArray(items) ? items.slice() : []; },
