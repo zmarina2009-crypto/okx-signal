@@ -451,6 +451,12 @@
       const badge=$("alertsLast");if(badge){badge.textContent=note;badge.className="alerts-last";}
       return;
     }
+    if(cfg.comboModeActive){
+      chosen.forEach(signal=>{
+        const componentId=[pair,tf,signal.kind,signal.ts,comboDirection].join("|");
+        log(signal.kind,"COMBO confirmation • "+signal.kind.toUpperCase()+" • "+comboDirection+" • "+pair+" • "+tf+" • "+componentId);
+      });
+    }
     log("combo",message);tone("combo");
     const badge=$("alertsLast");if(badge){badge.textContent=message;badge.className="alerts-last combo"}
   }
