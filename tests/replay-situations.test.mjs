@@ -71,3 +71,25 @@ test("replays real alert evaluators over SUI 1m-shaped OHLCV and reports a compl
   assert.equal(situation.situationSources.vpPoc, 1);
   assert.equal(report.data.matchedComponentSignals, 4);
 });
+
+test("historical replay never uses a 15m VP candle before its close time", () => {
+  const start = 1_800_000_000_000;
+  const candles = Array.from({ length: 80 }, (_, i) => ({
+    ts: start + i * 60_000,
+    o: 100, h: 100.2, l: 99.8, c: 100, v: 10, confirm: "1"
+  }));
+  // These 15m source bars begin after the end of the 1m test window.
+  const futureVpStart = start + 80 * 60_000;
+  const vpCandles = Array.from({ length: 60 }, (_, i) => ({
+    ts: futureVpStart + i * 15 * 60_000,
+    o: 100, h: 101, l: 99, c: 100, v: 100, confirm: "1"
+  }));
+
+  const report = replayHistoricalCandles({
+    candles, vpCandles, pair: "SUI-USDT-SWAP", tf: "1m", vpTf: "15m",
+    comboOnly: true, includeBos: false
+  });
+  assert.equal(report.data.vpBarsAvailableAtEnd, 0);
+  assert.equal(report.result.sourceCounts.vpPoc, 0);
+  assert.equal(report.result.visibleSituationCount, 0);
+});
