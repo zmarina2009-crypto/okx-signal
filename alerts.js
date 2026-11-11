@@ -854,7 +854,8 @@
         const value=vpLevelStates[key];
         return value?Object.assign({},value,{levels:Object.assign({},value.levels)}):null;
       },
-      getConfig:()=>Object.assign({},cfg)
+      getConfig:()=>Object.assign({},cfg),
+      getResolvedVpTf:tradeTf=>normalizeVpTf(cfg.vpTf,tradeTf)
     };
     return;
   }
