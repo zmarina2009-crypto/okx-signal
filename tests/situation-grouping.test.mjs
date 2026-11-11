@@ -5,8 +5,9 @@ import vm from "node:vm";
 
 const source = fs.readFileSync(new URL("../alerts.js", import.meta.url), "utf8");
 
-function createHarness() {
+function createHarness(initialMarkers = []) {
   const store = new Map();
+  if (initialMarkers.length) store.set("okx_v2_alert_markers", JSON.stringify(initialMarkers));
   const localStorage = {
     getItem: (key) => store.has(key) ? store.get(key) : null,
     setItem: (key, value) => store.set(key, String(value)),
@@ -117,4 +118,27 @@ test("rejects invalid direction and non-positive price", () => {
   assert.equal(api.add(signal({ direction: "SIDEWAYS" })), null);
   assert.equal(api.add(signal({ price: 0 })), null);
   assert.equal(api.read().length, 0);
+});
+
+test("migrates legacy tolerance into zoneRadius without shrinking the price boundary", () => {
+  const ts = Date.now();
+  const api = createHarness([{
+    id: "legacy-vp-poc", pair: "SUI-USDT-SWAP", tf: "1m", kind: "vp",
+    label: "VP POC", direction: "LONG", price: 100, entryPrice: 100,
+    ts, tolerance: 2, touches: 1, situationSources: { vpPoc: 1 }
+  }]);
+  const [marker] = api.read();
+  assert.equal(marker.zoneRadius, 2);
+  assert.equal(marker.tolerance, 2);
+  assert.equal(marker.anchorPrice, 100);
+});
+
+test("COMBO-only predicate accepts genuine COMBO situations only", () => {
+  const api = createHarness();
+  assert.equal(api.isComboSituation({ kind: "combo" }), true);
+  assert.equal(api.isComboSituation({ kind: "rsi", situationSources: { rsi: 2, combo: 1 } }), true);
+  assert.equal(api.isComboSituation({ kind: "rsi", situationEvents: [{ kind: "combo" }] }), true);
+  assert.equal(api.isComboSituation({ kind: "rsi", situationSources: { rsi: 1, volume: 1, sma: 1, vpOther: 1 } }), false);
+  assert.equal(api.isComboSituation({ kind: "scalping", situationSources: { scalping: 1 } }), false);
+  assert.equal(api.isComboSituation({ kind: "bos", situationSources: { bos: 1 } }), false);
 });
