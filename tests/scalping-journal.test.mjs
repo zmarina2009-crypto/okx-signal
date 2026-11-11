@@ -219,7 +219,7 @@ test("SUI 1m repeated Volume + RSI triggers produce one situation and three jour
   assert.equal(markers[0].situationSources.rsi, 2);
   assert.equal(rows.length, 3, "every original trigger must remain in the journal");
   assert.equal(rows[0].kind, "scalping");
-  assert.deepEqual(rows.slice(1).map(row => row.kind), ["rsi-repeat", "rsi-repeat"]);
+  assert.equal(rows.slice(1).map(row => row.kind).join(","), "rsi-repeat,rsi-repeat");
   assert.ok(rows.every(row => row.situationId === markers[0].id));
   assert.deepEqual(rows.map(row => row.situationEventCount), [1, 2, 3]);
   assert.equal(rows[0].mergedCount, 2);
