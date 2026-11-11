@@ -185,6 +185,13 @@
     const counts=markerSources(marker);
     return sourceCountTotal(counts)>0;
   }
+  function isComboSituationMarker(marker){
+    if(!marker||typeof marker!=="object")return false;
+    if(String(marker.kind||"").toLowerCase()==="combo")return true;
+    const counts=markerSources(marker);
+    if(Number(counts.combo)>0)return true;
+    return Array.isArray(marker.situationEvents)&&marker.situationEvents.some(event=>String(event&&event.kind||"").toLowerCase()==="combo");
+  }
   function normalizeSituationMarker(marker){
     const counts=markerSources(marker);
     const entry=markerEntryPrice(marker);
@@ -196,7 +203,9 @@
     marker.lastEntryPrice=Number(marker.lastEntryPrice)>0?Number(marker.lastEntryPrice):entry;
     marker.firstTs=Number(marker.firstTs)||Number(marker.ts)||now();
     marker.lastEventTs=Number(marker.lastEventTs)||Number(marker.ts)||now();
-    marker.zoneRadius=markerRadius(marker.anchorPrice,{zoneRadius:marker.zoneRadius});
+    // Preserve the price boundary used by older markers before zoneRadius existed.
+    const legacyRadius=Number(marker.zoneRadius)>0?Number(marker.zoneRadius):Number(marker.tolerance)>0?Number(marker.tolerance):0;
+    marker.zoneRadius=markerRadius(marker.anchorPrice,{zoneRadius:legacyRadius});
     marker.tolerance=marker.zoneRadius;
     marker.label=situationLabel(counts);
     if(!Array.isArray(marker.situationEventIds))marker.situationEventIds=marker.id?[marker.id]:[];
@@ -311,10 +320,10 @@
     window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:marker}));
     return {marker,merged:false,duplicate:false};
   }
-  window.OKXSignalMarkers=Object.assign({},window.OKXSignalMarkers||{},{add:recordAlertMarker});
+  window.OKXSignalMarkers=Object.assign({},window.OKXSignalMarkers||{},{add:recordAlertMarker,isComboSituation:isComboSituationMarker});
   // Deterministic test seam: enabled only by the Node test harness, never in the app.
   if(window.__OKX_ALERTS_TEST__){
-    window.__OKXAlertsTest={add:recordAlertMarker,clear:()=>localStorage.removeItem(MARKER_KEY),read:()=>JSON.parse(localStorage.getItem(MARKER_KEY)||"[]")};
+    window.__OKXAlertsTest={add:recordAlertMarker,clear:()=>localStorage.removeItem(MARKER_KEY),read:()=>JSON.parse(localStorage.getItem(MARKER_KEY)||"[]"),isComboSituation:isComboSituationMarker};
     return;
   }
   const COMBO_SOURCES=["volume","rsi","sma","vp"];
