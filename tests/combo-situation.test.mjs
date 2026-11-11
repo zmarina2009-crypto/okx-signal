@@ -86,6 +86,45 @@ test("COMBO-only creates one aggregate marker with four real source confirmation
     "each component plus the final COMBO must be retained in alert history");
 });
 
+test("real SUI 1m candle evaluation detects Volume, RSI, SMA21 and VP POC on one closed candle", () => {
+  const api = createHarness();
+  const start = 1_800_000_000_000;
+  const bars = Array.from({ length: 80 }, (_, i) => {
+    let close = 100;
+    if (i === 65) close = 101.1;
+    else if (i >= 66 && i <= 78) close = 101.1 - (i - 65) * 0.09;
+    else if (i === 79) close = 100.02;
+    const high = Math.max(100.5, close + 0.02);
+    const low = Math.min(99.5, close - 0.02);
+    return {
+      ts: start + i * 60_000,
+      o: i === 79 ? 100.03 : close,
+      h: high,
+      l: low,
+      c: close,
+      v: i >= 65 && i <= 78 ? 1 : i === 79 ? 1000 : 100
+    };
+  });
+
+  api.evaluatePair(bars, "SUI-USDT-SWAP", "1m");
+
+  const markers = api.read();
+  assert.equal(markers.length, 1);
+  const [marker] = markers;
+  assert.equal(marker.direction, "LONG");
+  assert.equal(marker.eventCount, 4);
+  assert.equal(marker.situationSources.volume, 1);
+  assert.equal(marker.situationSources.rsi, 1);
+  assert.equal(marker.situationSources.sma, 1);
+  assert.equal(marker.situationSources.vpPoc, 1);
+  assert.equal(marker.comboConfirmed, true);
+  assert.equal(marker.situationEvents.length, 4);
+  assert.ok(marker.situationEvents.some(event => event.kind === "volume"));
+  assert.ok(marker.situationEvents.some(event => event.kind === "rsi"));
+  assert.ok(marker.situationEvents.some(event => event.kind === "sma"));
+  assert.ok(marker.situationEvents.some(event => event.kind === "vp" && /POC/.test(event.label)));
+});
+
 test("BOS in the same direction and price/time zone becomes the fifth confirmation", () => {
   const api = createHarness();
   sendFour(api);
