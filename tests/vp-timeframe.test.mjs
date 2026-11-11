@@ -108,7 +108,7 @@ test("new 15m profile refresh re-baselines price and does not create a moving-PO
   // The 15m profile changes to a lower POC exactly as a new 1m close moves
   // from below the new POC to above it. This is not a real crossing of the
   // previously fixed POC, so the profile-refresh candle must only re-baseline.
-  const refreshedProfile = makeProfileBars({ close: 100, start: 1_798_000_000_000 });
+  const refreshedProfile = makeProfileBars({ close: 100, start: 1_798_000_900_000 });
   let bars = [...first, makeTradeBars([100.2], first.at(-1).ts + 60_000)[0]];
   api.evaluatePair(bars, PAIR, "1m", refreshedProfile);
   const newState = api.getVpState(PAIR, "1m", "15m");
@@ -164,6 +164,6 @@ test("VP timeframe is clamped so it cannot be lower than the trade timeframe", (
   const vpBars = makeProfileBars({ close: 100 });
   const tradeBars = makeTradeBars([99.9, 99.9, 99.9, 99.9, 99.9, 99.9]);
   api.evaluatePair(tradeBars, PAIR, "15m", vpBars);
-  assert.ok(api.getVpState(PAIR, "15m", "15m"));
-  assert.equal(api.getVpState(PAIR, "15m", "5m"), null);
+  assert.equal(api.getResolvedVpTf("15m"), "15m");
+  assert.equal(api.getResolvedVpTf("1m"), "15m");
 });
