@@ -51,8 +51,13 @@ test("replays real alert evaluators over SUI 1m-shaped OHLCV and reports a compl
     };
   });
 
+  const vpStart = start - 60 * 15 * 60_000;
+  const vpCandles = Array.from({ length: 60 }, (_, i) => ({
+    ts: vpStart + i * 15 * 60_000,
+    o: 100, h: 100.5, l: 99.5, c: 100, v: 100, confirm: "1"
+  }));
   const report = replayHistoricalCandles({
-    candles, pair: "SUI-USDT-SWAP", tf: "1m",
+    candles, vpCandles, pair: "SUI-USDT-SWAP", tf: "1m", vpTf: "15m",
     comboOnly: true, includeBos: false
   });
   assert.equal(report.data.candleCount, 80);
