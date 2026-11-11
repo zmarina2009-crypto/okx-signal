@@ -485,8 +485,15 @@ function draw(e){window.candles=candles;window.chartState=chartState;
     try{marks=JSON.parse(localStorage.getItem("okx_v2_alert_markers")||"[]");if(!Array.isArray(marks))marks=[]}catch{}
     const tf=$("tf")?.value||"15m";
     let comboOnly=false;try{comboOnly=localStorage.getItem("okx_combo_mode_active")==="1"}catch(e){}
-    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||["combo","scalping","bos"].includes(m.kind)||["volume","rsi","sma","vpPoc","vpOther","bos"].some(source=>Number(m.situationSources&&m.situationSources[source])>0))).slice(-24);
-    const indexByTs=new Map(series.map((c,i)=>[Number(c.ts),i]));
+    const isComboSituation = m => {
+      const markerApi=window.OKXSignalMarkers;
+      if(markerApi&&typeof markerApi.isComboSituation==="function")return markerApi.isComboSituation(m);
+      const sources=m&&m.situationSources;
+      return String(m&&m.kind||"").toLowerCase()==="combo"||
+        Number(sources&&sources.combo)>0||
+        (Array.isArray(m&&m.situationEvents)&&m.situationEvents.some(event=>String(event&&event.kind||"").toLowerCase()==="combo"));
+    };
+    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||isComboSituation(m))).slice(-24);    const indexByTs=new Map(series.map((c,i)=>[Number(c.ts),i]));
     visibleMarks.forEach(m=>{
       let gi=indexByTs.get(Number(m.ts));
       // Alert timestamps are candle-open timestamps. If the feed differs by a few ms,
