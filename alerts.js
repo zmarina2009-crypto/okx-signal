@@ -2,16 +2,28 @@
 (function(){
   "use strict";
   const KEY="okx_alerts_v1";
-  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,vp:true,vpPeriod:60,vpRows:30,vpMode:"poc",comboEnabled:false,comboModeActive:false,comboComposition:"any",comboCount:2,comboWindow:1,vpRsiWindow:3,vpRsiAtrTolerance:0.35,vpRsiChopEnabled:false,chopEnabled:true,chopPeriod:14,chopThreshold:61.8,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
+  const defaults={volume:true,volumePeriod:20,volumeMult:2,rsi:true,rsiPeriod:14,rsiLow:30,rsiHigh:70,sma:true,smaPeriod:21,smaTolerance:0,vp:true,vpTf:"15m",vpPeriod:60,vpRows:30,vpMode:"poc",comboEnabled:false,comboModeActive:false,comboComposition:"any",comboCount:2,comboWindow:1,vpRsiWindow:3,vpRsiAtrTolerance:0.35,vpRsiChopEnabled:false,chopEnabled:true,chopPeriod:14,chopThreshold:61.8,sound:true,volumeLevel:.65,cooldown:30,selectedPairs:[],alertTf:"15m"};
   let cfg=Object.assign({},defaults,(()=>{try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch{return{}}})());
   if(!Number.isFinite(Number(cfg.smaTolerance))||Number(cfg.smaTolerance)===.15)cfg.smaTolerance=0;
   cfg.vpPeriod=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));cfg.vpRows=Math.max(10,Math.min(60,Math.round(Number(cfg.vpRows)||30)));if(!["poc","va","all"].includes(cfg.vpMode))cfg.vpMode="poc";
+  const ALERT_TF_ORDER=["1m","5m","15m","30m","1h","4h","1d"];
+  function normalizeAlertTf(value,fallback="15m"){
+    const tf=String(value||fallback).toLowerCase();
+    return ALERT_TF_ORDER.includes(tf)?tf:fallback;
+  }
+  function normalizeVpTf(value,tradeTf){
+    const trade=normalizeAlertTf(tradeTf);
+    const candidate=normalizeAlertTf(value,"15m");
+    return ALERT_TF_ORDER.indexOf(candidate)<ALERT_TF_ORDER.indexOf(trade)?trade:candidate;
+  }
+  cfg.alertTf=normalizeAlertTf(cfg.alertTf);
+  cfg.vpTf=normalizeVpTf(cfg.vpTf,cfg.alertTf);
   if(!["any","vpRsi"].includes(cfg.comboComposition))cfg.comboComposition="any";
   cfg.vpRsiWindow=Math.max(1,Math.min(5,Math.round(Number(cfg.vpRsiWindow)||3)));
   cfg.vpRsiAtrTolerance=Math.max(0.1,Math.min(2,Number(cfg.vpRsiAtrTolerance)||0.35));
   cfg.vpRsiChopEnabled=!!cfg.vpRsiChopEnabled;
   if(Number(cfg.comboCount)===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;cfg.comboWindow=1;}
-  let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[],vpRsiStates={};
+  let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[],vpRsiStates={},vpLevelStates={},vpCandleCache={},vpFetchLogAt={};
   const $=id=>document.getElementById(id);
   const esc=s=>String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
   function save(){localStorage.setItem(KEY,JSON.stringify(cfg))}
@@ -104,9 +116,39 @@
     const priceAt=k=>lo+(k+.5)*range/rows;
     return {poc:priceAt(poc),val:lo+left*range/rows,vah:lo+(right+1)*range/rows};
   }
+  function stableVpProfile(pair,tradeTf,sourceTf,bars,tradeCandle){
+    if(!Array.isArray(bars)||!tradeCandle)return null;
+    const period=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));
+    const sameTf=normalizeAlertTf(sourceTf)===normalizeAlertTf(tradeTf);
+    const profileBars=(sameTf?bars.slice(0,-1):bars).slice(-period);
+    if(profileBars.length<period)return null;
+    const levels=volumeProfileLevels(profileBars,cfg.vpRows);
+    if(!levels)return null;
+    const profileTs=Number(profileBars[profileBars.length-1]?.ts)||0;
+    const close=Number(tradeCandle.c),tradeTs=Number(tradeCandle.ts);
+    if(!Number.isFinite(close)||!Number.isFinite(tradeTs))return null;
+    if(sameTf){
+      return {levels,sourceTf:normalizeAlertTf(sourceTf),profileTs,
+        previousPrice:Number(bars[bars.length-2]?.c),updated:false,stable:false};
+    }
+    const key=[pair,normalizeAlertTf(tradeTf),normalizeAlertTf(sourceTf),period,Number(cfg.vpRows)||30].join("|");
+    let state=vpLevelStates[key];
+    if(!state||Number(state.profileTs)!==profileTs){
+      state={profileTs,levels,lastTradePrice:close,lastTradeTs:tradeTs};
+      vpLevelStates[key]=state;
+      return {levels,sourceTf:normalizeAlertTf(sourceTf),profileTs,previousPrice:null,updated:true,stable:true};
+    }
+    const previousPrice=Number(state.lastTradePrice),previousTs=Number(state.lastTradeTs);
+    const tradeMs=({"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000})[normalizeAlertTf(tradeTf)]||60000;
+    const continuous=tradeTs>previousTs&&tradeTs-previousTs<=tradeMs*1.5;
+    state.lastTradePrice=close;
+    state.lastTradeTs=tradeTs;
+    return {levels:state.levels,sourceTf:normalizeAlertTf(sourceTf),profileTs,
+      previousPrice:continuous?previousPrice:null,updated:false,stable:true};
+  }
   function app(){return window.OKXSignalApp&&window.OKXSignalApp.getState?window.OKXSignalApp.getState():null}
   function markets(){return window.OKXSignalApp&&window.OKXSignalApp.getMarkets?window.OKXSignalApp.getMarkets():[]}
-  function fetchCandles(pair,tf){return window.OKXSignalApp&&window.OKXSignalApp.fetchCandles?window.OKXSignalApp.fetchCandles(pair,tf,80):Promise.reject(Error("OKX data unavailable"))}
+  function fetchCandles(pair,tf,limit=80){return window.OKXSignalApp&&window.OKXSignalApp.fetchCandles?window.OKXSignalApp.fetchCandles(pair,tf,limit):Promise.reject(Error("OKX data unavailable"))}
   const ALERT_LOG_KEY="okx_alert_log_v1";
   const ALERT_RETENTION_MS=7*24*60*60*1000;
   const ALERT_LOG_LIMIT=500;
@@ -316,13 +358,18 @@
     window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:target}));
     return true;
   }
-  function markComboSituation(componentIds,components,comboTs){
+  function markComboSituation(componentIds,components,comboTs,componentDetails=[]){
     const marks=readStoredMarkers();
     const target=marks.find(marker=>marker&&Array.isArray(marker.situationEventIds)&&componentIds.every(id=>marker.situationEventIds.includes(id)));
     if(!target)return null;
     target.comboConfirmed=true;
     target.comboConfirmedTs=Number(comboTs)||now();
     target.comboComponents=[...new Set(components)];
+    target.comboComponentDetails=componentDetails.map(item=>({
+      kind:String(item.kind||""),sourceTf:normalizeMarkerTf(item.sourceTf||target.tf),
+      ts:Number(item.ts)||null,profileLevel:String(item.profileLevel||""),
+      profilePrice:Number(item.profilePrice)||null
+    }));
     target.comboDirection=target.direction;
     writeStoredMarkers(marks);
     window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:target}));
@@ -349,7 +396,11 @@
         zoneRadius:tolerance,tolerance,situationSources:Object.fromEntries(SITUATION_SOURCES.map(key=>[key,key===source?1:0])),
         eventCount:1,touches:1,label:SITUATION_SOURCE_LABELS[source]||source,
         situationEventIds:[id],
-        situationEvents:[{id,kind:meta.kind,label:meta.label||meta.kind,ts,price,entryPrice,direction:meta.direction}]
+        situationEvents:[{
+          id,kind:meta.kind,label:meta.label||meta.kind,ts,price,entryPrice,direction:meta.direction,
+          sourceTf:normalizeMarkerTf(meta.sourceTf||tf),sourceBarTs:Number(meta.sourceBarTs)||null,
+          profileLevel:String(meta.profileLevel||""),profilePrice:Number(meta.profilePrice)||null
+        }]
       };
       const match=marks.slice().reverse().find(m=>markerMatchesSituation(m,incoming,entryPrice,tolerance,ts));
       let marker,merged=false;
@@ -380,6 +431,10 @@
       price:Number(marker.price)||0,
       entryPrice:Number(marker.entryPrice)||Number(marker.price)||0,
       zoneRadius:Number(marker.zoneRadius)||0,
+      sourceTf:normalizeMarkerTf(marker.sourceTf||tf),
+      sourceBarTs:Number(marker.sourceBarTs)||null,
+      profileLevel:String(marker.profileLevel||""),
+      profilePrice:Number(marker.profilePrice)||null,
       label:marker.label||kind
     });
     comboSignals=comboSignals.slice(-300);
@@ -455,13 +510,18 @@
         price:Number(signal.price)||Number(signal.entryPrice)||0,
         entryPrice:Number(signal.entryPrice)||Number(signal.price)||0,
         direction:comboDirection,kind:signal.kind,label:signal.label,
-        zoneRadius:Number(signal.zoneRadius)||atrRadius
+        zoneRadius:Number(signal.zoneRadius)||atrRadius,
+        sourceTf:signal.sourceTf||tf,sourceBarTs:signal.sourceBarTs||null,
+        profileLevel:signal.profileLevel||"",profilePrice:signal.profilePrice||null
       };
       const result=recordAlertMarker(componentMeta);
       if(result&&result.marker)componentIds.push([pair,tf,signal.kind,signal.ts,comboDirection].join("|"));
     });
     const situation=componentIds.length===chosen.length
-      ?markComboSituation(componentIds,chosen.map(signal=>signal.kind),comboTs)
+      ?markComboSituation(componentIds,chosen.map(signal=>signal.kind),comboTs,chosen.map(signal=>({
+        kind:signal.kind,sourceTf:signal.sourceTf||tf,ts:signal.ts,
+        profileLevel:signal.profileLevel,profilePrice:signal.profilePrice
+      })))
       :null;
     if(!situation){
       const note="COMBO 4/4 совпал, но события не удалось объединить в одну ценовую ситуацию • "+pair+" • "+tf;
@@ -472,13 +532,13 @@
     if(cfg.comboModeActive){
       chosen.forEach(signal=>{
         const componentId=[pair,tf,signal.kind,signal.ts,comboDirection].join("|");
-        log(signal.kind,"COMBO confirmation • "+signal.kind.toUpperCase()+" • "+comboDirection+" • "+pair+" • "+tf+" • "+componentId);
+        log(signal.kind,"COMBO confirmation • "+signal.kind.toUpperCase()+(signal.kind==="vp"?" "+normalizeMarkerTf(signal.sourceTf||tf):"")+" • "+comboDirection+" • "+pair+" • "+tf+" • "+componentId);
       });
     }
     log("combo",message);tone("combo");
     const badge=$("alertsLast");if(badge){badge.textContent=message;badge.className="alerts-last combo"}
   }
-  function evaluateVpRsiCombo(bars,pair,tf,closed){
+  function evaluateVpRsiCombo(bars,pair,tf,closed,vpProfile){
     const diagnostic=$("alertVpRsiDiagnostic");
     if(cfg.comboComposition!=="vpRsi"||!cfg.comboEnabled){
       if(diagnostic)diagnostic.textContent=cfg.comboEnabled?"VP + RSI · режим не выбран; выбери VP + RSI · гибкий.":"VP + RSI · комбо-алерт выключен.";
@@ -486,11 +546,8 @@
     }
     if(diagnostic)diagnostic.textContent="VP + RSI · проверяю закрытую свечу "+pair+" · "+tf+"…";
     const wait=message=>{if(diagnostic)diagnostic.textContent="VP + RSI · ожидание: "+message+" · "+pair+" · "+tf;return false;};
-    const period=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));
-    const profileBars=bars.slice(0,-1).slice(-period);
-    if(profileBars.length<period)return wait("недостаточно истории VP "+profileBars.length+"/"+period);
-    const levels=volumeProfileLevels(profileBars,cfg.vpRows);
-    if(!levels)return wait("не удалось рассчитать профиль объёма");
+    if(!vpProfile||!vpProfile.levels)return wait("недостаточно закрытых свечей VP "+normalizeVpTf(cfg.vpTf,tf)+" (нужно "+Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)))+")");
+    const levels=vpProfile.levels;
     const rsiPeriod=Math.max(2,Math.round(Number(cfg.rsiPeriod)||14));
     const currentRsi=rsi(bars,rsiPeriod),previousRsi=rsi(bars.slice(0,-1),rsiPeriod);
     if(currentRsi==null||previousRsi==null)return wait("недостаточно истории RSI");
@@ -523,8 +580,8 @@
     const match=state.rsi.filter(x=>!state.emitted.includes(x.ts)).map(r=>({r,level:state.vp.filter(v=>v.direction===r.direction&&Math.abs(v.ts-r.ts)<=horizon).sort((a,b)=>Math.abs(ts-a.ts)-Math.abs(ts-b.ts))[0]})).filter(x=>x.level).sort((a,b)=>Math.abs(ts-a.r.ts)-Math.abs(ts-b.r.ts))[0];
     if(match){
       state.emitted.push(match.r.ts);
-      const message="✨ COMBO VP + RSI "+match.r.direction+" · RSI "+match.r.previous.toFixed(1)+" → "+match.r.value.toFixed(1)+" · рядом с "+match.level.level+" "+match.level.price.toFixed(4)+" · "+match.level.distanceAtr.toFixed(2)+" ATR · окно "+cfg.vpRsiWindow+" свечи · "+pair+" · "+tf;
-      fire("combo",message,"combo-vp-rsi:"+pair+":"+tf+":"+match.r.ts,{pair,tf,ts,price:close,entryPrice:close,direction:match.r.direction,label:"COMBO VP+RSI"});
+      const message="✨ COMBO VP "+vpProfile.sourceTf+" + RSI "+match.r.direction+" · RSI "+match.r.previous.toFixed(1)+" → "+match.r.value.toFixed(1)+" · рядом с "+match.level.level+" "+match.level.price.toFixed(4)+" · "+match.level.distanceAtr.toFixed(2)+" ATR · окно "+cfg.vpRsiWindow+" свечи · "+pair+" · "+tf;
+      fire("combo",message,"combo-vp-rsi:"+pair+":"+tf+":"+match.r.ts,{pair,tf,ts,price:close,entryPrice:close,direction:match.r.direction,label:"COMBO VP "+vpProfile.sourceTf+" + RSI",sourceTf:vpProfile.sourceTf,sourceBarTs:vpProfile.profileTs,profileLevel:match.level.level,profilePrice:match.level.price});
       if(diagnostic)diagnostic.textContent="Последний сигнал: "+message;
       return true;
     }
@@ -552,7 +609,7 @@
     log(kind,text);
     if(!markerResult||!markerResult.merged)tone(kind);
     const badge=$("alertsLast");if(badge){badge.textContent=text;badge.className="alerts-last "+kind}
-    if(source)observeCombo(kind,marker);
+    if(source)observeCombo(kind,markerWithZone);
   }
   function evaluate(s){
     const a=s.candles||[],live=s.liveCandle,pair=s.currentPair||"",tf=s.tf||"";
@@ -568,7 +625,9 @@
     if(tf!==cfg.alertTf||!selected.has(pair))return;
     if(pair!==lastPair||tf!==lastTf){lastPair=pair;lastTf=tf;lastClosedTs=0;lastTouch=false}
     if(a.length<5)return;
-    evaluatePair({a,live,pair,tf,updateUi:true});
+    const vpTf=normalizeVpTf(cfg.vpTf,tf);
+    const cachedVp=vpCandleCache[pair+"|"+vpTf];
+    evaluatePair({a,vp:vpTf===tf?a:(cachedVp&&cachedVp.bars)||[],live,pair,tf,updateUi:true});
   }
   function evaluatePair(o){
     const raw=o.a||[],pair=o.pair,tf=o.tf||"15m",updateUi=o.updateUi;
@@ -580,8 +639,13 @@
     currentComboCandles=hist;
     const st=pairState[pair]||(pairState[pair]={lastClosedTs:0,lastTouch:false});
     const closed=hist[hist.length-1];
+    const sourceTf=normalizeVpTf(cfg.vpTf,tf);
+    const needsVp=!!cfg.vp||(cfg.comboEnabled&&cfg.comboComposition==="vpRsi")||(cfg.comboEnabled&&Number(cfg.comboCount)===4);
+    const cachedVp=vpCandleCache[pair+"|"+sourceTf];
+    const vpBars=Array.isArray(o.vp)&&o.vp.length?o.vp:(sourceTf===normalizeAlertTf(tf)?hist:(cachedVp&&cachedVp.bars)||[]);
     if(closed&&closed.ts!==st.lastClosedTs){
       st.lastClosedTs=closed.ts;
+      const vpProfile=needsVp?stableVpProfile(pair,tf,sourceTf,vpBars,closed):null;
       if(cfg.volume&&hist.length>=Math.max(3,+cfg.volumePeriod||20)+1){
         const n=Math.max(2,+cfg.volumePeriod||20),base=hist.slice(0,-1).slice(-n),avg=base.reduce((z,x)=>z+(Number(x.v)||0),0)/base.length,v=Number(closed.v)||0,m=avg>0?v/avg:0;
         if(m>=Math.max(1,+cfg.volumeMult||2)){const isLong=Number(closed.c)>=Number(closed.o),dir=isLong?"🟢 BUY":"🔴 SELL",side=isLong?"LONG":"SHORT";fire("volume","⚡ VOLUME SPIKE "+dir+" • ×"+m.toFixed(1)+" • "+pair+" • "+tf,"volume:"+pair+":"+tf,{pair,tf,ts:closed.ts,price:Number(closed.c),direction:side,label:"VOLUME"});}
@@ -593,7 +657,7 @@
           if(prev<=cfg.rsiHigh&&rv>cfg.rsiHigh)fire("rsi","📈 RSI OVERBOUGHT SHORT • выше "+cfg.rsiHigh+" → "+rv.toFixed(1)+" • "+pair+" • "+tf,"rsi-high:"+pair+":"+tf,{pair,tf,ts:closed.ts,price:Number(closed.c),direction:"SHORT",label:"RSI"});
         }
       }
-      evaluateVpRsiCombo(hist,pair,tf,closed);
+      evaluateVpRsiCombo(hist,pair,tf,closed,vpProfile);
       if(cfg.comboEnabled&&Number(cfg.comboCount)===4&&cfg.sma){
         const comboSmaPeriod=Math.max(2,+cfg.smaPeriod||21),comboSma=sma(hist,comboSmaPeriod),comboSmaPrice=Number(closed.c)||0;
         if(comboSma>0&&comboSmaPrice>0){
@@ -607,27 +671,28 @@
         }
       }
     }
-    if(cfg.vp&&(!st.lastVPTf||st.lastVPTf!==tf||st.lastVPTs!==closed.ts)){
-      st.lastVPTf=tf;st.lastVPTs=closed.ts;
-      const period=Math.max(20,Math.min(300,+cfg.vpPeriod||60)),profileBars=hist.slice(0,-1).slice(-period);
-      if(profileBars.length>=period){
-        const levels=volumeProfileLevels(profileBars,cfg.vpRows),prevClose=Number(hist[hist.length-2]?.c),close=Number(closed.c);
-        if(levels&&Number.isFinite(prevClose)&&Number.isFinite(close)){
-          const crossings=[];
-          if(cfg.vpMode==="poc"||cfg.vpMode==="all"){
-            if(prevClose<levels.poc&&close>=levels.poc)crossings.push({direction:"LONG",level:"POC",price:levels.poc});
-            else if(prevClose>levels.poc&&close<=levels.poc)crossings.push({direction:"SHORT",level:"POC",price:levels.poc});
-          }
-          if(cfg.vpMode==="va"||cfg.vpMode==="all"){
-            if(prevClose<levels.vah&&close>=levels.vah)crossings.push({direction:"LONG",level:"VAH",price:levels.vah});
-            if(prevClose>levels.val&&close<=levels.val)crossings.push({direction:"SHORT",level:"VAL",price:levels.val});
-          }
-          crossings.forEach(c=>{
-            const message=(c.direction==="LONG"?"🟢 LONG":"🔴 SHORT")+" • VP "+c.level+" crossed at "+c.price.toFixed(2)+" • close "+close.toFixed(2)+" • "+pair+" • "+tf;
-            const zoneRadius=Math.max((atr(hist,14)||0)*1.25,close*.00025);
-            fire("vp",message,"vp:"+pair+":"+tf+":"+c.level,{pair,tf,ts:closed.ts,price:close,entryPrice:close,zoneRadius,direction:c.direction,label:"VP "+c.level});
-          });
+    if(cfg.vp&&vpProfile&&vpProfile.levels&&!vpProfile.updated&&Number.isFinite(Number(vpProfile.previousPrice))){
+      const levels=vpProfile.levels,prevClose=Number(vpProfile.previousPrice),close=Number(closed.c);
+      if(Number.isFinite(prevClose)&&Number.isFinite(close)){
+        const crossings=[];
+        if(cfg.vpMode==="poc"||cfg.vpMode==="all"){
+          if(prevClose<levels.poc&&close>=levels.poc)crossings.push({direction:"LONG",level:"POC",price:levels.poc});
+          else if(prevClose>levels.poc&&close<=levels.poc)crossings.push({direction:"SHORT",level:"POC",price:levels.poc});
         }
+        if(cfg.vpMode==="va"||cfg.vpMode==="all"){
+          if(prevClose<levels.vah&&close>=levels.vah)crossings.push({direction:"LONG",level:"VAH",price:levels.vah});
+          if(prevClose>levels.val&&close<=levels.val)crossings.push({direction:"SHORT",level:"VAL",price:levels.val});
+        }
+        crossings.forEach(c=>{
+          const vpLabel="VP "+vpProfile.sourceTf+" "+c.level;
+          const message=(c.direction==="LONG"?"🟢 LONG":"🔴 SHORT")+" • "+vpLabel+" crossed at "+c.price.toFixed(6)+" • close "+close.toFixed(6)+" • "+pair+" • "+tf;
+          const zoneRadius=Math.max((atr(hist,14)||0)*1.25,close*.00025);
+          fire("vp",message,"vp:"+pair+":"+tf+":"+vpProfile.sourceTf+":"+c.level+":"+closed.ts,{
+            pair,tf,ts:closed.ts,price:close,entryPrice:close,zoneRadius,direction:c.direction,
+            label:vpLabel,sourceTf:vpProfile.sourceTf,sourceBarTs:vpProfile.profileTs,
+            profileLevel:c.level,profilePrice:c.price
+          });
+        });
       }
     }
     if(cfg.sma){
@@ -673,7 +738,7 @@
       '<div class="alerts-section"><label class="alerts-check"><input id="alertVolume" type="checkbox"><span>Volume Spike</span></label><div class="alerts-grid"><label>Период<input id="alertVolPeriod" type="number" min="2" value="'+cfg.volumePeriod+'"></label><label>Порог ×<input id="alertVolMult" type="number" min="1" step=".1" value="'+cfg.volumeMult+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertRsi" type="checkbox"><span>RSI</span></label><div class="alerts-grid"><label>Период<input id="alertRsiPeriod" type="number" min="2" value="'+cfg.rsiPeriod+'"></label><label>Зоны<input id="alertRsiLow" type="number" min="1" max="49" value="'+cfg.rsiLow+'"> / <input id="alertRsiHigh" type="number" min="51" max="99" value="'+cfg.rsiHigh+'"></label></div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertSma" type="checkbox"><span>SMA Touch</span></label><div class="alerts-grid"><label>Период<input id="alertSmaPeriod" type="number" min="2" value="'+cfg.smaPeriod+'"></label><label>Допуск %<input id="alertSmaTol" type="number" min="0" step=".05" value="'+cfg.smaTolerance+'"></label></div></div>'+
-      '<div class="alerts-section"><label class="alerts-check"><input id="alertVP" type="checkbox"><span>Volume Profile</span></label><div class="alerts-grid"><label>История, свечей<input id="alertVPPeriod" type="number" min="20" max="300" value="'+cfg.vpPeriod+'"></label><label>Строк профиля<input id="alertVPRows" type="number" min="10" max="60" value="'+cfg.vpRows+'"></label><label>Сигнал<select id="alertVPMode"><option value="poc">Пересечение POC</option><option value="va">Пробой VAH / VAL</option><option value="all">Все уровни: POC, VAH, VAL</option></select></label></div><div class="alerts-note">Проверка только после закрытия свечи. Профиль рассчитывается по предшествующим свечам.</div></div>'+
+      '<div class="alerts-section"><label class="alerts-check"><input id="alertVP" type="checkbox"><span>Volume Profile</span></label><div class="alerts-grid"><label>Таймфрейм VP<select id="alertVPTf"><option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option><option value="30m">30m</option><option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option></select></label><label>История, свечей<input id="alertVPPeriod" type="number" min="20" max="300" value="'+cfg.vpPeriod+'"></label><label>Строк профиля<input id="alertVPRows" type="number" min="10" max="60" value="'+cfg.vpRows+'"></label><label>Сигнал<select id="alertVPMode"><option value="poc">Пересечение POC</option><option value="va">Пробой VAH / VAL</option><option value="all">Все уровни: POC, VAH, VAL</option></select></label></div><div class="alerts-note">Уровни рассчитываются по закрытым свечам выбранного ТФ и фиксируются до следующего закрытия. ТФ VP должен быть не ниже ТФ торговли. Для торговли 1m рекомендуем VP 15m.</div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertCombo" type="checkbox"><span>✨ Комбо-алерт</span></label><div class="alerts-grid"><label>Совпадение<select id="alertComboCount"><option value="2">2 из 4 индикаторов</option><option value="3">3 из 4 индикаторов</option><option value="4">Все 4 индикатора</option></select></label><label>Окно<select id="alertComboWindow"><option value="1">1 свеча</option><option value="2">2 свечи</option><option value="3">3 свечи</option></select></label></div><div class="alerts-note">Сигналы должны совпасть по паре, таймфрейму и окну. Volume подтверждает активность; направление LONG/SHORT задают RSI, SMA и/или Volume Profile. Направления сработавших RSI, SMA и VP должны совпадать. Можно выбрать 2, 3 или все 4 источника: Volume, RSI, SMA и Volume Profile. Для COMBO 4/4 все четыре сигнала обязаны относиться к одной и той же закрытой свече; сигналы с разных свечей не складываются. Самостоятельные алерты всех четырёх источников работают отдельно.</div><button type="button" id="comboModeToggle" class="primary" style="width:100%;margin-top:8px">✨ Включить режим COMBO</button><div id="comboModeStatus" class="alerts-note" style="margin-top:6px">Обычные алерты работают независимо.</div></div>'+
       '<div class="alerts-section"><b>Состав COMBO</b><label>Режим<select id="alertComboComposition"><option value="any">Общий режим: выбранное число из 4</option><option value="vpRsi">VP + RSI · гибкий</option></select></label><div class="alerts-grid"><label>Окно VP + RSI, свечей<input id="alertVpRsiWindow" type="number" min="1" max="5" step="1" value="'+cfg.vpRsiWindow+'"></label><label>Допуск к уровню VP, ATR<input id="alertVpRsiAtrTolerance" type="number" min=".1" max="2" step=".05" value="'+cfg.vpRsiAtrTolerance+'"></label></div><label class="alerts-check"><input id="alertVpRsiChop" type="checkbox">Фильтр CHOP для VP + RSI (по умолчанию выключен)</label><div id="alertVpRsiDiagnostic" class="alerts-note" role="status">VP + RSI: гибкий режим ожидает настройки.</div></div>'+
       '<div class="alerts-section"><label class="alerts-check"><input id="alertChopFilter" type="checkbox"><span>Фильтр флета CHOP для COMBO</span></label><div class="alerts-grid"><label>Период<input id="alertChopPeriod" type="number" min="5" max="50" step="1" value="'+cfg.chopPeriod+'"></label><label>Блокировать при CHOP ≥<input id="alertChopThreshold" type="number" min="20" max="100" step=".1" value="'+cfg.chopThreshold+'"></label></div><div class="alerts-note">Блокирует только COMBO при высоком CHOP. Отдельные индикаторные сигналы остаются доступными. Работает и на 1m: выбери 1m в таймфрейме оповещений.</div></div>'+
@@ -685,7 +750,14 @@
     const clearHistory=$("clearAlertsLog");
     if(clearHistory)clearHistory.onclick=()=>{if(!confirm("Очистить сохранённый журнал алертов за последние 7 дней?"))return;alertLogEntries=[];saveAlertLog();renderAlertLog()};
     $("alertTf").value=cfg.alertTf||"15m";
-    $("alertTf").onchange=()=>{cfg.alertTf=$("alertTf").value;pairState={};save();log("sma","Таймфрейм Alerts: "+cfg.alertTf)};
+    $("alertVPTf").value=cfg.vpTf;
+    $("alertTf").onchange=()=>{
+      cfg.alertTf=normalizeAlertTf($("alertTf").value);
+      cfg.vpTf=normalizeVpTf(cfg.vpTf,cfg.alertTf);
+      $("alertVPTf").value=cfg.vpTf;
+      pairState={};vpLevelStates={};vpCandleCache={};comboSignals=[];comboLastAt={};vpRsiStates={};
+      save();log("sma","Таймфрейм Alerts: "+cfg.alertTf+" · VP: "+cfg.vpTf);
+    };
     renderPairs();
     $("alertsPairsAll").onclick=()=>{cfg.selectedPairs=markets().slice(0,20).map(x=>x.instId);save();renderPairs()};
     $("alertsPairsClear").onclick=()=>{cfg.selectedPairs=[];save();renderPairs()};
@@ -746,8 +818,12 @@
     $("alertComboCount").value=String(cfg.comboCount||2);
     $("alertComboWindow").value=String(cfg.comboCount===4?1:(cfg.comboWindow||1));$("alertComboWindow").disabled=Number(cfg.comboCount)===4;
     renderComboComposition();
-    const bind=(id,key,parse)=>{const el=$(id);el.onchange=()=>{cfg[key]=parse(el.value);comboSignals=[];comboLastAt={};vpRsiStates={};save()}};
-    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");bind("alertVpRsiWindow","vpRsiWindow",v=>Math.max(1,Math.min(5,Math.round(+v||3))));bind("alertVpRsiAtrTolerance","vpRsiAtrTolerance",v=>Math.max(.1,Math.min(2,+v||.35)));$("alertComboCount").onchange=()=>{cfg.comboCount=Math.max(2,Math.min(4,+$("alertComboCount").value||2));if(cfg.comboCount!==4)$("alertComboWindow").disabled=false;if(cfg.comboCount===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;$("alertVolume").checked=$("alertRsi").checked=$("alertSma").checked=$("alertVP").checked=true;$("alertCombo").checked=true;cfg.comboWindow=1;$("alertComboWindow").value="1";$("alertComboWindow").disabled=true;}comboSignals=[];comboLastAt={};save();const badge=$("alertsLast");if(badge&&cfg.comboCount===4){badge.textContent="COMBO 4/4 включён: Volume + RSI + SMA + Volume Profile на одной закрытой свече";badge.className="alerts-last combo";}};bind("alertComboWindow","comboWindow",v=>cfg.comboCount===4?1:Math.max(1,Math.min(3,+v||1)));bind("alertChopPeriod","chopPeriod",v=>Math.max(5,Math.min(50,+v||14)));bind("alertChopThreshold","chopThreshold",v=>Math.max(20,Math.min(100,+v||61.8)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
+    const bind=(id,key,parse)=>{const el=$(id);el.onchange=()=>{
+      cfg[key]=parse(el.value);comboSignals=[];comboLastAt={};vpRsiStates={};
+      if(["vpTf","vpPeriod","vpRows"].includes(key)){vpLevelStates={};vpCandleCache={};pairState={};}
+      save();
+    }};
+    bind("alertVolPeriod","volumePeriod",v=>Math.max(2,+v||20));bind("alertVolMult","volumeMult",v=>Math.max(1,+v||2));bind("alertRsiPeriod","rsiPeriod",v=>Math.max(2,+v||14));bind("alertRsiLow","rsiLow",v=>Math.min(49,Math.max(1,+v||30)));bind("alertRsiHigh","rsiHigh",v=>Math.min(99,Math.max(51,+v||70)));bind("alertSmaPeriod","smaPeriod",v=>Math.max(2,+v||21));bind("alertSmaTol","smaTolerance",v=>Math.max(0,+v||0));bind("alertVPTf","vpTf",v=>normalizeVpTf(v,cfg.alertTf));bind("alertVPPeriod","vpPeriod",v=>Math.max(20,Math.min(300,+v||60)));bind("alertVPRows","vpRows",v=>Math.max(10,Math.min(60,+v||30)));bind("alertVPMode","vpMode",v=>["poc","va","all"].includes(v)?v:"poc");bind("alertVpRsiWindow","vpRsiWindow",v=>Math.max(1,Math.min(5,Math.round(+v||3))));bind("alertVpRsiAtrTolerance","vpRsiAtrTolerance",v=>Math.max(.1,Math.min(2,+v||.35)));$("alertComboCount").onchange=()=>{cfg.comboCount=Math.max(2,Math.min(4,+$("alertComboCount").value||2));if(cfg.comboCount!==4)$("alertComboWindow").disabled=false;if(cfg.comboCount===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;$("alertVolume").checked=$("alertRsi").checked=$("alertSma").checked=$("alertVP").checked=true;$("alertCombo").checked=true;cfg.comboWindow=1;$("alertComboWindow").value="1";$("alertComboWindow").disabled=true;}comboSignals=[];comboLastAt={};save();const badge=$("alertsLast");if(badge&&cfg.comboCount===4){badge.textContent="COMBO 4/4 включён: Volume + RSI + SMA + Volume Profile на одной закрытой свече";badge.className="alerts-last combo";}};bind("alertComboWindow","comboWindow",v=>cfg.comboCount===4?1:Math.max(1,Math.min(3,+v||1)));bind("alertChopPeriod","chopPeriod",v=>Math.max(5,Math.min(50,+v||14)));bind("alertChopThreshold","chopThreshold",v=>Math.max(20,Math.min(100,+v||61.8)));bind("alertVolumeLevel","volumeLevel",v=>Math.min(1,Math.max(0,+v||0)));bind("alertCooldown","cooldown",v=>Math.max(1,+v||30));
     $("alertsSound").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("test");$("alertsSound").textContent="🔊 Звук включён";log("sma","Звук включён")}catch{$("alertsSound").textContent="⚠️ Звук недоступен"}};
     const testSound=async(kind,label)=>{try{await ensureAudio();cfg.sound=true;save();tone(kind);log(kind,"Тест звука: "+label)}catch{}};    $("testVolume").onclick=()=>testSound("volume","Volume");    $("testRsi").onclick=()=>testSound("rsi","RSI");    $("testSma").onclick=()=>testSound("sma","SMA21");    $("testVP").onclick=()=>testSound("vp","Volume Profile");    $("testCombo").onclick=()=>testSound("combo","Combo");    $("testAll").onclick=async()=>{try{await ensureAudio();cfg.sound=true;save();tone("volume");setTimeout(()=>tone("rsi"),1100);setTimeout(()=>tone("sma"),2200);setTimeout(()=>tone("vp"),3300);log("vp","Тест звуков: Volume → RSI → SMA21 → Volume Profile")}catch{}};
   }
@@ -763,12 +839,18 @@
       read:readStoredMarkers,
       isComboSituation:isComboSituationMarker,
       observeCombo,
-      evaluatePair:(bars,pair,tf)=>evaluatePair({a:bars,pair,tf,polled:true,updateUi:false}),
+      evaluatePair:(bars,pair,tf,vpBars)=>evaluatePair({a:bars,vp:vpBars,pair,tf,polled:true,updateUi:false}),
       setConfig:value=>{cfg=Object.assign({},cfg,value||{});},
       setComboCandles:bars=>{currentComboCandles=Array.isArray(bars)?bars:[];},
       resetCombo:()=>{comboSignals=[];comboLastAt={};comboFilterLastAt={};lastAlertAt={};pairState={};},
       getAlertLog:()=>alertLogEntries.slice(),
-      getComboSignals:()=>comboSignals.slice()
+      getComboSignals:()=>comboSignals.slice(),
+      getVpState:(pair,tradeTf,sourceTf)=>{
+        const key=[pair,normalizeAlertTf(tradeTf),normalizeAlertTf(sourceTf),Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60))),Number(cfg.vpRows)||30].join("|");
+        const value=vpLevelStates[key];
+        return value?Object.assign({},value,{levels:Object.assign({},value.levels)}):null;
+      },
+      getConfig:()=>Object.assign({},cfg)
     };
     return;
   }
@@ -776,12 +858,37 @@
   setInterval(()=>{try{const s=app();if(s)evaluate(s)}catch(e){console.warn("Alerts",e)}},500);
   async function pollSelected(){
     if(pollBusy)return;
-    const sel=(cfg.selectedPairs||[]).slice(0,20),tf=cfg.alertTf||"15m";
+    const sel=(cfg.selectedPairs||[]).slice(0,20),tf=normalizeAlertTf(cfg.alertTf),sourceTf=normalizeVpTf(cfg.vpTf,tf);
     if(!sel.length)return;
+    const needsVp=!!cfg.vp||(cfg.comboEnabled&&cfg.comboComposition==="vpRsi")||(cfg.comboEnabled&&Number(cfg.comboCount)===4);
     pollBusy=true;
     try{
-      const results=await Promise.allSettled(sel.map(async pair=>({pair,a:await fetchCandles(pair,tf)})));
-      for(const r of results)if(r.status==="fulfilled"&&r.value.a?.length)evaluatePair({a:r.value.a,live:r.value.a[r.value.a.length-1],pair:r.value.pair,tf,polled:true,updateUi:r.value.pair===app()?.currentPair});
+      const results=await Promise.allSettled(sel.map(async pair=>{
+        const vpLimit=Math.min(300,Math.max(80,Math.round(Number(cfg.vpPeriod)||60)+2));
+        const [tradeResult,vpResult]=await Promise.allSettled([
+          fetchCandles(pair,tf,100),
+          needsVp?(sourceTf===tf?Promise.resolve(null):fetchCandles(pair,sourceTf,vpLimit)):Promise.resolve(null)
+        ]);
+        if(tradeResult.status!=="fulfilled")throw tradeResult.reason||Error("Trade timeframe candles unavailable");
+        let vpBars=sourceTf===tf?tradeResult.value:[];
+        if(sourceTf!==tf&&vpResult.status==="fulfilled"&&Array.isArray(vpResult.value))vpBars=vpResult.value;
+        else if(sourceTf!==tf&&needsVp&&vpResult.status==="rejected"){
+          const key=pair+"|"+sourceTf,nowTs=now();
+          if(nowTs-(vpFetchLogAt[key]||0)>5*60*1000){
+            vpFetchLogAt[key]=nowTs;
+            log("other","VP "+sourceTf+" недоступен для "+pair+"; основные сигналы "+tf+" продолжают работать.");
+          }
+        }
+        if(vpBars.length)vpCandleCache[pair+"|"+sourceTf]={bars:vpBars,fetchedAt:now()};
+        return {pair,a:tradeResult.value,vp:vpBars};
+      }));
+      for(const r of results){
+        if(r.status!=="fulfilled"||!r.value.a?.length)continue;
+        evaluatePair({
+          a:r.value.a,vp:r.value.vp,live:r.value.a[r.value.a.length-1],
+          pair:r.value.pair,tf,polled:true,updateUi:r.value.pair===app()?.currentPair
+        });
+      }
     }finally{pollBusy=false}
   }
   setInterval(()=>{pollSelected().catch(e=>console.warn("Alerts poll",e))},15000);
