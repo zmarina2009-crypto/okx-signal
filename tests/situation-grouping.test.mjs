@@ -30,7 +30,7 @@ function createHarness(initialMarkers = []) {
   vm.runInNewContext(source, context, { filename: "alerts.js" });
   const api = window.__OKXAlertsTest;
   assert.ok(api, "test API should be exposed in test mode");
-  api.clear();
+  if (!initialMarkers.length) api.clear();
   return api;
 }
 
