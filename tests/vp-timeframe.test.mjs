@@ -197,3 +197,72 @@ test("late 15m VP fetch completes a minute signal already processed by the chart
   assert.equal(api.read().length, 1);
   assert.equal(api.read()[0].eventCount, 1);
 });
+
+test("Alerts panel exposes an independent VP timeframe selector with a 15m default", () => {
+  assert.match(source, /vpTf:"15m"/);
+  assert.match(source, /id="alertVPTf"/);
+  assert.match(source, /<option value="15m">15m<\\/option>/);
+  assert.match(source, /bind\\("alertVPTf","vpTf"/);
+  assert.match(source, /Для торговли 1m рекомендуем VP 15m/);
+});
+
+test("alert polling fetches 1m trade and 15m VP candles independently", async () => {
+  const api = createHarness({
+    alertTf: "1m", vpTf: "15m", selectedPairs: [PAIR],
+    volume: true, volumePeriod: 20, volumeMult: 2, vp: true
+  });
+  const start = 1_800_000_000_000;
+  const tradeBars = Array.from({ length: 22 }, (_, i) => ({
+    ts: start + i * 60_000,
+    o: 100, h: 100.1, l: 99.9, c: 100,
+    v: i === 21 ? 1000 : 10, confirm: "1"
+  }));
+  const vpBars = makeProfileBars({ close: 100, count: 20 });
+  const calls = [];
+  api.setMarketApi({
+    getState: () => ({ currentPair: PAIR }),
+    fetchCandles: async (pair, tf, limit) => {
+      calls.push({ pair, tf, limit });
+      return tf === "1m" ? tradeBars : vpBars;
+    }
+  });
+
+  await api.pollSelected();
+
+  assert.deepEqual(calls.map(call => call.tf), ["1m", "15m"]);
+  assert.equal(calls[0].pair, PAIR);
+  assert.equal(calls[1].pair, PAIR);
+  assert.equal(calls[1].limit, 80);
+  assert.ok(api.getVpState(PAIR, "1m", "15m"), "15m profile should be initialized from its own candle stream");
+  assert.equal(api.read().length, 1, "base 1m volume signal should still be evaluated");
+  assert.equal(api.read()[0].direction, "LONG");
+});
+
+test("a failed 15m VP request does not stop base 1m alerts", async () => {
+  const api = createHarness({
+    alertTf: "1m", vpTf: "15m", selectedPairs: [PAIR],
+    volume: true, volumePeriod: 20, volumeMult: 2, vp: true
+  });
+  const start = 1_800_000_000_000;
+  const tradeBars = Array.from({ length: 22 }, (_, i) => ({
+    ts: start + i * 60_000,
+    o: 100, h: 100.1, l: 99.9, c: 100,
+    v: i === 21 ? 1000 : 10, confirm: "1"
+  }));
+  const calls = [];
+  api.setMarketApi({
+    getState: () => ({ currentPair: PAIR }),
+    fetchCandles: async (pair, tf, limit) => {
+      calls.push({ pair, tf, limit });
+      if (tf === "15m") throw new Error("simulated VP timeout");
+      return tradeBars;
+    }
+  });
+
+  await api.pollSelected();
+
+  assert.deepEqual(calls.map(call => call.tf), ["1m", "15m"]);
+  assert.equal(api.read().length, 1);
+  assert.equal(api.read()[0].direction, "LONG");
+  assert.ok(api.getAlertLog().some(entry => entry.text.includes("VP 15m недоступен")));
+});
