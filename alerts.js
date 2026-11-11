@@ -880,7 +880,8 @@
       },
       getConfig:()=>Object.assign({},cfg),
       getResolvedVpTf:tradeTf=>normalizeVpTf(cfg.vpTf,tradeTf),
-      pollSelected:()=>pollSelected()
+      pollSelected:()=>pollSelected(),
+      setMarketApi:api=>{window.OKXSignalApp=api;}
     };
     return;
   }
