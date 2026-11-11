@@ -133,18 +133,35 @@
     }
     const key=[pair,normalizeAlertTf(tradeTf),normalizeAlertTf(sourceTf),period,Number(cfg.vpRows)||30].join("|");
     let state=vpLevelStates[key];
+    // A new higher-timeframe profile gets a fresh baseline. Do not manufacture
+    // a crossing from the fact that POC/VAH/VAL themselves have moved.
     if(!state||Number(state.profileTs)!==profileTs){
-      state={profileTs,levels,lastTradePrice:close,lastTradeTs:tradeTs};
+      state={
+        profileTs,levels,lastTradePrice:close,lastTradeTs:tradeTs,
+        previousTradePrice:null,previousTradeTs:null,baselineTradeTs:tradeTs
+      };
       vpLevelStates[key]=state;
       return {levels,sourceTf:normalizeAlertTf(sourceTf),profileTs,previousPrice:null,updated:true,stable:true};
     }
-    const previousPrice=Number(state.lastTradePrice),previousTs=Number(state.lastTradeTs);
     const tradeMs=({"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000})[normalizeAlertTf(tradeTf)]||60000;
-    const continuous=tradeTs>previousTs&&tradeTs-previousTs<=tradeMs*1.5;
-    state.lastTradePrice=close;
-    state.lastTradeTs=tradeTs;
-    return {levels:state.levels,sourceTf:normalizeAlertTf(sourceTf),profileTs,
-      previousPrice:continuous?previousPrice:null,updated:false,stable:true};
+    if(tradeTs>Number(state.lastTradeTs)){
+      const previousPrice=Number(state.lastTradePrice),previousTs=Number(state.lastTradeTs);
+      const continuous=tradeTs-previousTs<=tradeMs*1.5;
+      state.previousTradePrice=continuous?previousPrice:null;
+      state.previousTradeTs=continuous?previousTs:null;
+      state.lastTradePrice=close;
+      state.lastTradeTs=tradeTs;
+    }
+    // Repeated evaluation of the same trade candle (e.g. chart first, VP poll second)
+    // must return the same previous price and must not advance the baseline twice.
+    const sameTradeCandle=tradeTs===Number(state.lastTradeTs);
+    const staleTradeCandle=tradeTs<Number(state.lastTradeTs);
+    return {
+      levels:state.levels,sourceTf:normalizeAlertTf(sourceTf),profileTs,
+      previousPrice:!staleTradeCandle&&sameTradeCandle?state.previousTradePrice:null,
+      updated:Number(state.baselineTradeTs)===tradeTs,
+      stable:true
+    };
   }
   function app(){return window.OKXSignalApp&&window.OKXSignalApp.getState?window.OKXSignalApp.getState():null}
   function markets(){return window.OKXSignalApp&&window.OKXSignalApp.getMarkets?window.OKXSignalApp.getMarkets():[]}
@@ -646,10 +663,9 @@
     const needsVp=!!cfg.vp||(cfg.comboEnabled&&cfg.comboComposition==="vpRsi")||(cfg.comboEnabled&&Number(cfg.comboCount)===4);
     const cachedVp=vpCandleCache[pair+"|"+sourceTf];
     const vpBars=Array.isArray(o.vp)&&o.vp.length?o.vp:(sourceTf===normalizeAlertTf(tf)?hist:(cachedVp&&cachedVp.bars)||[]);
-    let vpProfile=null;
+    const vpProfile=needsVp?stableVpProfile(pair,tf,sourceTf,vpBars,closed):null;
     if(closed&&closed.ts!==st.lastClosedTs){
       st.lastClosedTs=closed.ts;
-      vpProfile=needsVp?stableVpProfile(pair,tf,sourceTf,vpBars,closed):null;
       if(cfg.volume&&hist.length>=Math.max(3,+cfg.volumePeriod||20)+1){
         const n=Math.max(2,+cfg.volumePeriod||20),base=hist.slice(0,-1).slice(-n),avg=base.reduce((z,x)=>z+(Number(x.v)||0),0)/base.length,v=Number(closed.v)||0,m=avg>0?v/avg:0;
         if(m>=Math.max(1,+cfg.volumeMult||2)){const isLong=Number(closed.c)>=Number(closed.o),dir=isLong?"🟢 BUY":"🔴 SELL",side=isLong?"LONG":"SHORT";fire("volume","⚡ VOLUME SPIKE "+dir+" • ×"+m.toFixed(1)+" • "+pair+" • "+tf,"volume:"+pair+":"+tf,{pair,tf,ts:closed.ts,price:Number(closed.c),direction:side,label:"VOLUME"});}
@@ -661,7 +677,6 @@
           if(prev<=cfg.rsiHigh&&rv>cfg.rsiHigh)fire("rsi","📈 RSI OVERBOUGHT SHORT • выше "+cfg.rsiHigh+" → "+rv.toFixed(1)+" • "+pair+" • "+tf,"rsi-high:"+pair+":"+tf,{pair,tf,ts:closed.ts,price:Number(closed.c),direction:"SHORT",label:"RSI"});
         }
       }
-      evaluateVpRsiCombo(hist,pair,tf,closed,vpProfile);
       if(cfg.comboEnabled&&Number(cfg.comboCount)===4&&cfg.sma){
         const comboSmaPeriod=Math.max(2,+cfg.smaPeriod||21),comboSma=sma(hist,comboSmaPeriod),comboSmaPrice=Number(closed.c)||0;
         if(comboSma>0&&comboSmaPrice>0){
@@ -675,7 +690,15 @@
         }
       }
     }
-    if(cfg.vp&&vpProfile&&vpProfile.levels&&!vpProfile.updated&&Number.isFinite(Number(vpProfile.previousPrice))){
+    // If the chart handled the minute candle before the separate VP poll completed,
+    // this same closed candle can be revisited here: base alerts stay de-duplicated,
+    // while VP/COMBO may be completed once the higher-timeframe bars are available.
+    if(vpProfile&&cfg.comboEnabled&&cfg.comboComposition==="vpRsi"){
+      evaluateVpRsiCombo(hist,pair,tf,closed,vpProfile);
+    }
+    if(cfg.vp&&vpProfile&&vpProfile.levels&&st.lastVpEvaluatedTs!==Number(closed.ts)){
+      st.lastVpEvaluatedTs=Number(closed.ts);
+      if(!vpProfile.updated&&Number.isFinite(Number(vpProfile.previousPrice))){
       const levels=vpProfile.levels,prevClose=Number(vpProfile.previousPrice),close=Number(closed.c);
       if(Number.isFinite(prevClose)&&Number.isFinite(close)){
         const crossings=[];
@@ -697,6 +720,7 @@
             profileLevel:c.level,profilePrice:c.price
           });
         });
+      }
       }
     }
     if(cfg.sma){
