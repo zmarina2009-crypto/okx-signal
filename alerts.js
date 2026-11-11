@@ -301,6 +301,9 @@
       target.comboConfirmed=true;
       target.comboConfirmedTs=Math.max(Number(target.comboConfirmedTs)||0,Number(incoming.comboConfirmedTs)||0)||now();
       target.comboComponents=[...new Set([...(target.comboComponents||[]),...(incoming.comboComponents||[])])];
+      const componentDetails=[...(target.comboComponentDetails||[]),...(incoming.comboComponentDetails||[])];
+      const detailMap=new Map(componentDetails.map(item=>[[item.kind,item.sourceTf,item.ts].join("|"),item]));
+      target.comboComponentDetails=[...detailMap.values()].slice(-20);
       target.comboDirection=target.comboDirection||incoming.comboDirection||target.direction;
     }
     return target;
@@ -842,7 +845,7 @@
       evaluatePair:(bars,pair,tf,vpBars)=>evaluatePair({a:bars,vp:vpBars,pair,tf,polled:true,updateUi:false}),
       setConfig:value=>{cfg=Object.assign({},cfg,value||{});},
       setComboCandles:bars=>{currentComboCandles=Array.isArray(bars)?bars:[];},
-      resetCombo:()=>{comboSignals=[];comboLastAt={};comboFilterLastAt={};lastAlertAt={};pairState={};},
+      resetCombo:()=>{comboSignals=[];comboLastAt={};comboFilterLastAt={};lastAlertAt={};pairState={};vpLevelStates={};vpCandleCache={};},
       getAlertLog:()=>alertLogEntries.slice(),
       getComboSignals:()=>comboSignals.slice(),
       getVpState:(pair,tradeTf,sourceTf)=>{
