@@ -187,6 +187,7 @@
   }
   function isComboSituationMarker(marker){
     if(!marker||typeof marker!=="object")return false;
+    if(marker.comboConfirmed===true)return true;
     if(String(marker.kind||"").toLowerCase()==="combo")return true;
     const counts=markerSources(marker);
     if(Number(counts.combo)>0)return true;
@@ -282,6 +283,45 @@
     try{if(JSON.stringify(consolidated)!==JSON.stringify(marks))localStorage.setItem(MARKER_KEY,JSON.stringify(consolidated))}catch{}
   }
   pruneStoredMarkers();
+  function readStoredMarkers(){
+    try{const value=JSON.parse(localStorage.getItem(MARKER_KEY)||"[]");return Array.isArray(value)?value:[]}catch{return[]}
+  }
+  function writeStoredMarkers(marks){
+    try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-500)))}catch{}
+  }
+  function removeSituationEvent(meta){
+    const id=[meta.pair,normalizeMarkerTf(meta.tf),meta.kind,Number(meta.ts)||now(),meta.direction].join("|");
+    const marks=readStoredMarkers();
+    const target=marks.find(marker=>marker&&(marker.id===id||(Array.isArray(marker.situationEventIds)&&marker.situationEventIds.includes(id))));
+    if(!target||!Array.isArray(target.situationEventIds)||!target.situationEventIds.includes(id))return false;
+    target.situationEventIds=target.situationEventIds.filter(value=>value!==id);
+    if(Array.isArray(target.situationEvents))target.situationEvents=target.situationEvents.filter(event=>event&&event.id!==id);
+    const source=markerSource(meta);
+    if(source&&target.situationSources)target.situationSources[source]=Math.max(0,(Number(target.situationSources[source])||0)-1);
+    target.eventCount=Math.max(0,(Number(target.eventCount)||target.situationEventIds.length+1)-1);
+    target.touches=target.eventCount;
+    target.mergedCount=Math.max(0,target.eventCount-1);
+    target.label=situationLabel(markerSources(target));
+    if(target.eventCount===0){
+      const index=marks.indexOf(target);
+      if(index>=0)marks.splice(index,1);
+    }
+    writeStoredMarkers(marks);
+    window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:target}));
+    return true;
+  }
+  function markComboSituation(componentIds,components,comboTs){
+    const marks=readStoredMarkers();
+    const target=marks.find(marker=>marker&&Array.isArray(marker.situationEventIds)&&componentIds.every(id=>marker.situationEventIds.includes(id)));
+    if(!target)return null;
+    target.comboConfirmed=true;
+    target.comboConfirmedTs=Number(comboTs)||now();
+    target.comboComponents=[...new Set(components)];
+    target.comboDirection=target.direction;
+    writeStoredMarkers(marks);
+    window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:target}));
+    return target;
+  }
   function recordAlertMarker(meta){
     if(!meta||!meta.pair||!meta.tf||!["LONG","SHORT"].includes(meta.direction))return null;
     const price=Number(meta.price),ts=Number(meta.ts)||now();
@@ -321,11 +361,6 @@
     return {marker,merged:false,duplicate:false};
   }
   window.OKXSignalMarkers=Object.assign({},window.OKXSignalMarkers||{},{add:recordAlertMarker,isComboSituation:isComboSituationMarker});
-  // Deterministic test seam: enabled only by the Node test harness, never in the app.
-  if(window.__OKX_ALERTS_TEST__){
-    window.__OKXAlertsTest={add:recordAlertMarker,clear:()=>localStorage.removeItem(MARKER_KEY),read:()=>JSON.parse(localStorage.getItem(MARKER_KEY)||"[]"),isComboSituation:isComboSituationMarker};
-    return;
-  }
   const COMBO_SOURCES=["volume","rsi","sma","vp"];
   const COMBO_TF_MS={"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000};
   function observeCombo(kind,marker){
@@ -334,7 +369,13 @@
     if(!pair||!["LONG","SHORT"].includes(direction)||!Number.isFinite(ts))return;
     const bars=Math.max(1,Math.min(5,Number(cfg.comboWindow)||1)),windowMs=(COMBO_TF_MS[tf]||900000)*bars;
     const id=[pair,tf,kind,ts,direction].join("|");
-    if(!comboSignals.some(s=>s.id===id))comboSignals.push({id,pair,tf,kind,ts,direction,price:Number(marker.price)||0,entryPrice:Number(marker.entryPrice)||Number(marker.price)||0,label:marker.label||kind});
+    if(!comboSignals.some(s=>s.id===id))comboSignals.push({
+      id,pair,tf,kind,ts,direction,
+      price:Number(marker.price)||0,
+      entryPrice:Number(marker.entryPrice)||Number(marker.price)||0,
+      zoneRadius:Number(marker.zoneRadius)||0,
+      label:marker.label||kind
+    });
     comboSignals=comboSignals.slice(-300);
     const matching=comboSignals.filter(s=>s.pair===pair&&s.tf===tf&&(Number(cfg.comboCount)===4?s.ts===ts:Math.abs(ts-s.ts)<=windowMs));
     const byKind=new Map();
@@ -383,7 +424,33 @@
     comboLastAt[alertKey]=comboTs;
     const kinds=chosen.map(s=>s.kind.toUpperCase());
     const message="✨ COMBO "+chosen.length+"/4 "+comboDirection+" • "+kinds.join(" + ")+" • "+pair+" • "+tf;
-    recordAlertMarker({pair,tf,ts:comboTs,price:Number(directionSignal.price)||Number(marker.price)||chosen.at(-1)?.price||0,entryPrice:Number(directionSignal.entryPrice)||Number(marker.entryPrice)||Number(directionSignal.price)||Number(marker.price)||0,direction:comboDirection,label:"COMBO "+kinds.join("+"),kind:"combo"});
+    const componentIds=[];
+    const atrRadius=Math.max((atr(currentComboCandles,14)||0)*.75,Math.abs(Number(directionSignal.entryPrice||directionSignal.price)||0)*.00025,1e-8);
+    // Volume confirms activity, not direction. Assign it to the agreed directional setup.
+    // If its standalone marker was recorded with the candle-body direction, move only
+    // that Volume event into the confirmed COMBO direction before aggregating.
+    chosen.forEach(signal=>{
+      const originalDirection=signal.direction;
+      if(signal.kind==="volume"&&originalDirection!==comboDirection){
+        removeSituationEvent({pair:signal.pair,tf:signal.tf,kind:signal.kind,ts:signal.ts,direction:originalDirection});
+      }
+      const componentMeta={
+        pair:signal.pair,tf:signal.tf,ts:signal.ts,
+        price:Number(signal.price)||Number(signal.entryPrice)||0,
+        entryPrice:Number(signal.entryPrice)||Number(signal.price)||0,
+        direction:comboDirection,kind:signal.kind,label:signal.label,
+        zoneRadius:Number(signal.zoneRadius)||atrRadius
+      };
+      const result=recordAlertMarker(componentMeta);
+      if(result&&result.marker)componentIds.push([pair,tf,signal.kind,signal.ts,comboDirection].join("|"));
+    });
+    const situation=markComboSituation(componentIds,chosen.map(signal=>signal.kind),comboTs);
+    if(!situation){
+      const note="COMBO 4/4 совпал, но события не удалось объединить в одну ценовую ситуацию • "+pair+" • "+tf;
+      log("other",note);
+      const badge=$("alertsLast");if(badge){badge.textContent=note;badge.className="alerts-last";}
+      return;
+    }
     log("combo",message);tone("combo");
     const badge=$("alertsLast");if(badge){badge.textContent=message;badge.className="alerts-last combo"}
   }
@@ -664,6 +731,21 @@
     if(document.getElementById("alertsCss"))return;
     const st=document.createElement("style");st.id="alertsCss";st.textContent='#chartAlertsLayout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:12px;align-items:start}.alerts-tf{width:100%;margin-top:6px;padding:8px}.alerts-note{color:var(--m);font-size:10px;line-height:1.35;margin:-2px 0 9px}.alerts-section{padding:8px 0;border-top:1px solid #1a2530}.alerts-check{display:flex;gap:7px;align-items:center;font-weight:700;font-size:12px}.alerts-check input{width:auto}.alerts-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}.alerts-grid label{color:var(--m);font-size:10px}.alerts-grid input{width:100%;margin-top:3px;padding:7px}.alerts-grid select{width:100%;margin-top:3px;padding:7px}.alerts-grid input[type=range]{padding:0}.alerts-pair-actions{display:flex;gap:6px;margin:7px 0}.alerts-pair-actions button{flex:1;padding:6px;font-size:10px}.alerts-pairs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:150px;overflow:auto;padding:2px 0}.alert-pair{display:flex;gap:4px;align-items:center;background:#101823;border:1px solid #17212d;border-radius:6px;padding:5px;font-size:9px}.alert-pair input{width:auto}.alerts-actions{display:flex;gap:7px;margin-top:8px}.alerts-actions button{flex:1;padding:8px;font-size:11px}.alerts-sound-tests{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:7px}.alerts-sound-tests button{padding:7px 4px;font-size:10px}.alerts-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.alerts-stats>div{background:var(--p2);border:1px solid #17212d;border-radius:8px;padding:7px}.alerts-stats small{display:block;color:var(--m);font-size:9px}.alerts-stats b{display:block;margin-top:2px;font-size:11px}.alerts-last{margin-top:8px;padding:8px;border-radius:8px;background:#111923;color:var(--m);font-size:10px}.alerts-last.volume{color:var(--y);border:1px solid #4b3e15}.alerts-last.rsi{color:#55a8ff;border:1px solid #25496c}.alerts-last.sma{color:var(--g);border:1px solid #205f45}.alerts-last.combo{color:#c5a3ff;border:1px solid #4b3b68}.alerts-log{margin-top:6px;max-height:280px;overflow:auto}.alerts-log-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;color:var(--m);font-size:10px}.alerts-log-head button{padding:5px 8px;font-size:10px;color:var(--m)}.alertlogrow{display:grid;grid-template-columns:8px 100px minmax(0,1fr);gap:6px;align-items:start;padding:5px 0;border-bottom:1px solid #17212d;font-size:9px}.alertlogrow b{font-size:9px;overflow-wrap:anywhere;white-space:normal}.alertdot{width:7px;height:7px;border-radius:50%;background:#8290a0}.alertdot.volume{background:#ffd166}.alertdot.rsi{background:#55a8ff}.alertdot.sma{background:#27e58a}.alertdot.vp{background:#ff9f43}.alertdot.combo{background:#c5a3ff}@media(max-width:900px){#chartAlertsLayout{grid-template-columns:1fr}.alerts-grid{grid-template-columns:1fr 1fr}}';
     document.head.appendChild(st);
+  }
+  if(window.__OKX_ALERTS_TEST__){
+    window.__OKXAlertsTest={
+      add:recordAlertMarker,
+      clear:()=>localStorage.removeItem(MARKER_KEY),
+      read:readStoredMarkers,
+      isComboSituation:isComboSituationMarker,
+      observeCombo,
+      evaluatePair:(bars,pair,tf)=>evaluatePair({a:bars,pair,tf,polled:true,updateUi:false}),
+      setConfig:value=>{cfg=Object.assign({},cfg,value||{});},
+      setComboCandles:bars=>{currentComboCandles=Array.isArray(bars)?bars:[];},
+      resetCombo:()=>{comboSignals=[];comboLastAt={};comboFilterLastAt={};lastAlertAt={};pairState={};},
+      getAlertLog:()=>alertLogEntries.slice()
+    };
+    return;
   }
   injectCss();build();
   setInterval(()=>{try{const s=app();if(s)evaluate(s)}catch(e){console.warn("Alerts",e)}},500);
