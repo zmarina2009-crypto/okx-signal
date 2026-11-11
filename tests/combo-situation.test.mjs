@@ -221,6 +221,21 @@ test("normal alert mode moves a non-directional Volume event into the confirmed 
   assert.equal(markers[0].comboConfirmed, true);
 });
 
+test("COMBO 4/4 fails closed when one component has no usable price", () => {
+  const api = createHarness();
+  const items = [
+    component("volume"),
+    component("rsi"),
+    component("sma"),
+    component("vp", { price: 0, entryPrice: 0 })
+  ];
+  for (const item of items) api.observeCombo(item.kind, item);
+  assert.equal(api.read().length, 0,
+    "a partial aggregate must not be stored as a confirmed COMBO");
+  assert.equal(api.getAlertLog().some(entry => entry.kind === "combo"), false);
+  assert.equal(api.getAlertLog().some(entry => /нет корректной цены/.test(entry.text)), true);
+});
+
 test("COMBO 4/4 rejects disagreeing RSI, SMA and VP directions", () => {
   const api = createHarness();
   const items = [
