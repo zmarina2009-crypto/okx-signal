@@ -430,6 +430,16 @@
     comboLastAt[alertKey]=comboTs;
     const kinds=chosen.map(s=>s.kind.toUpperCase());
     const message="✨ COMBO "+chosen.length+"/4 "+comboDirection+" • "+kinds.join(" + ")+" • "+pair+" • "+tf;
+    const invalidComponent=chosen.find(signal=>
+      !(Number(signal.price)>0||Number(signal.entryPrice)>0)||
+      !Number.isFinite(Number(signal.ts))
+    );
+    if(invalidComponent){
+      const note="COMBO 4/4 отменён: у подтверждения "+String(invalidComponent.kind).toUpperCase()+" нет корректной цены или времени • "+pair+" • "+tf;
+      log("other",note);
+      const badge=$("alertsLast");if(badge){badge.textContent=note;badge.className="alerts-last";}
+      return;
+    }
     const componentIds=[];
     const atrRadius=Math.max((atr(currentComboCandles,14)||0)*.75,Math.abs(Number(directionSignal.entryPrice||directionSignal.price)||0)*.00025,1e-8);
     // Volume confirms activity, not direction. Assign it to the agreed directional setup.
@@ -450,7 +460,9 @@
       const result=recordAlertMarker(componentMeta);
       if(result&&result.marker)componentIds.push([pair,tf,signal.kind,signal.ts,comboDirection].join("|"));
     });
-    const situation=markComboSituation(componentIds,chosen.map(signal=>signal.kind),comboTs);
+    const situation=componentIds.length===chosen.length
+      ?markComboSituation(componentIds,chosen.map(signal=>signal.kind),comboTs)
+      :null;
     if(!situation){
       const note="COMBO 4/4 совпал, но события не удалось объединить в одну ценовую ситуацию • "+pair+" • "+tf;
       log("other",note);
