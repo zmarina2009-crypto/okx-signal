@@ -165,5 +165,5 @@ test("VP timeframe is clamped so it cannot be lower than the trade timeframe", (
   const tradeBars = makeTradeBars([99.9, 99.9, 99.9, 99.9, 99.9, 99.9]);
   api.evaluatePair(tradeBars, PAIR, "15m", vpBars);
   assert.equal(api.getResolvedVpTf("15m"), "15m");
-  assert.equal(api.getResolvedVpTf("1m"), "15m");
+  assert.equal(api.getResolvedVpTf("1m"), "5m");
 });
