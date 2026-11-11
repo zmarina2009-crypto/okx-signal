@@ -94,10 +94,10 @@ test("journal persists every event, including individual repeats", () => {
 });
 
 test("journal UI is a separate window with its own quick-access button", () => {
-  assert.match(source, /function buildJournalModal\\(\\)/);
+  assert.ok(source.includes("function buildJournalModal()"));
   assert.match(source, /id = "scalpingJournalModal"/);
   assert.match(source, /id = "scalpJournalButton"/);
-  assert.match(source, /journalButton\\.onclick = openJournalModal/);
+  assert.ok(source.includes("journalButton.onclick = openJournalModal"));
   const settingsStart = source.indexOf("function buildModal()");
   const journalStart = source.indexOf("function buildJournalModal()");
   const settingsEnd = source.indexOf("function addOpenButton()");
