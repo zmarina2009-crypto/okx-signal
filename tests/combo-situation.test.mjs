@@ -138,7 +138,13 @@ test("real SUI 1m candle evaluation detects Volume, RSI, SMA21 and VP POC on one
     };
   });
 
-  api.evaluatePair(bars, "SUI-USDT-SWAP", "1m");
+  const vpStart=start-60*15*60_000;
+  const vpBars=Array.from({length:60},(_,i)=>({
+    ts:vpStart+i*15*60_000,o:100,h:100.5,l:99.5,c:100,v:100,confirm:"1"
+  }));
+  // Replay closed 1m candles one by one so the 15m profile is initialized
+  // before the final minute crosses its fixed POC.
+  for(let i=5;i<bars.length;i++)api.evaluatePair(bars.slice(0,i+1),"SUI-USDT-SWAP","1m",vpBars);
 
   const markers = api.read();
   assert.equal(markers.length, 1);
