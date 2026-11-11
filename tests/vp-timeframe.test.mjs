@@ -199,13 +199,12 @@ test("late 15m VP fetch completes a minute signal already processed by the chart
 });
 
 test("Alerts panel exposes an independent VP timeframe selector with a 15m default", () => {
-  assert.match(source, /vpTf:"15m"/);
-  assert.match(source, /id="alertVPTf"/);
-  assert.match(source, /<option value="15m">15m<\\/option>/);
-  assert.match(source, /bind\\("alertVPTf","vpTf"/);
-  assert.match(source, /Для торговли 1m рекомендуем VP 15m/);
+  assert.ok(source.includes('vpTf:"15m"'));
+  assert.ok(source.includes('id="alertVPTf"'));
+  assert.ok(source.includes('<option value="15m">15m</option>'));
+  assert.ok(source.includes('bind("alertVPTf","vpTf"'));
+  assert.ok(source.includes("Для торговли 1m рекомендуем VP 15m"));
 });
-
 test("alert polling fetches 1m trade and 15m VP candles independently", async () => {
   const api = createHarness({
     alertTf: "1m", vpTf: "15m", selectedPairs: [PAIR],
