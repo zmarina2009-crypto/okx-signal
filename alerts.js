@@ -255,6 +255,12 @@
     if(!incoming.situationEvents&&incoming.id)events.push({id:incoming.id,kind:incoming.kind,label:incoming.label,ts:incoming.ts,entryPrice:markerEntryPrice(incoming),direction:incoming.direction});
     target.situationEvents=events.slice(-20);
     target.mergedCount=Math.max(0,target.eventCount-1);
+    if(incoming.comboConfirmed===true){
+      target.comboConfirmed=true;
+      target.comboConfirmedTs=Math.max(Number(target.comboConfirmedTs)||0,Number(incoming.comboConfirmedTs)||0)||now();
+      target.comboComponents=[...new Set([...(target.comboComponents||[]),...(incoming.comboComponents||[])])];
+      target.comboDirection=target.comboDirection||incoming.comboDirection||target.direction;
+    }
     return target;
   }
   function consolidateStoredMarkers(marks){
@@ -333,7 +339,7 @@
     let marks=[];try{marks=JSON.parse(localStorage.getItem(MARKER_KEY)||"[]");if(!Array.isArray(marks))marks=[]}catch{}
     const cutoff=Date.now()-MARKER_RETENTION_MS;
     marks=marks.filter(m=>m&&Number(m.lastEventTs||m.ts)>=cutoff&&m.pair&&m.tf&&["LONG","SHORT"].includes(m.direction));
-    const duplicate=marks.find(m=>m.id===id||(Array.isArray(m.situationEventIds)&&m.situationEventIds.includes(id)));
+    const duplicate=marks.find(m=>Array.isArray(m.situationEventIds)?m.situationEventIds.includes(id):m.id===id);
     if(duplicate)return {marker:duplicate,merged:true,duplicate:true};
     const source=markerSource(meta);
     if(source){
