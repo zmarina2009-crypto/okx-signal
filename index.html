@@ -493,7 +493,8 @@ function draw(e){window.candles=candles;window.chartState=chartState;
         Number(sources&&sources.combo)>0||
         (Array.isArray(m&&m.situationEvents)&&m.situationEvents.some(event=>String(event&&event.kind||"").toLowerCase()==="combo"));
     };
-    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||isComboSituation(m))).slice(-24);    const indexByTs=new Map(series.map((c,i)=>[Number(c.ts),i]));
+    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||isComboSituation(m))).slice(-24);
+    const indexByTs=new Map(series.map((c,i)=>[Number(c.ts),i]));
     visibleMarks.forEach(m=>{
       let gi=indexByTs.get(Number(m.ts));
       // Alert timestamps are candle-open timestamps. If the feed differs by a few ms,
