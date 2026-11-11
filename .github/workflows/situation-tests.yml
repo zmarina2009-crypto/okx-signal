@@ -1,0 +1,26 @@
+name: Scalping situation tests
+
+on:
+  pull_request:
+    paths:
+      - "alerts.js"
+      - "scalping-trigger.js"
+      - "tests/**"
+      - ".github/workflows/situation-tests.yml"
+  push:
+    branches:
+      - main
+      - "feature/adaptive-signal-situations"
+
+jobs:
+  situation-grouping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run deterministic grouping tests
+        run: node --test tests/*.test.mjs

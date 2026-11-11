@@ -485,7 +485,7 @@ function draw(e){window.candles=candles;window.chartState=chartState;
     try{marks=JSON.parse(localStorage.getItem("okx_v2_alert_markers")||"[]");if(!Array.isArray(marks))marks=[]}catch{}
     const tf=$("tf")?.value||"15m";
     let comboOnly=false;try{comboOnly=localStorage.getItem("okx_combo_mode_active")==="1"}catch(e){}
-    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||["combo","scalping","bos"].includes(m.kind)||(Number(m.situationSources&&m.situationSources.bos)||0)>0)).slice(-24);
+    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||["combo","scalping","bos"].includes(m.kind)||["volume","rsi","sma","vpPoc","vpOther","bos"].some(source=>Number(m.situationSources&&m.situationSources[source])>0))).slice(-24);
     const indexByTs=new Map(series.map((c,i)=>[Number(c.ts),i]));
     visibleMarks.forEach(m=>{
       let gi=indexByTs.get(Number(m.ts));
@@ -942,7 +942,7 @@ if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=75",{
     draw(last);
   };
 })();
-</script><script src="./alerts.js?v=23"></script><script src="./telegram-test.js?v=1"></script><script src="./scalping-trigger.js?v=7"></script><script src="./backtester.js?v=24"></script><script src="./papertrader.js?v=7"></script><script src="./indicators.js?v=1"></script><script src="./collapsible.js?v=4"></script>
+</script><script src="./alerts.js?v=24"></script><script src="./telegram-test.js?v=1"></script><script src="./scalping-trigger.js?v=9"></script><script src="./backtester.js?v=24"></script><script src="./papertrader.js?v=7"></script><script src="./indicators.js?v=1"></script><script src="./collapsible.js?v=4"></script>
 <script>
 (function(){
   const bar=document.getElementById("quickAccessBar");

@@ -48,6 +48,7 @@
   let polling = false;
   let lastCheckAt = 0;
   let modal = null;
+  let journalModal = null;
   let statusNode = null;
   let historyNode = null;
   let history = safeParse(STATE_KEY + "_history", []);
@@ -72,7 +73,7 @@
     state.fired = (Array.isArray(state.fired) ? state.fired : []).slice(-500);
     try {
       localStorage.setItem(STATE_KEY, JSON.stringify(state));
-      localStorage.setItem(STATE_KEY + "_history", JSON.stringify(history.slice(-100)));
+      localStorage.setItem(STATE_KEY + "_history", JSON.stringify(history.slice(-500)));
     } catch (_) {}
   }
 
@@ -211,7 +212,8 @@
     if(!Array.isArray(marks))marks=[];
     const id=["scalping-trigger",meta.pair,normalizeTf(meta.tf),meta.kind,ts,meta.direction,meta.label].join("|");
     if(marks.some(item=>item&&item.id===id))return {duplicate:true,merged:true};
-    const tolerance=Math.max(Math.abs(Number(meta.zoneRadius)||0),Math.abs(entryPrice)*.0008,1e-8);
+    const atrRadius=Math.abs(Number(meta.zoneRadius)||0);
+    const tolerance=Math.max(atrRadius,Math.abs(entryPrice)*.00025,1e-8);
     const marker={id,pair:meta.pair,tf:normalizeTf(meta.tf),kind:meta.kind,direction:meta.direction,price,entryPrice,ts,touches:1,eventCount:1,label:meta.label,tolerance};
     marks.push(marker);
     try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-500)))}catch(_){}
@@ -232,7 +234,7 @@
       situationEventCount:Number(situationMarker&&situationMarker.eventCount)||1
     };
     history.push(item);
-    history = history.slice(-100);
+    history = history.slice(-500);
     try { localStorage.setItem(STATE_KEY + "_history", JSON.stringify(history)); } catch (_) {}
     renderHistory();
     const trigger = $("scalpTriggerButton");
@@ -304,7 +306,7 @@
   function mergeRsiRepeat(pair, tf, candle, direction) {
     const key = rsiClusterKey(pair, tf);
     const cluster = state.rsiClusters[key];
-    if (!cluster) return false;
+    if (!cluster || cluster.direction !== direction) return false;
 
     const price = Number(candle && candle.c);
     const distance = Number.isFinite(price) ? Math.abs(price - Number(cluster.anchorPrice)) : 0;
@@ -319,6 +321,11 @@
     cluster.lastSuppressedPrice = Number.isFinite(price) ? price : null;
     cluster.lastSuppressedDirection = direction;
     state.rsiClusterSuppressed = (Number(state.rsiClusterSuppressed) || 0) + 1;
+
+    // Keep every repeated RSI trigger as a journal event even though its chart marker is merged.
+    addHistory("rsi-repeat", pair, tf, direction,
+      "Повтор RSI в текущей торговой ситуации · маркер объединён · повтор №" + cluster.suppressedCount,
+      candle && candle.ts, price, null);
 
     const entry = history.find((item) =>
       item && item.kind === "scalping" &&
@@ -443,7 +450,7 @@
 
   function renderHistory() {
     const countNode = $("stHistoryCount");
-    if (countNode) countNode.textContent = "Журнал сигналов · " + history.length + " / 100";
+    if (countNode) countNode.textContent = "Журнал скальпинга · " + history.length + " / 500";
     if (!historyNode) return;
     historyNode.replaceChildren();
 
@@ -483,7 +490,8 @@
       const sourceCell = document.createElement("div");
       sourceCell.className = "st-history-cell st-history-source";
       sourceCell.textContent = entry.kind === "bos" ? "BOS" :
-        entry.kind === "scalping" ? "Volume + RSI" : String(entry.kind || "—");
+        entry.kind === "scalping" ? "Volume + RSI" :
+        entry.kind === "rsi-repeat" ? "RSI · повтор" : String(entry.kind || "—");
 
       const directionCell = document.createElement("div");
       directionCell.className = "st-history-cell st-history-direction " +
@@ -524,14 +532,19 @@
       : "—";
     const status = baseStatus +
       "\nПроверка: " + formatTime(lastCheckAt) +
-      " • Сигналов в журнале: " + history.length + " / 100" +
+      " • Сигналов в журнале: " + history.length + " / 500" +
       "\nОбъединено RSI-повторов: " + (Number(state.rsiClusterSuppressed) || 0) +
       "\nПоследний сигнал: " + lastSignal;
     if (statusNode) statusNode.textContent = status;
     const button = $("scalpTriggerButton");
     if (button) {
-      button.title = baseStatus + " • Сигналов в журнале: " + history.length + " / 100";
+      button.title = baseStatus + " • Сигналов в журнале: " + history.length + " / 500";
       button.classList.toggle("is-active", !!cfg.enabled);
+    }
+    const journalButton = $("scalpJournalButton");
+    if (journalButton) {
+      journalButton.title = "Журнал скальпинга • " + history.length + " / 500 событий";
+      journalButton.classList.toggle("has-signal", history.length > 0);
     }
     const scopeLabel = $("stScopeDescription");
     if (scopeLabel) scopeLabel.textContent = target.label + " · " + (target.pairs.length ? target.pairs.length + " пар · " + target.tf : "пары не выбраны");
@@ -593,21 +606,19 @@
             '<label>Антиспам, сек<input id="stCooldown" type="number" min="1" max="86400"></label>' +
           '</div></section>' +
           '<div id="stStatus" class="st-status">Подготовка…</div>' +
-          '<section class="st-history" aria-label="Журнал сигналов"><div class="st-history-head"><b id="stHistoryCount">Журнал сигналов · 0 / 100</b><button type="button" id="stClearHistory">Очистить</button></div>' +
-            '<div class="st-history-columns" aria-hidden="true"><span>Свеча / фиксация</span><span>Пара / ТФ</span><span>Источник</span><span>Сигнал</span><span>Цена</span></div>' +
-            '<div id="stHistoryList" class="st-history-list" role="log" aria-live="polite"></div></section>' +
           '<p class="st-footnote">Маркеры появятся на основном графике выбранной пары и таймфрейма. Двойной щелчок по маркеру удаляет его, как и другие маркеры алертов. Этот модуль не меняет Telegram-правила, основной COMBO, Live или тестер.</p>' +
         '</div></section>';
     document.body.appendChild(modal);
     statusNode = $("stStatus");
-    historyNode = $("stHistoryList");
     syncControls();
-    renderHistory();
 
     $("stClose").onclick = closeModal;
     modal.addEventListener("click", (event) => { if (event.target === modal) closeModal(); });
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && modal && !modal.hidden) closeModal();
+      if (event.key === "Escape") {
+        if (journalModal && !journalModal.hidden) closeJournalModal();
+        if (modal && !modal.hidden) closeModal();
+      }
     });
 
     const fieldMap = {
@@ -648,6 +659,64 @@
     };
   }
 
+  function buildJournalModal() {
+    if ($("scalpingJournalModal")) {
+      journalModal = $("scalpingJournalModal");
+      historyNode = $("stHistoryList");
+      renderHistory();
+      return;
+    }
+
+    journalModal = document.createElement("div");
+    journalModal.id = "scalpingJournalModal";
+    journalModal.className = "st-backdrop st-journal-backdrop";
+    journalModal.hidden = true;
+    journalModal.innerHTML =
+      '<section class="st-window st-journal-window" role="dialog" aria-modal="true" aria-labelledby="stJournalTitle">' +
+        '<header class="st-header"><div><h2 id="stJournalTitle">📒 Журнал скальпинга</h2>' +
+          '<p>Каждое событие записывается отдельно. Повторы RSI сохраняются, даже если маркер объединён с текущей торговой ситуацией.</p></div>' +
+          '<button type="button" id="stJournalClose" aria-label="Закрыть журнал">✕</button></header>' +
+        '<div class="st-body st-journal-body">' +
+          '<section class="st-history st-journal-history" aria-label="История сигналов скальпинга">' +
+            '<div class="st-history-head"><b id="stHistoryCount">Журнал скальпинга · 0 / 500</b><button type="button" id="stClearHistory">Очистить журнал</button></div>' +
+            '<div class="st-history-columns" aria-hidden="true"><span>Свеча / фиксация</span><span>Пара / ТФ</span><span>Источник</span><span>Сигнал</span><span>Цена</span></div>' +
+            '<div id="stHistoryList" class="st-history-list" role="log" aria-live="polite"></div>' +
+          '</section>' +
+          '<p class="st-footnote">Хранятся последние 500 событий. Время свечи и время фиксации показываются отдельно.</p>' +
+        '</div></section>';
+    document.body.appendChild(journalModal);
+    historyNode = $("stHistoryList");
+    renderHistory();
+
+    $("stJournalClose").onclick = closeJournalModal;
+    journalModal.addEventListener("click", (event) => {
+      if (event.target === journalModal) closeJournalModal();
+    });
+    $("stClearHistory").onclick = () => {
+      history = [];
+      try { localStorage.setItem(STATE_KEY + "_history", "[]"); } catch (_) {}
+      renderHistory();
+      updateStatus();
+    };
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && journalModal && !journalModal.hidden) closeJournalModal();
+    });
+  }
+
+  function openJournalModal() {
+    if (!journalModal) buildJournalModal();
+    if (!journalModal) return;
+    journalModal.hidden = false;
+    document.body.classList.add("st-modal-open");
+    renderHistory();
+  }
+
+  function closeJournalModal() {
+    if (!journalModal) return;
+    journalModal.hidden = true;
+    if (!modal || modal.hidden) document.body.classList.remove("st-modal-open");
+  }
+
   function addOpenButton() {
     const nav = $("quickAccessBar");
     if (!nav || $("scalpTriggerButton")) return;
@@ -660,6 +729,17 @@
     const alertsButton = nav.querySelector('[data-quick-target="alertsPanel"]');
     if (alertsButton) alertsButton.insertAdjacentElement("afterend", button);
     else nav.appendChild(button);
+
+    if (!$("scalpJournalButton")) {
+      const journalButton = document.createElement("button");
+      journalButton.type = "button";
+      journalButton.id = "scalpJournalButton";
+      journalButton.className = "scalp-journal-button";
+      journalButton.innerHTML = "▤ <span>Журнал</span>";
+      journalButton.title = "Открыть журнал сигналов скальпинга";
+      journalButton.onclick = openJournalModal;
+      button.insertAdjacentElement("afterend", journalButton);
+    }
   }
 
   function openModal() {
@@ -675,7 +755,7 @@
   function closeModal() {
     if (!modal) return;
     modal.hidden = true;
-    document.body.classList.remove("st-modal-open");
+    if (!journalModal || journalModal.hidden) document.body.classList.remove("st-modal-open");
   }
 
   function injectCss() {
@@ -685,12 +765,33 @@
     style.textContent =
       ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number]{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{display:block!important;min-height:72px;border:1px solid #263547;border-radius:10px;overflow:hidden;background:#0b1118}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-columns,.st-history-row{display:grid;grid-template-columns:minmax(120px,1.35fr) minmax(120px,1.2fr) minmax(105px,1fr) minmax(76px,.65fr) minmax(90px,.8fr);gap:8px;align-items:center}.st-history-columns{padding:7px 10px;background:#0c141e;color:#8998a9;font-size:10px}.st-history-list{display:block;max-height:260px;overflow:auto}.st-history-row{padding:8px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.35}.st-history-cell{min-width:0;overflow-wrap:anywhere}.st-history-row .st-time{display:grid;gap:2px}.st-history-row time{color:#d0dbe6;font-variant-numeric:tabular-nums}.st-history-row small{color:#718296;font-size:9px}.st-history-direction{font-weight:800}.st-history-row .st-history-direction.is-long{color:#48d99a}.st-history-row .st-history-direction.is-short{color:#ff7b84}.st-history-price{font-variant-numeric:tabular-nums;font-weight:700}.st-history-detail{grid-column:1/-1;color:#8998a9;font-size:9px;overflow-wrap:anywhere}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}.st-history-columns{display:none}.st-history-list{max-height:220px}.st-history-row{grid-template-columns:1fr 1fr;gap:6px 10px}.st-history-row .st-time{grid-column:1/-1}}";
     document.head.appendChild(style);
+
+    const journalStyle = document.createElement("style");
+    journalStyle.id = "scalpingJournalCss";
+    journalStyle.textContent =
+      ".st-journal-backdrop{z-index:10060}.st-journal-window{width:min(1080px,100%)}.st-journal-body{gap:10px}.st-journal-history{min-height:160px}.st-journal-history .st-history-list{max-height:min(58vh,560px)}.st-journal-history .st-history-head{gap:10px}.st-journal-history .st-history-head button{white-space:nowrap}#scalpJournalButton.has-signal{border-color:#6e5522;color:#ffd166}@media(max-width:520px){.quick-access{grid-template-columns:repeat(6,minmax(0,1fr))}.quick-access button{font-size:10px;padding:7px 1px}.st-journal-window{width:100%}.st-journal-history .st-history-list{max-height:calc(100vh - 230px)}}";
+    document.head.appendChild(journalStyle);
+  }
+
+  if (window.__OKX_SCALPING_TEST__) {
+    window.__OKXScalpingTest = {
+      addHistory,
+      mergeRsiRepeat,
+      getHistory: () => history.slice(),
+      getPersistedHistory: () => JSON.parse(localStorage.getItem(STATE_KEY + "_history") || "[]"),
+      setHistory: (items) => { history = Array.isArray(items) ? items.slice() : []; },
+      setState: (value) => { state = Object.assign({}, state, value || {}); },
+      getState: () => JSON.parse(JSON.stringify(state)),
+      setConfig: (value) => { cfg = Object.assign({}, cfg, value || {}); }
+    };
+    return;
   }
 
   function start() {
     injectCss();
     addOpenButton();
     buildModal();
+    buildJournalModal();
     updateStatus();
     poll();
     window.setInterval(poll, 15000);
