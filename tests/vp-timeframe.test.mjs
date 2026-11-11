@@ -167,3 +167,33 @@ test("VP timeframe is clamped so it cannot be lower than the trade timeframe", (
   assert.equal(api.getResolvedVpTf("15m"), "15m");
   assert.equal(api.getResolvedVpTf("1m"), "5m");
 });
+
+test("late 15m VP fetch completes a minute signal already processed by the chart without duplicating base alerts", () => {
+  const api = createHarness();
+  const vpBars = makeProfileBars({ close: 100 });
+  const first = makeTradeBars([99.9, 99.9, 99.9, 99.9, 99.9, 99.9]);
+
+  // Initial profile is loaded and establishes a fixed POC baseline.
+  api.evaluatePair(first, PAIR, "1m", vpBars);
+  assert.equal(api.read().length, 0);
+
+  const crossingBar = makeTradeBars([100.2], first.at(-1).ts + 60_000)[0];
+  const historyWithCross = [...first, crossingBar];
+
+  // The chart evaluator gets this closed 1m candle before the slower VP poll
+  // has populated its cache. Base alerts are processed; VP remains pending.
+  api.evaluatePair(historyWithCross, PAIR, "1m");
+  assert.equal(api.read().length, 0);
+
+  // The VP poll then revisits the same closed 1m candle with the 15m bars.
+  // The VP crossing must now be emitted exactly once.
+  api.evaluatePair(historyWithCross, PAIR, "1m", vpBars);
+  assert.equal(api.read().length, 1);
+  assert.equal(api.read()[0].direction, "LONG");
+  assert.equal(api.read()[0].situationEvents[0].sourceTf, "15m");
+
+  // A repeated poll of the same candle cannot add a duplicate confirmation.
+  api.evaluatePair(historyWithCross, PAIR, "1m", vpBars);
+  assert.equal(api.read().length, 1);
+  assert.equal(api.read()[0].eventCount, 1);
+});
