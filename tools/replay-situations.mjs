@@ -220,9 +220,17 @@ export function replayHistoricalCandles({
     ? allMarkers.filter(marker => marker.comboConfirmed === true)
     : allMarkers;
   const matchedKeys = new Set();
-  visibleMarkers.forEach(marker => (marker.situationEvents || []).forEach(event => {
-    matchedKeys.add([marker.pair, marker.tf, event.kind, Number(event.ts)].join("|"));
-  }));
+  visibleMarkers.forEach(marker => {
+    // situationEvents is intentionally capped at 20 for UI/storage size, while
+    // situationEventIds retains up to 250 source IDs. Use IDs for replay accounting.
+    (marker.situationEventIds || []).forEach(id => {
+      const parts = String(id).split("|");
+      if (parts.length >= 4) matchedKeys.add(parts.slice(0, 4).join("|"));
+    });
+    (marker.situationEvents || []).forEach(event => {
+      matchedKeys.add([marker.pair, marker.tf, event.kind, Number(event.ts)].join("|"));
+    });
+  });
   const signals = [...candidateSignals.values()];
   const matchedComponents = signals.filter(signal =>
     matchedKeys.has([signal.pair, signal.tf, signal.kind, Number(signal.ts)].join("|"))
@@ -253,6 +261,7 @@ export function replayHistoricalCandles({
     },
     result: {
       storedMarkerCount: allMarkers.length,
+      markerStorageLimitReached: allMarkers.length >= 500,
       visibleSituationCount: visibleMarkers.length,
       byDirection,
       averageEventsPerSituation: visibleMarkers.length
@@ -270,7 +279,9 @@ export function replayHistoricalCandles({
         comboComponents: marker.comboComponents || [],
         situationSources: marker.situationSources || {},
         sourceEventIds: marker.situationEventIds || [],
-        sourceEvents: marker.situationEvents || []
+        sourceIdsTruncated: (Number(marker.eventCount) || 1) > (marker.situationEventIds || []).length,
+        sourceEvents: marker.situationEvents || [],
+        displayedEventsTruncated: (Number(marker.eventCount) || 1) > (marker.situationEvents || []).length
       }))
     },
     alertLog: harness.alerts.getAlertLog()
