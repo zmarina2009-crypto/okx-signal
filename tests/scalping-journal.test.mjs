@@ -226,6 +226,52 @@ test("SUI 1m repeated Volume + RSI triggers produce one situation and three jour
   assert.ok(markers[0].zoneRadius > markers[0].entryPrice * 0.00025);
 });
 
+test("SUI 1m repeated SHORT Volume + RSI triggers remain one separate SHORT situation", () => {
+  const api = createHarness();
+  api.setConfig({
+    enabled: true, volumeRsiEnabled: true, volumePeriod: 20, volumeMultiplier: 2,
+    rsiLength: 14, rsiOversold: 30, rsiOverbought: 70,
+    swingLength: 3, bosEnabled: false, bosAlerts: false, requireBos: false,
+    longEnabled: true, shortEnabled: true, cooldownSeconds: 60,
+    rsiClusterAtrMultiplier: 1, soundEnabled: false
+  });
+
+  const start = Date.now() - 30 * 60000;
+  const bars = Array.from({ length: 24 }, (_, i) => {
+    const close = 100 + i * 0.02;
+    return {
+      ts: start + i * 60000, o: close - 0.01,
+      h: close + 0.06, l: close - 0.06, c: close, v: 1
+    };
+  });
+
+  for (let i = 24; i < 27; i++) {
+    const close = 100 + i * 0.02;
+    bars.push({
+      ts: start + i * 60000, o: close - 0.01,
+      h: close + 0.06, l: close - 0.06, c: close, v: 100
+    });
+    api.evaluateBars(bars.slice(), "SUI-USDT-SWAP", "1m");
+  }
+
+  const markers = api.alerts.read();
+  const rows = api.getHistory();
+  assert.equal(markers.length, 1);
+  assert.equal(markers[0].pair, "SUI-USDT-SWAP");
+  assert.equal(markers[0].tf, "1m");
+  assert.equal(markers[0].direction, "SHORT");
+  assert.equal(markers[0].eventCount, 3);
+  assert.equal(markers[0].situationSources.scalping, 1);
+  assert.equal(markers[0].situationSources.rsi, 2);
+  assert.equal(rows.length, 3);
+  assert.equal(rows.map(row => row.kind).join(","), "scalping,rsi-repeat,rsi-repeat");
+  assert.ok(rows.every(row => row.direction === "SHORT"));
+  assert.ok(rows.every(row => row.situationId === markers[0].id));
+  assert.equal(rows.map(row => row.situationEventCount).join(","), "1,2,3");
+  assert.equal(rows[0].mergedCount, 2);
+  assert.ok(markers[0].zoneRadius > markers[0].entryPrice * 0.00025);
+});
+
 test("RSI repeat suppression expires after the shared eight-bar time boundary", () => {
   const api = createHarness();
   const ts = Date.now() - 600000;
