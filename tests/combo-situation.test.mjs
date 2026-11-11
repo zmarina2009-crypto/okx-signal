@@ -5,8 +5,9 @@ import vm from "node:vm";
 
 const source = fs.readFileSync(new URL("../alerts.js", import.meta.url), "utf8");
 
-function createHarness() {
+function createHarness(initialMarkers = []) {
   const store = new Map();
+  if (initialMarkers.length) store.set("okx_v2_alert_markers", JSON.stringify(initialMarkers));
   const localStorage = {
     getItem: key => store.has(key) ? store.get(key) : null,
     setItem: (key, value) => store.set(key, String(value)),
@@ -23,7 +24,7 @@ function createHarness() {
   vm.runInNewContext(source, context, { filename: "alerts.js" });
   const api = window.__OKXAlertsTest;
   assert.ok(api, "test API should be exposed");
-  api.clear();
+  if (!initialMarkers.length) api.clear();
   api.setConfig({
     volume: true, rsi: true, sma: true, vp: true,
     comboEnabled: true, comboModeActive: true, comboCount: 4, comboWindow: 1,
@@ -56,6 +57,37 @@ function sendFour(api, overrides = {}) {
   for (const item of items) api.observeCombo(item.kind, item);
   return items;
 }
+
+test("COMBO confirmation metadata survives consolidation with an older marker", () => {
+  const ts = 1_800_000_000_000;
+  const api = createHarness([
+    {
+      id: "legacy-rsi", pair: "SUI-USDT-SWAP", tf: "1m", kind: "rsi",
+      direction: "LONG", price: 100, entryPrice: 100, ts,
+      zoneRadius: 0.5, tolerance: 0.5, eventCount: 1, touches: 1,
+      situationSources: { rsi: 1 }, situationEventIds: ["legacy-rsi"],
+      situationEvents: [{ id: "legacy-rsi", kind: "rsi", label: "RSI", ts, entryPrice: 100, direction: "LONG" }]
+    },
+    {
+      id: "confirmed-combo", pair: "SUI-USDT-SWAP", tf: "1m", kind: "volume",
+      direction: "LONG", price: 100.1, entryPrice: 100.1, ts: ts + 60_000,
+      zoneRadius: 0.5, tolerance: 0.5, eventCount: 1, touches: 1,
+      situationSources: { volume: 1 }, situationEventIds: ["confirmed-combo"],
+      situationEvents: [{ id: "confirmed-combo", kind: "volume", label: "VOLUME", ts: ts + 60_000, entryPrice: 100.1, direction: "LONG" }],
+      comboConfirmed: true, comboConfirmedTs: ts + 60_000,
+      comboComponents: ["volume", "rsi", "sma", "vp"], comboDirection: "LONG"
+    }
+  ]);
+
+  const markers = api.read();
+  assert.equal(markers.length, 1);
+  assert.equal(markers[0].eventCount, 2);
+  assert.equal(markers[0].situationSources.rsi, 1);
+  assert.equal(markers[0].situationSources.volume, 1);
+  assert.equal(markers[0].comboConfirmed, true);
+  assert.equal(markers[0].comboComponents.join(","), "volume,rsi,sma,vp");
+  assert.equal(api.isComboSituation(markers[0]), true);
+});
 
 test("COMBO-only creates one aggregate marker with four real source confirmations", () => {
   const api = createHarness();
