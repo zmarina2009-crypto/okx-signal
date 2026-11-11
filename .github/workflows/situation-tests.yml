@@ -11,6 +11,7 @@ on:
     branches:
       - main
       - "feature/adaptive-signal-situations"
+      - "fix/adaptive-situation-integrity-2026-11-11"
 
 jobs:
   situation-grouping:
