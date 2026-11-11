@@ -130,7 +130,7 @@ export function parseCandleText(text) {
   }
 }
 
-function createReplayHarness({ comboOnly, includeBos, settings }) {
+function createReplayHarness({ comboOnly, includeBos, vpTf, settings }) {
   let simulatedNow = Date.now();
   class ReplayDate extends Date {
     static now() { return simulatedNow; }
@@ -169,7 +169,7 @@ function createReplayHarness({ comboOnly, includeBos, settings }) {
     volume: true, volumePeriod: 20, volumeMult: 2,
     rsi: true, rsiPeriod: 14, rsiLow: 30, rsiHigh: 70,
     sma: true, smaPeriod: 21, smaTolerance: 0,
-    vp: true, vpPeriod: 60, vpRows: 30, vpMode: "poc",
+    vp: true, vpTf, vpPeriod: 60, vpRows: 30, vpMode: "poc",
     comboEnabled: true, comboModeActive: !!comboOnly,
     comboComposition: "any", comboCount: 4, comboWindow: 1,
     chopEnabled: false, cooldown: 1, sound: false,
@@ -193,24 +193,37 @@ function createReplayHarness({ comboOnly, includeBos, settings }) {
 }
 
 export function replayHistoricalCandles({
-  candles, pair, tf = "1m", comboOnly = true, includeBos = true, settings = {}
+  candles, vpCandles = null, pair, tf = "1m", vpTf = "15m",
+  comboOnly = true, includeBos = true, settings = {}
 }) {
   if (!Array.isArray(candles) || candles.length < 80) {
     throw new Error("Для надёжной проверки нужно не менее 80 закрытых свечей (VP lookback + индикаторы)");
   }
   if (!pair) throw new Error("Не задана торговая пара");
   const normalizedTf = String(tf).toLowerCase();
-  const tfMs = TF_MS[normalizedTf];
-  if (!tfMs) throw new Error("Неподдерживаемый таймфрейм: " + tf);
+  const sourceTf = String(vpTf || normalizedTf).toLowerCase();
+  const tfMs = TF_MS[normalizedTf], sourceTfMs = TF_MS[sourceTf];
+  if (!tfMs) throw new Error("Неподдерживаемый торговый таймфрейм: " + tf);
+  if (!sourceTfMs) throw new Error("Неподдерживаемый таймфрейм VP: " + vpTf);
+  if (sourceTf !== normalizedTf && (!Array.isArray(vpCandles) || !vpCandles.length)) {
+    throw new Error("Для VP " + sourceTf + " нужен отдельный файл закрытых свечей через --vp-file");
+  }
+  const vpRows = sourceTf === normalizedTf ? candles : vpCandles;
+  let vpIndex = 0;
 
-  const harness = createReplayHarness({ comboOnly, includeBos, settings });
+  const harness = createReplayHarness({ comboOnly, includeBos, vpTf: sourceTf, settings });
   const candidateSignals = new Map();
   for (let i = 0; i < candles.length; i++) {
     const candle = candles[i];
     harness.setClock(candle.ts);
     const history = candles.slice(Math.max(0, i - 299), i + 1);
     if (history.length < 6) continue;
-    harness.alerts.evaluatePair(history, pair, normalizedTf);
+    const tradeCloseTs = Number(candle.ts) + tfMs;
+    while (vpIndex < vpRows.length && Number(vpRows[vpIndex].ts) + sourceTfMs <= tradeCloseTs) vpIndex++;
+    const closedVpHistory = sourceTf === normalizedTf
+      ? history
+      : vpRows.slice(Math.max(0, vpIndex - 300), vpIndex);
+    harness.alerts.evaluatePair(history, pair, normalizedTf, closedVpHistory);
     if (includeBos) harness.scalping.evaluateBars(history, pair, normalizedTf);
     harness.alerts.getComboSignals().forEach(signal => candidateSignals.set(signal.id, signal));
   }
@@ -249,9 +262,13 @@ export function replayHistoricalCandles({
   }
 
   return {
-    pair, tf: normalizedTf, comboOnly, includeBos,
+    pair, tf: normalizedTf, vpTf: sourceTf, comboOnly, includeBos,
     data: {
       candleCount: candles.length,
+      vpCandleCount: vpRows.length,
+      vpBarsAvailableAtEnd: vpIndex,
+      vpStartTs: vpRows.length ? vpRows[0].ts : null,
+      vpEndTs: vpRows.length ? vpRows[vpRows.length - 1].ts : null,
       startTs: candles[0].ts,
       endTs: candles[candles.length - 1].ts,
       gaps,
@@ -289,12 +306,14 @@ export function replayHistoricalCandles({
 }
 
 function parseArgs(argv) {
-  const args = { file: null, pair: "", tf: "1m", comboOnly: true, includeBos: true, json: false };
+  const args = { file: null, vpFile: null, pair: "", tf: "1m", vpTf: "15m", comboOnly: true, includeBos: true, json: false };
   for (let i = 0; i < argv.length; i++) {
     const item = argv[i];
     if (!item.startsWith("--") && !args.file) args.file = item;
     else if (item === "--pair") args.pair = argv[++i] || "";
     else if (item === "--tf") args.tf = argv[++i] || "1m";
+    else if (item === "--vp-file") args.vpFile = argv[++i] || null;
+    else if (item === "--vp-tf") args.vpTf = argv[++i] || "15m";
     else if (item === "--normal-mode") args.comboOnly = false;
     else if (item === "--no-bos") args.includeBos = false;
     else if (item === "--json") args.json = true;
@@ -310,9 +329,10 @@ async function main() {
     process.stdout.write([
       "Offline replay группировки OKX Signal Pro",
       "Использование:",
-      "  node tools/replay-situations.mjs <candles.json|csv> --pair SUI-USDT-SWAP --tf 1m [--normal-mode] [--no-bos] [--json]",
+      "  node tools/replay-situations.mjs <trade-1m.json|csv> --pair SUI-USDT-SWAP --tf 1m --vp-file <vp-15m.json|csv> --vp-tf 15m [--normal-mode] [--no-bos] [--json]",
       "JSON: OKX response {data:[...]} или массив строк [ts,o,h,l,c,vol,...,confirm].",
       "CSV: заголовок ts/o/h/l/c/v/confirm (допускаются timestamp/open/high/low/close/volume).",
+      "Для старшего VP передай отдельные свечи через --vp-file. Используются только VP-свечи, уже закрытые к моменту закрытия торговой свечи.",
       "Только закрытые свечи; сеть и торговые API не вызываются."
     ].join("\n") + "\n");
     process.exitCode = args.help ? 0 : 2;
@@ -321,21 +341,37 @@ async function main() {
   const fullPath = path.resolve(args.file);
   const parsed = parseCandleText(fs.readFileSync(fullPath, "utf8"));
   if (parsed.candles.length < 80) throw new Error("После проверки данных осталось меньше 80 закрытых свечей");
+  const sourceTf = String(args.vpTf || args.tf).toLowerCase();
+  let vpParsed = null;
+  if (sourceTf !== String(args.tf).toLowerCase()) {
+    if (!args.vpFile) throw new Error("Для VP " + sourceTf + " укажи --vp-file с отдельными закрытыми свечами");
+    const vpPath = path.resolve(args.vpFile);
+    vpParsed = parseCandleText(fs.readFileSync(vpPath, "utf8"));
+    if (vpParsed.candles.length < 20) throw new Error("В файле VP должно быть не менее 20 закрытых свечей");
+    args.vpFile = vpPath;
+  }
   const report = replayHistoricalCandles({
-    candles: parsed.candles, pair: args.pair, tf: args.tf,
+    candles: parsed.candles, vpCandles: vpParsed && vpParsed.candles,
+    pair: args.pair, tf: args.tf, vpTf: sourceTf,
     comboOnly: args.comboOnly, includeBos: args.includeBos
   });
   report.input = {
     file: fullPath, inputRows: parsed.inputRows,
     invalidRows: parsed.invalidRows, incompleteRows: parsed.incompleteRows,
-    duplicateTimestamps: parsed.duplicateTimestamps
+    duplicateTimestamps: parsed.duplicateTimestamps,
+    vpFile: args.vpFile,
+    vpInput: vpParsed ? {
+      inputRows: vpParsed.inputRows, invalidRows: vpParsed.invalidRows,
+      incompleteRows: vpParsed.incompleteRows, duplicateTimestamps: vpParsed.duplicateTimestamps
+    } : null
   };
   process.stdout.write(args.json
     ? JSON.stringify(report, null, 2) + "\n"
     : [
       "OKX Signal Pro · Historical Situation Replay",
-      "Pair / TF: " + report.pair + " / " + report.tf,
-      "Closed candles: " + report.data.candleCount,
+      "Pair / trade TF / VP TF: " + report.pair + " / " + report.tf + " / " + report.vpTf,
+      "Closed trade candles: " + report.data.candleCount,
+      "Closed VP candles supplied / available at replay end: " + report.data.vpCandleCount + " / " + report.data.vpBarsAvailableAtEnd,
       "Range: " + new Date(report.data.startTs).toISOString() + " — " + new Date(report.data.endTs).toISOString(),
       "Input rows: " + parsed.inputRows + " · invalid: " + parsed.invalidRows + " · unfinished: " + parsed.incompleteRows + " · duplicates: " + parsed.duplicateTimestamps,
       "Candidate component signals: " + report.data.candidateComponentSignals,
