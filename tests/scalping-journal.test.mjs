@@ -221,7 +221,7 @@ test("SUI 1m repeated Volume + RSI triggers produce one situation and three jour
   assert.equal(rows[0].kind, "scalping");
   assert.equal(rows.slice(1).map(row => row.kind).join(","), "rsi-repeat,rsi-repeat");
   assert.ok(rows.every(row => row.situationId === markers[0].id));
-  assert.deepEqual(rows.map(row => row.situationEventCount), [1, 2, 3]);
+  assert.equal(rows.map(row => row.situationEventCount).join(","), "1,2,3");
   assert.equal(rows[0].mergedCount, 2);
   assert.ok(markers[0].zoneRadius > markers[0].entryPrice * 0.00025);
 });
