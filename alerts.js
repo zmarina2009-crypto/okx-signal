@@ -646,9 +646,10 @@
     const needsVp=!!cfg.vp||(cfg.comboEnabled&&cfg.comboComposition==="vpRsi")||(cfg.comboEnabled&&Number(cfg.comboCount)===4);
     const cachedVp=vpCandleCache[pair+"|"+sourceTf];
     const vpBars=Array.isArray(o.vp)&&o.vp.length?o.vp:(sourceTf===normalizeAlertTf(tf)?hist:(cachedVp&&cachedVp.bars)||[]);
+    let vpProfile=null;
     if(closed&&closed.ts!==st.lastClosedTs){
       st.lastClosedTs=closed.ts;
-      const vpProfile=needsVp?stableVpProfile(pair,tf,sourceTf,vpBars,closed):null;
+      vpProfile=needsVp?stableVpProfile(pair,tf,sourceTf,vpBars,closed):null;
       if(cfg.volume&&hist.length>=Math.max(3,+cfg.volumePeriod||20)+1){
         const n=Math.max(2,+cfg.volumePeriod||20),base=hist.slice(0,-1).slice(-n),avg=base.reduce((z,x)=>z+(Number(x.v)||0),0)/base.length,v=Number(closed.v)||0,m=avg>0?v/avg:0;
         if(m>=Math.max(1,+cfg.volumeMult||2)){const isLong=Number(closed.c)>=Number(closed.o),dir=isLong?"🟢 BUY":"🔴 SELL",side=isLong?"LONG":"SHORT";fire("volume","⚡ VOLUME SPIKE "+dir+" • ×"+m.toFixed(1)+" • "+pair+" • "+tf,"volume:"+pair+":"+tf,{pair,tf,ts:closed.ts,price:Number(closed.c),direction:side,label:"VOLUME"});}
