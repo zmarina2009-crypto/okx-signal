@@ -14,7 +14,10 @@
   let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[],vpRsiStates={};
   const $=id=>document.getElementById(id);
   const esc=s=>String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
-  function save(){localStorage.setItem(KEY,JSON.stringify(cfg))}
+  function save(){
+    localStorage.setItem(KEY,JSON.stringify(cfg));
+    window.dispatchEvent(new CustomEvent("okx-alert-settings-change"));
+  }
   function ensureAudio(){
     try{
       if(!audioCtx)audioCtx=new (window.AudioContext||window.webkitAudioContext)();
