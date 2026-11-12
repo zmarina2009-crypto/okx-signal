@@ -50,7 +50,7 @@ test("a suppressed same-direction RSI repeat is linked to its aggregate marker a
   const ts = Date.now() - 120000;
   const initialMarker = api.alerts.add({
     pair: "SUI-USDT-SWAP", tf: "1m", kind: "scalping", direction: "LONG",
-    price: 100, entryPrice: 100, ts, zoneRadius: 2, label: "VOL+RSI"
+    price: 100, entryPrice: 100, ts, zoneRadius: 2, label: "VOL+RSI", displayEventCount: 1
   });
   const original = api.addHistory("scalping", "SUI-USDT-SWAP", "1m", "LONG",
     "Initial signal", ts, 100, initialMarker);
@@ -64,7 +64,9 @@ test("a suppressed same-direction RSI repeat is linked to its aggregate marker a
   });
   const merged = api.mergeRsiRepeat("SUI-USDT-SWAP", "1m", { ts: ts + 60000, c: 100.5 }, "LONG");
   const rows = api.getHistory();
-  const [marker] = api.alerts.read();
+  const markers = api.alerts.read();
+  const marker = markers.find(item => item.id === initialMarker.marker.id);
+  const visualRepeat = markers.find(item => item.individual === true);
   assert.equal(merged, true);
   assert.equal(rows.length, 2);
   assert.equal(rows[1].kind, "rsi-repeat");
@@ -74,6 +76,14 @@ test("a suppressed same-direction RSI repeat is linked to its aggregate marker a
   assert.equal(rows[1].situationEventCount, 2);
   assert.equal(marker.eventCount, 2);
   assert.equal(marker.situationSources.rsi, 1);
+  assert.equal(marker.ts, ts, "the shared situation marker must stay on its first signal candle");
+  assert.equal(marker.displayEventCount, 1, "the group marker represents its first chart event, not all repeats");
+  assert.ok(visualRepeat, "the repeated RSI must get its own chart marker");
+  assert.equal(visualRepeat.kind, "rsi-repeat");
+  assert.equal(visualRepeat.label, "RSI");
+  assert.equal(visualRepeat.ts, ts + 60000);
+  assert.equal(visualRepeat.eventCount, 1);
+  assert.equal(visualRepeat.touches, 1);
   assert.equal(rows[0].mergedCount, 1);
 });
 
@@ -171,11 +181,15 @@ test("LONG and SHORT RSI clusters coexist and repeats link to their own directio
   });
   assert.equal(api.mergeRsiRepeat("SUI-USDT-SWAP", "1m", { ts: ts + 60000, c: 100.5 }, "LONG"), true);
   assert.equal(api.mergeRsiRepeat("SUI-USDT-SWAP", "1m", { ts: ts + 60000, c: 100.5 }, "SHORT"), true);
-  const situations = api.alerts.read();
+  const markers = api.alerts.read();
+  const situations = markers.filter(marker => marker.situationSources && marker.individual !== true);
+  const individualRepeats = markers.filter(marker => marker.individual === true);
   const repeats = api.getHistory().filter(row => row.kind === "rsi-repeat");
   assert.equal(situations.length, 2);
+  assert.equal(individualRepeats.length, 2);
   assert.notEqual(repeats[0].situationId, repeats[1].situationId);
   assert.ok(situations.every(marker => marker.eventCount === 2));
+  assert.ok(individualRepeats.every(marker => marker.kind === "rsi-repeat" && marker.eventCount === 1));
 });
 
 test("SUI 1m repeated Volume + RSI triggers produce one situation and three journal events", () => {
@@ -209,21 +223,27 @@ test("SUI 1m repeated Volume + RSI triggers produce one situation and three jour
   }
 
   const markers = api.alerts.read();
+  const situation = markers.find(marker => marker.situationSources && marker.individual !== true);
+  const individualRepeats = markers.filter(marker => marker.individual === true);
   const rows = api.getHistory();
-  assert.equal(markers.length, 1, "nearby same-direction triggers should share one chart marker");
-  assert.equal(markers[0].pair, "SUI-USDT-SWAP");
-  assert.equal(markers[0].tf, "1m");
-  assert.equal(markers[0].direction, "LONG");
-  assert.equal(markers[0].eventCount, 3);
-  assert.equal(markers[0].situationSources.scalping, 1);
-  assert.equal(markers[0].situationSources.rsi, 2);
+  assert.equal(markers.length, 3, "one grouped situation plus two standalone RSI repeat markers should be stored");
+  assert.ok(situation);
+  assert.equal(situation.pair, "SUI-USDT-SWAP");
+  assert.equal(situation.tf, "1m");
+  assert.equal(situation.direction, "LONG");
+  assert.equal(situation.eventCount, 3);
+  assert.equal(situation.displayEventCount, 1);
+  assert.equal(individualRepeats.length, 2);
+  assert.ok(individualRepeats.every(marker => marker.kind === "rsi-repeat" && marker.direction === "LONG"));
+  assert.ok(individualRepeats.every(marker => marker.eventCount === 1));
+  assert.deepEqual(individualRepeats.map(marker => marker.ts), [start + 25 * 60000, start + 26 * 60000]);
   assert.equal(rows.length, 3, "every original trigger must remain in the journal");
   assert.equal(rows[0].kind, "scalping");
   assert.equal(rows.slice(1).map(row => row.kind).join(","), "rsi-repeat,rsi-repeat");
-  assert.ok(rows.every(row => row.situationId === markers[0].id));
+  assert.ok(rows.every(row => row.situationId === situation.id));
   assert.equal(rows.map(row => row.situationEventCount).join(","), "1,2,3");
   assert.equal(rows[0].mergedCount, 2);
-  assert.ok(markers[0].zoneRadius > markers[0].entryPrice * 0.00025);
+  assert.ok(situation.zoneRadius > situation.entryPrice * 0.00025);
 });
 
 test("SUI 1m repeated SHORT Volume + RSI triggers remain one separate SHORT situation", () => {
@@ -255,21 +275,26 @@ test("SUI 1m repeated SHORT Volume + RSI triggers remain one separate SHORT situ
   }
 
   const markers = api.alerts.read();
+  const situation = markers.find(marker => marker.situationSources && marker.individual !== true);
+  const individualRepeats = markers.filter(marker => marker.individual === true);
   const rows = api.getHistory();
-  assert.equal(markers.length, 1);
-  assert.equal(markers[0].pair, "SUI-USDT-SWAP");
-  assert.equal(markers[0].tf, "1m");
-  assert.equal(markers[0].direction, "SHORT");
-  assert.equal(markers[0].eventCount, 3);
-  assert.equal(markers[0].situationSources.scalping, 1);
-  assert.equal(markers[0].situationSources.rsi, 2);
+  assert.equal(markers.length, 3);
+  assert.ok(situation);
+  assert.equal(situation.pair, "SUI-USDT-SWAP");
+  assert.equal(situation.tf, "1m");
+  assert.equal(situation.direction, "SHORT");
+  assert.equal(situation.eventCount, 3);
+  assert.equal(situation.displayEventCount, 1);
+  assert.equal(individualRepeats.length, 2);
+  assert.ok(individualRepeats.every(marker => marker.kind === "rsi-repeat" && marker.direction === "SHORT"));
+  assert.ok(individualRepeats.every(marker => marker.eventCount === 1));
   assert.equal(rows.length, 3);
   assert.equal(rows.map(row => row.kind).join(","), "scalping,rsi-repeat,rsi-repeat");
   assert.ok(rows.every(row => row.direction === "SHORT"));
-  assert.ok(rows.every(row => row.situationId === markers[0].id));
+  assert.ok(rows.every(row => row.situationId === situation.id));
   assert.equal(rows.map(row => row.situationEventCount).join(","), "1,2,3");
   assert.equal(rows[0].mergedCount, 2);
-  assert.ok(markers[0].zoneRadius > markers[0].entryPrice * 0.00025);
+  assert.ok(situation.zoneRadius > situation.entryPrice * 0.00025);
 });
 
 test("RSI repeat suppression expires after the shared eight-bar time boundary", () => {
