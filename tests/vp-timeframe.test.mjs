@@ -241,7 +241,7 @@ test("alert polling fetches 1m trade and 15m VP candles independently", async ()
 test("a delayed VP response replays every intermediate 1m close in order without duplicating base alerts", async () => {
   const api = createHarness({
     alertTf: "1m", vpTf: "15m", selectedPairs: [PAIR],
-    volume: false, rsi: false, sma: false, vp: true
+    volume: true, volumePeriod: 5, volumeMult: 2, rsi: false, sma: false, vp: true
   });
   const start = 1_800_000_000_000;
   let tradeBars = makeTradeBars([99.9, 99.9, 99.9, 99.9, 99.9, 99.9], start);
@@ -262,6 +262,7 @@ test("a delayed VP response replays every intermediate 1m close in order without
   // Five closed minutes arrive while the 15m request is still pending.
   for (const close of [99.95, 100.2, 100.25, 100.3, 100.15]) {
     const next = makeTradeBars([close], tradeBars.at(-1).ts + 60_000)[0];
+    if (close === 100.2) next.v = 100; // One ordinary Volume alert on the intermediate crossing candle.
     tradeBars = [...tradeBars, next];
     await api.pollSelected();
   }
@@ -270,6 +271,8 @@ test("a delayed VP response replays every intermediate 1m close in order without
   assert.deepEqual(queued, [...queued].sort((left, right) => left - right));
   assert.equal(api.read().filter(marker => marker.kind === "vp").length, 0,
     "VP cannot be evaluated until its profile response arrives");
+  assert.equal(api.read().filter(marker => marker.kind === "volume").length, 1,
+    "the regular 1m Volume alert must be delivered while VP is pending");
 
   resolveVp(vpBars);
   await api.waitForVpIdle();
@@ -279,6 +282,8 @@ test("a delayed VP response replays every intermediate 1m close in order without
   assert.equal(vpMarkers[0].direction, "LONG");
   assert.equal(vpMarkers[0].ts, queued[2], "the marker must retain the actual crossing candle, not the latest candle");
   assert.equal(vpMarkers[0].situationEvents[0].sourceTf, "15m");
+  assert.equal(api.read().filter(marker => marker.kind === "volume").length, 1,
+    "VP-only replay must not duplicate the previously delivered Volume alert");
   assert.equal(api.getPendingVpReplay().length, 0);
   assert.equal(api.getVpFetchInFlight().length, 0);
 
