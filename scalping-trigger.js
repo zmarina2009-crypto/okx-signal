@@ -256,7 +256,8 @@
     state.fired.push(uniqueId);
     const situationResult=addChartMarker({
       pair, tf, ts: Number(candle.ts), price,
-      entryPrice: Number(candle.c), direction, label, kind, zoneRadius
+      entryPrice: Number(candle.c), direction, label, kind, zoneRadius,
+      displayEventCount: kind === "scalping" ? 1 : undefined
     });
     const historyItem = addHistory(kind, pair, tf, direction, message, candle.ts, price, situationResult);
     if(!situationResult||!situationResult.merged)tone(direction);
@@ -353,12 +354,24 @@
     cluster.lastSuppressedDirection = direction;
     state.rsiClusterSuppressed = (Number(state.rsiClusterSuppressed) || 0) + 1;
 
-    // Add the repeat to the shared marker aggregator before writing its journal row.
+    // Keep this repeat inside the shared trade situation, but leave the group
+    // marker anchored to its first candle so separate RSI markers stay aligned.
     const situationResult = addChartMarker({
       pair, tf, ts: eventTs, price,
       entryPrice: price, direction, label: "RSI · повтор",
-      kind: "rsi", zoneRadius: Number(cluster.radius) || 0
+      kind: "rsi", zoneRadius: Number(cluster.radius) || 0,
+      preservePosition: true
     });
+    // If this repeat joined an existing situation, add a second, standalone
+    // chart marker. It is deliberately excluded from situation/COMBO aggregation.
+    if (situationResult && situationResult.merged && !situationResult.duplicate) {
+      addChartMarker({
+        pair, tf, ts: eventTs, price,
+        entryPrice: price, direction, label: "RSI",
+        kind: "rsi-repeat", zoneRadius: Number(cluster.radius) || 0,
+        individual: true
+      });
+    }
     addHistory("rsi-repeat", pair, tf, direction,
       "Повтор RSI в текущей торговой ситуации · маркер объединён · повтор №" + cluster.suppressedCount,
       eventTs, price, situationResult);
