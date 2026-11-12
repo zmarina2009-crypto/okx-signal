@@ -227,6 +227,7 @@ test("alert polling fetches 1m trade and 15m VP candles independently", async ()
   });
 
   await api.pollSelected();
+  await api.waitForVpIdle();
 
   assert.deepEqual(calls.map(call => call.tf), ["1m", "15m"]);
   assert.equal(calls[0].pair, PAIR);
@@ -259,9 +260,50 @@ test("a failed 15m VP request does not stop base 1m alerts", async () => {
   });
 
   await api.pollSelected();
+  await api.waitForVpIdle();
 
   assert.deepEqual(calls.map(call => call.tf), ["1m", "15m"]);
   assert.equal(api.read().length, 1);
   assert.equal(api.read()[0].direction, "LONG");
   assert.ok(api.getAlertLog().some(entry => entry.text.includes("VP 15m недоступен")));
+});
+
+test("slow 15m VP response does not delay 1m signals and completes only VP once", async () => {
+  const api = createHarness({
+    alertTf: "1m", vpTf: "15m", selectedPairs: [PAIR],
+    volume: true, volumePeriod: 20, volumeMult: 2, vp: true
+  });
+  const start = 1_800_000_000_000;
+  const tradeBars = Array.from({ length: 22 }, (_, i) => ({
+    ts: start + i * 60_000,
+    o: 100, h: 100.1, l: 99.9, c: 100,
+    v: i === 21 ? 1000 : 10, confirm: "1"
+  }));
+  const vpBars = makeProfileBars({ close: 100, count: 20 });
+  const calls = [];
+  let resolveVp;
+  const delayedVp = new Promise(resolve => { resolveVp = resolve; });
+  api.setMarketApi({
+    getState: () => ({ currentPair: PAIR }),
+    fetchCandles: async (pair, tf, limit) => {
+      calls.push({ pair, tf, limit });
+      if (tf === "15m") return delayedVp;
+      return tradeBars;
+    }
+  });
+
+  // This must finish while the 15m request is still unresolved.
+  await api.pollSelected();
+  assert.deepEqual(calls.map(call => call.tf), ["1m", "15m"]);
+  assert.equal(api.getVpFetchInFlight().length, 1);
+  assert.equal(api.read().length, 1, "base 1m Volume alert must not wait for VP");
+  assert.equal(api.read()[0].kind, "volume");
+
+  resolveVp(vpBars);
+  await api.waitForVpIdle();
+
+  assert.ok(api.getVpState(PAIR, "1m", "15m"), "15m profile is processed after the delayed response");
+  assert.equal(api.read().length, 1, "late VP processing must not duplicate the already delivered 1m signal");
+  assert.equal(api.read()[0].eventCount, 1);
+  assert.equal(api.getVpFetchInFlight().length, 0);
 });
