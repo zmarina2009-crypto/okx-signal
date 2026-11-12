@@ -896,7 +896,7 @@ addEventListener("okx-alert-marker",event=>{
   if(!marker||marker.pair!==currentPair||String(marker.tf).toLowerCase()!==String($("tf")?.value||"15m").toLowerCase())return;
   requestAnimationFrame(()=>{if(last)draw(last)});
 });setInterval(async()=>{let oldPair=currentPair;await loadMarkets();if(currentPair&&currentPair!==oldPair)refresh()},60000);// Cache cleanup is handled by service-worker activation; do not delete its active cache here.
-if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=79",{updateViaCache:"none"}).then(r=>r.update()).catch(()=>{});addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferred=e;$("install").style.display="block"});$("install").onclick=async()=>{if(deferred){deferred.prompt();deferred=null;$("install").style.display="none"}};window.OKXSignalApp={getState:()=>({candles,liveCandle,last,currentPair,tf:$("tf")?.value||"",direction}),getMarkets:()=>activeMarkets(),getAllMarkets:()=>MARKETS.slice(),fetchCandles:(pair,bar,limit=80)=>fetchC(pair,bar,limit)};renderJournal();(async()=>{await loadMarkets();if(currentPair)refresh()})();
+if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=80",{updateViaCache:"none"}).then(r=>r.update()).catch(()=>{});addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferred=e;$("install").style.display="block"});$("install").onclick=async()=>{if(deferred){deferred.prompt();deferred=null;$("install").style.display="none"}};window.OKXSignalApp={getState:()=>({candles,liveCandle,last,currentPair,tf:$("tf")?.value||"",direction}),getMarkets:()=>activeMarkets(),getAllMarkets:()=>MARKETS.slice(),fetchCandles:(pair,bar,limit=80)=>fetchC(pair,bar,limit)};renderJournal();(async()=>{await loadMarkets();if(currentPair)refresh()})();
 (function(){
   const baseDraw=draw;
   function drawVolumeProfile(){
@@ -974,7 +974,7 @@ if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=79",{
     draw(last);
   };
 })();
-</script><script src="./alerts.js?v=25"></script><script src="./scalping-trigger.js?v=9"></script><script src="./telegram-settings.js?v=13"></script><script src="./backtester.js?v=24"></script><script src="./papertrader.js?v=7"></script><script src="./indicators.js?v=1"></script><script src="./collapsible.js?v=4"></script>
+</script><script src="./alerts.js?v=26"></script><script src="./scalping-trigger.js?v=9"></script><script src="./telegram-settings.js?v=13"></script><script src="./backtester.js?v=24"></script><script src="./papertrader.js?v=7"></script><script src="./indicators.js?v=1"></script><script src="./collapsible.js?v=4"></script>
 <script>
 (function(){
   const bar=document.getElementById("quickAccessBar");
