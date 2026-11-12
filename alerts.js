@@ -241,6 +241,7 @@
     return names.join(" + ")||"Сигнал";
   }
   function isSituationMarker(marker){
+    if(marker&&marker.individual===true)return false;
     const counts=markerSources(marker);
     return sourceCountTotal(counts)>0;
   }
@@ -300,13 +301,20 @@
     target.zoneRadius=Number(target.zoneRadius)||Number(incoming.zoneRadius)||0;
     target.tolerance=target.zoneRadius;
     const incomingTs=Number(incoming.lastEventTs)||Number(incoming.ts)||now();
+    if(Number(incoming.displayEventCount)>0){
+      target.displayEventCount=Math.max(1,Math.round(Number(incoming.displayEventCount)));
+    }
     if(incomingTs>=Number(target.lastEventTs||target.ts||0)){
       target.lastEventTs=incomingTs;
-      target.ts=incomingTs;
-      target.lastEntryPrice=markerEntryPrice(incoming);
-      target.entryPrice=markerEntryPrice(incoming);
-      target.lastEventPrice=Number(incoming.lastEventPrice)||Number(incoming.price)||target.lastEventPrice||null;
-      target.price=target.lastEventPrice;
+      // Keep the grouped situation marker on its first candle when individual
+      // RSI repeat markers are rendered alongside it on the chart.
+      if(!incoming.preservePosition){
+        target.ts=incomingTs;
+        target.lastEntryPrice=markerEntryPrice(incoming);
+        target.entryPrice=markerEntryPrice(incoming);
+        target.lastEventPrice=Number(incoming.lastEventPrice)||Number(incoming.price)||target.lastEventPrice||null;
+        target.price=target.lastEventPrice;
+      }
     }
     const ids=[...(target.situationEventIds||[]),...(incoming.situationEventIds||[incoming.id].filter(Boolean))];
     target.situationEventIds=[...new Set(ids.filter(Boolean))].slice(-250);
@@ -408,12 +416,25 @@
     marks=marks.filter(m=>m&&Number(m.lastEventTs||m.ts)>=cutoff&&m.pair&&m.tf&&["LONG","SHORT"].includes(m.direction));
     const duplicate=marks.find(m=>Array.isArray(m.situationEventIds)?m.situationEventIds.includes(id):m.id===id);
     if(duplicate)return {marker:duplicate,merged:true,duplicate:true};
+    if(meta.individual===true){
+      const marker={
+        id,pair:meta.pair,tf,kind:meta.kind,direction:meta.direction,price,entryPrice,ts,
+        touches:1,eventCount:1,displayEventCount:1,label:meta.label||meta.kind,
+        tolerance,individual:true
+      };
+      marks.push(marker);
+      writeStoredMarkers(marks);
+      window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:marker}));
+      return {marker,merged:false,duplicate:false,individual:true};
+    }
     const source=markerSource(meta);
     if(source){
       const incoming={
         id,pair:meta.pair,tf,kind:meta.kind,direction:meta.direction,price,entryPrice,ts,
         anchorPrice:entryPrice,lastEntryPrice:entryPrice,lastEventPrice:price,firstTs:ts,lastEventTs:ts,
-        zoneRadius:tolerance,tolerance,situationSources:Object.fromEntries(SITUATION_SOURCES.map(key=>[key,key===source?1:0])),
+        zoneRadius:tolerance,tolerance,
+        displayEventCount:Number(meta.displayEventCount)>0?Math.max(1,Math.round(Number(meta.displayEventCount))):undefined,
+        situationSources:Object.fromEntries(SITUATION_SOURCES.map(key=>[key,key===source?1:0])),
         eventCount:1,touches:1,label:SITUATION_SOURCE_LABELS[source]||source,
         situationEventIds:[id],
         situationEvents:[{
@@ -424,16 +445,16 @@
       };
       const match=marks.slice().reverse().find(m=>markerMatchesSituation(m,incoming,entryPrice,tolerance,ts));
       let marker,merged=false;
-      if(match){marker=mergeSituationMarker(match,incoming);merged=true}
+      if(match){marker=mergeSituationMarker(match,Object.assign({},incoming,{preservePosition:meta.preservePosition===true}));merged=true}
       else{marker=incoming;marks.push(marker)}
-      try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-500)))}catch{}
+      writeStoredMarkers(marks);
       window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:marker}));
       return {marker,merged,duplicate:false};
     }
     const same=marks.filter(m=>m.pair===meta.pair&&normalizeMarkerTf(m.tf)===tf&&m.kind===meta.kind&&m.direction===meta.direction&&Math.abs(markerEntryPrice(m)-entryPrice)<=Math.max(tolerance,Number(m.tolerance)||0));
     const marker={id,pair:meta.pair,tf,kind:meta.kind,direction:meta.direction,price,entryPrice,ts,touches:1+same.length,label:meta.label||meta.kind,tolerance};
     marks.push(marker);
-    try{localStorage.setItem(MARKER_KEY,JSON.stringify(marks.slice(-500)))}catch{}
+    writeStoredMarkers(marks);
     window.dispatchEvent(new CustomEvent("okx-alert-marker",{detail:marker}));
     return {marker,merged:false,duplicate:false};
   }
