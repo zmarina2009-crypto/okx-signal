@@ -23,7 +23,7 @@
   cfg.vpRsiAtrTolerance=Math.max(0.1,Math.min(2,Number(cfg.vpRsiAtrTolerance)||0.35));
   cfg.vpRsiChopEnabled=!!cfg.vpRsiChopEnabled;
   if(Number(cfg.comboCount)===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;cfg.comboWindow=1;}
-  let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[],vpRsiStates={},vpLevelStates={},vpCandleCache={},vpFetchLogAt={},vpFetchInFlight={},tradeCandleCache={};
+  let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[],vpRsiStates={},vpLevelStates={},vpCandleCache={},vpFetchLogAt={},vpFetchInFlight={},tradeCandleCache={},vpReplayQueues={};
   const $=id=>document.getElementById(id);
   const esc=s=>String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
   function save(){localStorage.setItem(KEY,JSON.stringify(cfg))}
@@ -120,13 +120,20 @@
     if(!Array.isArray(bars)||!tradeCandle)return null;
     const period=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));
     const sameTf=normalizeAlertTf(sourceTf)===normalizeAlertTf(tradeTf);
-    const profileBars=(sameTf?bars.slice(0,-1):bars).slice(-period);
+    const close=Number(tradeCandle.c),tradeTs=Number(tradeCandle.ts);
+    if(!Number.isFinite(close)||!Number.isFinite(tradeTs))return null;
+    const tradeMs=MARKER_TF_MS[normalizeAlertTf(tradeTf)]||60000;
+    const sourceMs=MARKER_TF_MS[normalizeAlertTf(sourceTf)]||tradeMs;
+    const tradeCloseTs=tradeTs+tradeMs;
+    const closedSourceBars=bars.filter(bar=>{
+      const sourceTs=Number(bar&&bar.ts);
+      return Number.isFinite(sourceTs)&&sourceTs+sourceMs<=tradeCloseTs;
+    });
+    const profileBars=(sameTf?closedSourceBars.slice(0,-1):closedSourceBars).slice(-period);
     if(profileBars.length<period)return null;
     const levels=volumeProfileLevels(profileBars,cfg.vpRows);
     if(!levels)return null;
     const profileTs=Number(profileBars[profileBars.length-1]?.ts)||0;
-    const close=Number(tradeCandle.c),tradeTs=Number(tradeCandle.ts);
-    if(!Number.isFinite(close)||!Number.isFinite(tradeTs))return null;
     if(sameTf){
       return {levels,sourceTf:normalizeAlertTf(sourceTf),profileTs,
         previousPrice:Number(bars[bars.length-2]?.c),updated:false,stable:false};
@@ -143,7 +150,6 @@
       vpLevelStates[key]=state;
       return {levels,sourceTf:normalizeAlertTf(sourceTf),profileTs,previousPrice:null,updated:true,stable:true};
     }
-    const tradeMs=({"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000,"1d":86400000})[normalizeAlertTf(tradeTf)]||60000;
     if(tradeTs>Number(state.lastTradeTs)){
       const previousPrice=Number(state.lastTradePrice),previousTs=Number(state.lastTradeTs);
       const continuous=tradeTs-previousTs<=tradeMs*1.5;
@@ -674,6 +680,7 @@
     const raw=o.a||[],pair=o.pair,tf=o.tf||"15m",updateUi=o.updateUi;
     if(raw.length<6)return;
     const polled=o.polled===true;
+    const vpOnly=o.vpOnly===true;
     const hist=raw;
     const live=polled?null:o.live;
     if(hist.length<5)return;
@@ -685,7 +692,7 @@
     const cachedVp=vpCandleCache[pair+"|"+sourceTf];
     const vpBars=Array.isArray(o.vp)&&o.vp.length?o.vp:(sourceTf===normalizeAlertTf(tf)?hist:(cachedVp&&cachedVp.bars)||[]);
     const vpProfile=needsVp?stableVpProfile(pair,tf,sourceTf,vpBars,closed):null;
-    if(closed&&closed.ts!==st.lastClosedTs){
+    if(!vpOnly&&closed&&closed.ts!==st.lastClosedTs){
       st.lastClosedTs=closed.ts;
       if(cfg.volume&&hist.length>=Math.max(3,+cfg.volumePeriod||20)+1){
         const n=Math.max(2,+cfg.volumePeriod||20),base=hist.slice(0,-1).slice(-n),avg=base.reduce((z,x)=>z+(Number(x.v)||0),0)/base.length,v=Number(closed.v)||0,m=avg>0?v/avg:0;
@@ -744,7 +751,7 @@
       }
       }
     }
-    if(cfg.sma){
+    if(!vpOnly&&cfg.sma){
       const n=Math.max(2,+cfg.smaPeriod||21),m=sma(hist,n);
       if(m){
         const src=live||closed,price=Number(src?.c)||0,high=Number(src?.h)||price,low=Number(src?.l)||price,tol=Math.max(0,+cfg.smaTolerance||0)/100;
@@ -891,7 +898,7 @@
       evaluatePair:(bars,pair,tf,vpBars)=>evaluatePair({a:bars,vp:vpBars,pair,tf,polled:true,updateUi:false}),
       setConfig:value=>{cfg=Object.assign({},cfg,value||{});},
       setComboCandles:bars=>{currentComboCandles=Array.isArray(bars)?bars:[];},
-      resetCombo:()=>{comboSignals=[];comboLastAt={};comboFilterLastAt={};lastAlertAt={};pairState={};vpLevelStates={};vpCandleCache={};vpFetchInFlight={};tradeCandleCache={};},
+      resetCombo:()=>{comboSignals=[];comboLastAt={};comboFilterLastAt={};lastAlertAt={};pairState={};vpLevelStates={};vpCandleCache={};vpFetchInFlight={};tradeCandleCache={};vpReplayQueues={};},
       getAlertLog:()=>alertLogEntries.slice(),
       getComboSignals:()=>comboSignals.slice(),
       getVpState:(pair,tradeTf,sourceTf)=>{
@@ -904,17 +911,106 @@
       pollSelected:()=>pollSelected(),
       waitForVpIdle:()=>Promise.allSettled(Object.values(vpFetchInFlight)),
       getVpFetchInFlight:()=>Object.keys(vpFetchInFlight),
+      getPendingVpReplay:()=>Object.values(vpReplayQueues).map(queue=>({
+        pair:queue.pair,tradeTf:queue.tradeTf,sourceTf:queue.sourceTf,
+        candleTimestamps:queue.candles.map(candle=>Number(candle.ts))
+      })),
       setMarketApi:api=>{window.OKXSignalApp=api;}
     };
     return;
   }
   injectCss();build();
   setInterval(()=>{try{const s=app();if(s)evaluate(s)}catch(e){console.warn("Alerts",e)}},500);
+  function vpReplayRequestKey(pair,tradeTf,sourceTf,period,rows){
+    return [pair,tradeTf,sourceTf,period,rows].join("|");
+  }
+  function vpReplayStateKey(pair,tradeTf,sourceTf,period,rows){
+    return [pair,normalizeAlertTf(tradeTf),normalizeAlertTf(sourceTf),period,rows].join("|");
+  }
+  function cloneVpState(state){
+    if(!state)return null;
+    return Object.assign({},state,{levels:Object.assign({},state.levels||{})});
+  }
+  function appendVpReplayCandles(queue,bars){
+    if(!queue||!Array.isArray(bars))return;
+    const ordered=bars.slice().sort((left,right)=>(Number(left&&left.ts)||0)-(Number(right&&right.ts)||0));
+    ordered.forEach(candle=>{
+      const ts=Number(candle&&candle.ts);
+      if(!Number.isFinite(ts)||ts<=queue.lastQueuedTs)return;
+      queue.candles.push(candle);
+      queue.lastQueuedTs=ts;
+    });
+    // Keep a bounded buffer even if the VP endpoint remains unavailable for an unusually long time.
+    if(queue.candles.length>600){
+      queue.candles=queue.candles.slice(-600);
+      queue.truncated=true;
+    }
+  }
+  function beginVpReplay(requestKey,pair,tradeTf,sourceTf,period,rows){
+    const stateKey=vpReplayStateKey(pair,tradeTf,sourceTf,period,rows);
+    const savedState=vpLevelStates[stateKey];
+    const trade=tradeCandleCache[pair+"|"+tradeTf];
+    const pairStateSnapshot=pairState[pair];
+    const queue={
+      pair,tradeTf,sourceTf,stateKey,
+      snapshotVpState:cloneVpState(savedState),
+      snapshotLastVpEvaluatedTs:savedState?Number(pairStateSnapshot&&pairStateSnapshot.lastVpEvaluatedTs)||0:0,
+      candles:[],
+      lastQueuedTs:savedState?Number(savedState.lastTradeTs)||0:0,
+      truncated:false
+    };
+    vpReplayQueues[requestKey]=queue;
+    if(trade&&Array.isArray(trade.a)&&trade.a.length){
+      // With an existing baseline, collect every later close. On first profile load,
+      // only the latest close is needed to establish that profile's initial baseline.
+      appendVpReplayCandles(queue,savedState?trade.a:[trade.a[trade.a.length-1]]);
+    }
+    return queue;
+  }
+  function collectVpReplayCandles(pair,tradeTf,sourceTf,bars){
+    const period=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));
+    const rows=Math.max(10,Math.min(60,Math.round(Number(cfg.vpRows)||30)));
+    const requestKey=vpReplayRequestKey(pair,tradeTf,sourceTf,period,rows);
+    const queue=vpReplayQueues[requestKey];
+    if(queue)appendVpReplayCandles(queue,bars);
+  }
+  function replayVpCandles(requestKey,vpBars){
+    const queue=vpReplayQueues[requestKey];
+    if(!queue||!queue.candles.length)return 0;
+    const cachedTrade=tradeCandleCache[queue.pair+"|"+queue.tradeTf];
+    const history=cachedTrade&&Array.isArray(cachedTrade.a)?cachedTrade.a:[];
+    if(!history.length)return 0;
+
+    // Undo VP-only progress made with the previous profile while the refresh was pending,
+    // then replay buffered closes in order against the profile history returned by OKX.
+    if(queue.snapshotVpState)vpLevelStates[queue.stateKey]=cloneVpState(queue.snapshotVpState);
+    else delete vpLevelStates[queue.stateKey];
+    const st=pairState[queue.pair]||(pairState[queue.pair]={lastClosedTs:0,lastTouch:false});
+    st.lastVpEvaluatedTs=queue.snapshotLastVpEvaluatedTs;
+
+    let processed=0;
+    queue.candles.forEach(candle=>{
+      const ts=Number(candle&&candle.ts);
+      if(!Number.isFinite(ts))return;
+      const candleHistory=history.filter(item=>Number(item&&item.ts)<=ts);
+      if(candleHistory.length<5||Number(candleHistory[candleHistory.length-1]?.ts)!==ts)return;
+      evaluatePair({
+        a:candleHistory,vp:vpBars,live:candle,
+        pair:queue.pair,tf:queue.tradeTf,polled:true,updateUi:false,vpOnly:true
+      });
+      processed++;
+    });
+    if(queue.truncated){
+      log("other","Очередь VP для "+queue.pair+" "+queue.tradeTf+" превысила лимит; обработана доступная история без повторной отправки основных алертов.");
+    }
+    return processed;
+  }
   function requestVpCandles(pair,tradeTf,sourceTf){
     const period=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));
     const rows=Math.max(10,Math.min(60,Math.round(Number(cfg.vpRows)||30)));
-    const requestKey=[pair,tradeTf,sourceTf,period,rows].join("|");
+    const requestKey=vpReplayRequestKey(pair,tradeTf,sourceTf,period,rows);
     if(vpFetchInFlight[requestKey])return vpFetchInFlight[requestKey];
+    beginVpReplay(requestKey,pair,tradeTf,sourceTf,period,rows);
     const limit=Math.min(300,Math.max(80,period+2));
     const task=fetchCandles(pair,sourceTf,limit).then(vpBars=>{
       if(!Array.isArray(vpBars)||!vpBars.length)return;
@@ -923,17 +1019,10 @@
          normalizeVpTf(cfg.vpTf,tradeTf)!==sourceTf||
          Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)))!==period||
          Math.max(10,Math.min(60,Math.round(Number(cfg.vpRows)||30)))!==rows||
-         !(cfg.selectedPairs||[]).includes(pair))return;
+         !(cfg.selectedPairs||[]).includes(pair)||
+         !(!!cfg.vp||(cfg.comboEnabled&&cfg.comboComposition==="vpRsi")||(cfg.comboEnabled&&Number(cfg.comboCount)===4)))return;
       vpCandleCache[pair+"|"+sourceTf]={bars:vpBars,fetchedAt:now(),period,rows};
-      // Revisit the latest already-processed trade candle. evaluatePair de-duplicates
-      // base alerts by lastClosedTs and the VP branch by lastVpEvaluatedTs.
-      const latest=tradeCandleCache[pair+"|"+tradeTf];
-      if(latest&&Array.isArray(latest.a)&&latest.a.length){
-        evaluatePair({
-          a:latest.a,vp:vpBars,live:latest.a[latest.a.length-1],
-          pair,tf:tradeTf,polled:true,updateUi:pair===app()?.currentPair
-        });
-      }
+      replayVpCandles(requestKey,vpBars);
       return vpBars;
     }).catch(error=>{
       const key=pair+"|"+sourceTf,nowTs=now();
@@ -944,6 +1033,7 @@
       return null;
     }).finally(()=>{
       if(vpFetchInFlight[requestKey]===task)delete vpFetchInFlight[requestKey];
+      delete vpReplayQueues[requestKey];
     });
     vpFetchInFlight[requestKey]=task;
     return task;
@@ -961,6 +1051,7 @@
         if(r.status!=="fulfilled"||!r.value.a?.length)continue;
         const pair=r.value.pair,a=r.value.a;
         tradeCandleCache[pair+"|"+tf]={a,fetchedAt:now()};
+        if(needsVp&&sourceTf!==tf)collectVpReplayCandles(pair,tf,sourceTf,a);
         const cachedVp=vpCandleCache[pair+"|"+sourceTf];
         const vpBars=sourceTf===tf?a:(cachedVp&&cachedVp.bars)||[];
         evaluatePair({
