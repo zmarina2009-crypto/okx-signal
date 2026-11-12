@@ -288,6 +288,7 @@ $("smaSettingsSave").onclick=()=>{
 };
 renderChartSmaLegend();
 window.addEventListener("okx-combo-mode-change",()=>{if(last)draw(last)});
+window.addEventListener("okx-alert-settings-change",()=>{if(last)draw(last)});
 function removeAlertMarker(marker){
   if(!marker)return;
   let marks=[];try{marks=JSON.parse(localStorage.getItem("okx_v2_alert_markers")||"[]");if(!Array.isArray(marks))marks=[]}catch{}
@@ -507,7 +508,19 @@ function draw(e){window.candles=candles;window.chartState=chartState;
     try{marks=JSON.parse(localStorage.getItem("okx_v2_alert_markers")||"[]");if(!Array.isArray(marks))marks=[]}catch{}
     const tf=$("tf")?.value||"15m";
     let comboOnly=false;try{comboOnly=localStorage.getItem("okx_combo_mode_active")==="1"}catch(e){}
-    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||["combo","scalping","bos"].includes(m.kind))).slice(-24);
+    // Keep stored history intact, but only draw alert markers for sources enabled in Alerts.
+    let alertSettings={};try{const saved=JSON.parse(localStorage.getItem("okx_alerts_v1")||"{}");if(saved&&typeof saved==="object")alertSettings=saved}catch(e){}
+    const markerSourceEnabled=m=>{
+      switch(String(m.kind||"").toLowerCase()){
+        case "volume": return alertSettings.volume!==false;
+        case "rsi": return alertSettings.rsi!==false;
+        case "sma": return alertSettings.sma!==false;
+        case "vp": return alertSettings.vp!==false;
+        case "combo": return alertSettings.comboEnabled===true;
+        default: return true; // Scalping/BOS markers are controlled by their own modules.
+      }
+    };
+    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&markerSourceEnabled(m)&&(!comboOnly||["combo","scalping","bos"].includes(m.kind))).slice(-24);
     const indexByTs=new Map(series.map((c,i)=>[Number(c.ts),i]));
     visibleMarks.forEach(m=>{
       let gi=indexByTs.get(Number(m.ts));
