@@ -256,7 +256,8 @@ test("a delayed VP response replays every intermediate 1m close in order without
   // The first poll starts VP loading and seeds the initial trade-price baseline.
   await api.pollSelected();
   assert.equal(api.getVpFetchInFlight().length, 1);
-  assert.deepEqual(api.getPendingVpReplay()[0].candleTimestamps, [tradeBars.at(-1).ts]);
+  assert.equal(api.getPendingVpReplay()[0].candleTimestamps.length, 1);
+  assert.equal(api.getPendingVpReplay()[0].candleTimestamps[0], tradeBars.at(-1).ts);
 
   // Five closed minutes arrive while the 15m request is still pending.
   for (const close of [99.95, 100.2, 100.25, 100.3, 100.15]) {
@@ -264,7 +265,7 @@ test("a delayed VP response replays every intermediate 1m close in order without
     tradeBars = [...tradeBars, next];
     await api.pollSelected();
   }
-  const queued = api.getPendingVpReplay()[0].candleTimestamps;
+  const queued = Array.from(api.getPendingVpReplay()[0].candleTimestamps);
   assert.equal(queued.length, 6, "initial baseline plus all five delayed closes must be buffered");
   assert.deepEqual(queued, [...queued].sort((left, right) => left - right));
   assert.equal(api.read().filter(marker => marker.kind === "vp").length, 0,
