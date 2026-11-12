@@ -23,7 +23,7 @@
   cfg.vpRsiAtrTolerance=Math.max(0.1,Math.min(2,Number(cfg.vpRsiAtrTolerance)||0.35));
   cfg.vpRsiChopEnabled=!!cfg.vpRsiChopEnabled;
   if(Number(cfg.comboCount)===4){cfg.volume=cfg.rsi=cfg.sma=cfg.vp=true;cfg.comboEnabled=true;cfg.comboWindow=1;}
-  let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[],vpRsiStates={},vpLevelStates={},vpCandleCache={},vpFetchLogAt={};
+  let audioCtx=null,lastClosedTs=0,lastPair="",lastTf="",lastTouch=false,lastAlertAt={},pairState={},pollBusy=false,comboSignals=[],comboLastAt={},comboFilterLastAt={},currentComboCandles=[],vpRsiStates={},vpLevelStates={},vpCandleCache={},vpFetchLogAt={},vpFetchInFlight={},tradeCandleCache={};
   const $=id=>document.getElementById(id);
   const esc=s=>String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
   function save(){localStorage.setItem(KEY,JSON.stringify(cfg))}
@@ -870,7 +870,7 @@
       evaluatePair:(bars,pair,tf,vpBars)=>evaluatePair({a:bars,vp:vpBars,pair,tf,polled:true,updateUi:false}),
       setConfig:value=>{cfg=Object.assign({},cfg,value||{});},
       setComboCandles:bars=>{currentComboCandles=Array.isArray(bars)?bars:[];},
-      resetCombo:()=>{comboSignals=[];comboLastAt={};comboFilterLastAt={};lastAlertAt={};pairState={};vpLevelStates={};vpCandleCache={};},
+      resetCombo:()=>{comboSignals=[];comboLastAt={};comboFilterLastAt={};lastAlertAt={};pairState={};vpLevelStates={};vpCandleCache={};vpFetchInFlight={};tradeCandleCache={};},
       getAlertLog:()=>alertLogEntries.slice(),
       getComboSignals:()=>comboSignals.slice(),
       getVpState:(pair,tradeTf,sourceTf)=>{
@@ -881,12 +881,52 @@
       getConfig:()=>Object.assign({},cfg),
       getResolvedVpTf:tradeTf=>normalizeVpTf(cfg.vpTf,tradeTf),
       pollSelected:()=>pollSelected(),
+      waitForVpIdle:()=>Promise.allSettled(Object.values(vpFetchInFlight)),
+      getVpFetchInFlight:()=>Object.keys(vpFetchInFlight),
       setMarketApi:api=>{window.OKXSignalApp=api;}
     };
     return;
   }
   injectCss();build();
   setInterval(()=>{try{const s=app();if(s)evaluate(s)}catch(e){console.warn("Alerts",e)}},500);
+  function requestVpCandles(pair,tradeTf,sourceTf){
+    const period=Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)));
+    const rows=Math.max(10,Math.min(60,Math.round(Number(cfg.vpRows)||30)));
+    const requestKey=[pair,tradeTf,sourceTf,period,rows].join("|");
+    if(vpFetchInFlight[requestKey])return vpFetchInFlight[requestKey];
+    const limit=Math.min(300,Math.max(80,period+2));
+    const task=fetchCandles(pair,sourceTf,limit).then(vpBars=>{
+      if(!Array.isArray(vpBars)||!vpBars.length)return;
+      // Ignore responses for settings/pairs that the user changed while the request was in flight.
+      if(normalizeAlertTf(cfg.alertTf)!==tradeTf||
+         normalizeVpTf(cfg.vpTf,tradeTf)!==sourceTf||
+         Math.max(20,Math.min(300,Math.round(Number(cfg.vpPeriod)||60)))!==period||
+         Math.max(10,Math.min(60,Math.round(Number(cfg.vpRows)||30)))!==rows||
+         !(cfg.selectedPairs||[]).includes(pair))return;
+      vpCandleCache[pair+"|"+sourceTf]={bars:vpBars,fetchedAt:now(),period,rows};
+      // Revisit the latest already-processed trade candle. evaluatePair de-duplicates
+      // base alerts by lastClosedTs and the VP branch by lastVpEvaluatedTs.
+      const latest=tradeCandleCache[pair+"|"+tradeTf];
+      if(latest&&Array.isArray(latest.a)&&latest.a.length){
+        evaluatePair({
+          a:latest.a,vp:vpBars,live:latest.a[latest.a.length-1],
+          pair,tf:tradeTf,polled:true,updateUi:pair===app()?.currentPair
+        });
+      }
+      return vpBars;
+    }).catch(error=>{
+      const key=pair+"|"+sourceTf,nowTs=now();
+      if(nowTs-(vpFetchLogAt[key]||0)>5*60*1000){
+        vpFetchLogAt[key]=nowTs;
+        log("other","VP "+sourceTf+" недоступен для "+pair+"; основные сигналы "+tradeTf+" продолжают работать. "+(error&&error.message?error.message:""));
+      }
+      return null;
+    }).finally(()=>{
+      if(vpFetchInFlight[requestKey]===task)delete vpFetchInFlight[requestKey];
+    });
+    vpFetchInFlight[requestKey]=task;
+    return task;
+  }
   async function pollSelected(){
     if(pollBusy)return;
     const sel=(cfg.selectedPairs||[]).slice(0,20),tf=normalizeAlertTf(cfg.alertTf),sourceTf=normalizeVpTf(cfg.vpTf,tf);
@@ -894,31 +934,19 @@
     const needsVp=!!cfg.vp||(cfg.comboEnabled&&cfg.comboComposition==="vpRsi")||(cfg.comboEnabled&&Number(cfg.comboCount)===4);
     pollBusy=true;
     try{
-      const results=await Promise.allSettled(sel.map(async pair=>{
-        const vpLimit=Math.min(300,Math.max(80,Math.round(Number(cfg.vpPeriod)||60)+2));
-        const [tradeResult,vpResult]=await Promise.allSettled([
-          fetchCandles(pair,tf,100),
-          needsVp?(sourceTf===tf?Promise.resolve(null):fetchCandles(pair,sourceTf,vpLimit)):Promise.resolve(null)
-        ]);
-        if(tradeResult.status!=="fulfilled")throw tradeResult.reason||Error("Trade timeframe candles unavailable");
-        let vpBars=sourceTf===tf?tradeResult.value:[];
-        if(sourceTf!==tf&&vpResult.status==="fulfilled"&&Array.isArray(vpResult.value))vpBars=vpResult.value;
-        else if(sourceTf!==tf&&needsVp&&vpResult.status==="rejected"){
-          const key=pair+"|"+sourceTf,nowTs=now();
-          if(nowTs-(vpFetchLogAt[key]||0)>5*60*1000){
-            vpFetchLogAt[key]=nowTs;
-            log("other","VP "+sourceTf+" недоступен для "+pair+"; основные сигналы "+tf+" продолжают работать.");
-          }
-        }
-        if(vpBars.length)vpCandleCache[pair+"|"+sourceTf]={bars:vpBars,fetchedAt:now()};
-        return {pair,a:tradeResult.value,vp:vpBars};
-      }));
+      // The trade timeframe is the critical path: never wait for the higher-TF VP request.
+      const results=await Promise.allSettled(sel.map(async pair=>({pair,a:await fetchCandles(pair,tf,100)})));
       for(const r of results){
         if(r.status!=="fulfilled"||!r.value.a?.length)continue;
+        const pair=r.value.pair,a=r.value.a;
+        tradeCandleCache[pair+"|"+tf]={a,fetchedAt:now()};
+        const cachedVp=vpCandleCache[pair+"|"+sourceTf];
+        const vpBars=sourceTf===tf?a:(cachedVp&&cachedVp.bars)||[];
         evaluatePair({
-          a:r.value.a,vp:r.value.vp,live:r.value.a[r.value.a.length-1],
-          pair:r.value.pair,tf,polled:true,updateUi:r.value.pair===app()?.currentPair
+          a,vp:vpBars,live:a[a.length-1],
+          pair,tf,polled:true,updateUi:pair===app()?.currentPair
         });
+        if(needsVp&&sourceTf!==tf)requestVpCandles(pair,tf,sourceTf);
       }
     }finally{pollBusy=false}
   }
