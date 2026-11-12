@@ -238,6 +238,79 @@ test("alert polling fetches 1m trade and 15m VP candles independently", async ()
   assert.equal(api.read()[0].direction, "LONG");
 });
 
+test("a delayed VP response replays every intermediate 1m close in order without duplicating base alerts", async () => {
+  const api = createHarness({
+    alertTf: "1m", vpTf: "15m", selectedPairs: [PAIR],
+    volume: false, rsi: false, sma: false, vp: true
+  });
+  const start = 1_800_000_000_000;
+  let tradeBars = makeTradeBars([99.9, 99.9, 99.9, 99.9, 99.9, 99.9], start);
+  const vpBars = makeProfileBars({ close: 100, count: 20 });
+  let resolveVp;
+  const delayedVp = new Promise(resolve => { resolveVp = resolve; });
+  api.setMarketApi({
+    getState: () => ({ currentPair: PAIR }),
+    fetchCandles: async (pair, tf) => tf === "15m" ? delayedVp : tradeBars
+  });
+
+  // The first poll starts VP loading and seeds the initial trade-price baseline.
+  await api.pollSelected();
+  assert.equal(api.getVpFetchInFlight().length, 1);
+  assert.deepEqual(api.getPendingVpReplay()[0].candleTimestamps, [tradeBars.at(-1).ts]);
+
+  // Five closed minutes arrive while the 15m request is still pending.
+  for (const close of [99.95, 100.2, 100.25, 100.3, 100.15]) {
+    const next = makeTradeBars([close], tradeBars.at(-1).ts + 60_000)[0];
+    tradeBars = [...tradeBars, next];
+    await api.pollSelected();
+  }
+  const queued = api.getPendingVpReplay()[0].candleTimestamps;
+  assert.equal(queued.length, 6, "initial baseline plus all five delayed closes must be buffered");
+  assert.deepEqual(queued, [...queued].sort((left, right) => left - right));
+  assert.equal(api.read().filter(marker => marker.kind === "vp").length, 0,
+    "VP cannot be evaluated until its profile response arrives");
+
+  resolveVp(vpBars);
+  await api.waitForVpIdle();
+
+  const vpMarkers = api.read().filter(marker => marker.kind === "vp");
+  assert.equal(vpMarkers.length, 1, "the intermediate POC cross must be detected once");
+  assert.equal(vpMarkers[0].direction, "LONG");
+  assert.equal(vpMarkers[0].ts, queued[2], "the marker must retain the actual crossing candle, not the latest candle");
+  assert.equal(vpMarkers[0].situationEvents[0].sourceTf, "15m");
+  assert.equal(api.getPendingVpReplay().length, 0);
+  assert.equal(api.getVpFetchInFlight().length, 0);
+
+  // A later normal poll cannot re-send the replayed historical crossing.
+  await api.pollSelected();
+  assert.equal(api.read().filter(marker => marker.kind === "vp").length, 1);
+});
+
+test("higher-timeframe VP profile excludes a source candle until its close is available", () => {
+  const api = createHarness();
+  const tradeStart = 1_800_000_000_000;
+  const oldProfile = makeProfileBars({ close: 100, start: tradeStart - 20 * 15 * 60_000 });
+  const formingAtTradeStart = {
+    ts: tradeStart, o: 105, h: 106, l: 104, c: 105, v: 1000, confirm: "1"
+  };
+  const vpBars = [...oldProfile, formingAtTradeStart];
+  let tradeBars = makeTradeBars([99.9, 99.9, 99.9, 99.9, 99.9, 99.9], tradeStart);
+
+  api.evaluatePair(tradeBars, PAIR, "1m", vpBars);
+  const beforeSourceClose = api.getVpState(PAIR, "1m", "15m");
+  assert.equal(beforeSourceClose.profileTs, oldProfile.at(-1).ts,
+    "the 15m candle that has not closed must not enter the profile");
+
+  for (let i = 0; i < 9; i++) {
+    const close = 99.9 + (i % 2 ? 0.01 : 0);
+    tradeBars = [...tradeBars, makeTradeBars([close], tradeBars.at(-1).ts + 60_000)[0]];
+  }
+  api.evaluatePair(tradeBars, PAIR, "1m", vpBars);
+  const afterSourceClose = api.getVpState(PAIR, "1m", "15m");
+  assert.equal(afterSourceClose.profileTs, formingAtTradeStart.ts,
+    "the 15m source candle becomes eligible only when its 15-minute close is reached");
+});
+
 test("a failed 15m VP request does not stop base 1m alerts", async () => {
   const api = createHarness({
     alertTf: "1m", vpTf: "15m", selectedPairs: [PAIR],
