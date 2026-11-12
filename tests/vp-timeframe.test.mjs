@@ -277,11 +277,15 @@ test("a delayed VP response replays every intermediate 1m close in order without
   resolveVp(vpBars);
   await api.waitForVpIdle();
 
-  const vpMarkers = api.read().filter(marker => marker.kind === "vp");
-  assert.equal(vpMarkers.length, 1, "the intermediate POC cross must be detected once");
+  const vpMarkers = api.read().filter(marker =>
+    Number(marker.situationSources?.vpPoc) > 0 ||
+    (Array.isArray(marker.situationEvents) && marker.situationEvents.some(event => event.kind === "vp"))
+  );
+  assert.equal(vpMarkers.length, 1, "the intermediate POC cross must be present once in its situation");
   assert.equal(vpMarkers[0].direction, "LONG");
   assert.equal(vpMarkers[0].ts, queued[2], "the marker must retain the actual crossing candle, not the latest candle");
-  assert.equal(vpMarkers[0].situationEvents[0].sourceTf, "15m");
+  assert.ok(vpMarkers[0].situationEvents.some(event => event.kind === "vp" && event.sourceTf === "15m"),
+    "the grouped situation must retain the VP source timeframe");
   assert.equal(api.read().filter(marker => marker.kind === "volume").length, 1,
     "VP-only replay must not duplicate the previously delivered Volume alert");
   assert.equal(api.getPendingVpReplay().length, 0);
@@ -289,7 +293,10 @@ test("a delayed VP response replays every intermediate 1m close in order without
 
   // A later normal poll cannot re-send the replayed historical crossing.
   await api.pollSelected();
-  assert.equal(api.read().filter(marker => marker.kind === "vp").length, 1);
+  assert.equal(api.read().filter(marker =>
+    Number(marker.situationSources?.vpPoc) > 0 ||
+    (Array.isArray(marker.situationEvents) && marker.situationEvents.some(event => event.kind === "vp"))
+  ).length, 1);
 });
 
 test("higher-timeframe VP profile excludes a source candle until its close is available", () => {
