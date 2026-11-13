@@ -208,7 +208,7 @@ async function handleBootstrap(req: Request, client: ReturnType<typeof getAdminC
     // imported aggregate stats and Telegram history untouched; start the new
     // worker with no stale partial combo signals or cooldown timestamps.
     if (!isObject(state.lastAlertAt)) state.lastAlertAt = {};
-    if (!Array.isArray(state.lastSmaTouch)) state.lastSmaTouch = [];
+    if (!isObject(state.lastSmaTouch)) state.lastSmaTouch = {};
     if (!Array.isArray(state.recentSignals)) state.recentSignals = [];
     if (!Array.isArray(state.performanceSignals)) state.performanceSignals = [];
     if (!Array.isArray(state.telegramHistory)) state.telegramHistory = [];
@@ -316,7 +316,8 @@ Deno.serve(async (req: Request) => {
       const runtime = await loadRuntime(client);
       const history = Array.isArray(runtime.state?.telegramHistory) ? runtime.state.telegramHistory : [];
       const limit = parseLimit(url.searchParams.get("limit"), 100);
-      return json({ items: history.slice(-limit).reverse(), total: history.length, limit }, 200, cors);
+      const items = [...history].sort((a, b) => String(b?.createdAt || "").localeCompare(String(a?.createdAt || ""))).slice(0, limit);
+      return json({ items, total: history.length, limit }, 200, cors);
     } catch (error) {
       return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 503, cors);
     }
