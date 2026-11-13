@@ -137,7 +137,8 @@ test("replays the uploaded SUI 1m/15m OKX sample against the current PR code", (
       sources: normal.result.sourceCounts,
       componentSignals: normal.data.candidateComponentSignals,
       matchedComponents: normal.data.matchedComponentSignals,
-      unmatchedComponents: normal.data.unmatchedComponentSignals
+      unmatchedComponents: normal.data.unmatchedComponentSignals,
+      componentAudit: normal.data.componentSignalAudit
     },
     strictCombo: {
       confirmed: strictCombo.result.visibleSituationCount,
