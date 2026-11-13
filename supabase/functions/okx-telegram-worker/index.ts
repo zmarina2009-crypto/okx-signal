@@ -1,4 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.119.0";
+import { runDryRunTick } from "./engine.ts";
+import { buildPerformanceStats } from "./statistics.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -270,6 +272,76 @@ async function handleBootstrap(req: Request, client: ReturnType<typeof getAdminC
   }
 }
 
+async function handleDryRunTick(req: Request, client: ReturnType<typeof getAdminClient>) {
+  const { data: storedToken, error: tokenError } = await client.rpc("get_okx_v2_worker_cron_token");
+  if (tokenError) throw new Error("Could not read worker token from Supabase Vault: " + tokenError.message);
+  const expectedToken = typeof storedToken === "string" ? storedToken : "";
+  const suppliedToken = req.headers.get("x-worker-cron-token") || "";
+  if (!expectedToken || !safeEquals(suppliedToken, expectedToken)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ ok: false, error: "Request body must be valid JSON." }, 400);
+  }
+  if (body?.mode !== "dry_run") {
+    return json({
+      ok: false,
+      error: "Only mode=dry_run is available. Telegram sending is not implemented or enabled.",
+      telegramSendingEnabled: false,
+    }, 400);
+  }
+
+  const leaseToken = crypto.randomUUID();
+  const { data: claimed, error: claimError } = await client.rpc(
+    "claim_okx_v2_worker_tick",
+    { p_lease_token: leaseToken, p_lease_seconds: 120 },
+  );
+  if (claimError) return json({ ok: false, error: "Could not acquire worker lease: " + claimError.message }, 500);
+  if (claimed !== true) return json({ ok: false, busy: true, error: "Another worker operation currently holds the lease." }, 409);
+
+  let releaseStatus = "ok";
+  let releaseError: string | null = null;
+  try {
+    const [runtime, rulesRow] = await Promise.all([loadRuntime(client), loadRules(client)]);
+    const state: Record<string, any> = structuredClone(isObject(runtime.state) ? runtime.state : {});
+    const result = await runDryRunTick(rulesRow.rules, state);
+
+    const { data: saved, error: saveError } = await client.rpc(
+      "save_okx_v2_worker_state",
+      { p_lease_token: leaseToken, p_state: state },
+    );
+    if (saveError) throw new Error("Could not persist dry-run worker state: " + saveError.message);
+    if (saved !== true) throw new Error("Worker lease expired before dry-run state could be saved.");
+
+    if (!result.ok) {
+      releaseStatus = "failed";
+      releaseError = result.errors.map((item: Record<string, string>) => item.error).join("; ").slice(0, 1000);
+    }
+    return json({
+      ...result,
+      stateSaved: true,
+      rulesRevision: rulesRow.revision,
+      statsSnapshotPreserved: Boolean(state.statsSnapshot),
+      telegramHistoryPreserved: Array.isArray(state.telegramHistory) ? state.telegramHistory.length : 0,
+    }, result.ok ? 200 : 207);
+  } catch (error) {
+    releaseStatus = "failed";
+    releaseError = error instanceof Error ? error.message : String(error);
+    return json({ ok: false, error: releaseError, telegramSendingEnabled: false }, 502);
+  } finally {
+    const { error } = await client.rpc("release_okx_v2_worker_tick", {
+      p_lease_token: leaseToken,
+      p_status: releaseStatus,
+      p_error: releaseError,
+    });
+    if (error) console.error("Could not release dry-run lease:", error.message);
+  }
+}
+
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const origin = req.headers.get("origin") || "";
@@ -291,8 +363,9 @@ Deno.serve(async (req: Request) => {
       return json({
         ok: true,
         service: "okx-signal-pro-v2",
-        mode: "bootstrap-only",
+        mode: "dry-run-only",
         telegramSendingEnabled: false,
+        runtimeBootstrapStatus: runtime.state?.migrationSnapshot?.runtimeBootstrap?.status || null,
         rules: rules.rules.length,
         rulesRevision: rules.revision,
         lastTickAt: runtime.last_tick_at,
@@ -331,16 +404,33 @@ Deno.serve(async (req: Request) => {
     try {
       const client = getAdminClient();
       const runtime = await loadRuntime(client);
-      return json(runtime.state?.statsSnapshot ?? {
+      const snapshot = runtime.state?.statsSnapshot ?? {
         generatedAt: null,
         periodDays: 90,
         signalCount: 0,
         pending12h: 0,
         groups: [],
         note: "No imported statistics snapshot is available.",
+      };
+      return json({
+        ...snapshot,
+        livePerformance: buildPerformanceStats(runtime.state || {}, parseLimit(url.searchParams.get("days"), 90)),
       }, 200, cors);
     } catch (error) {
       return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 503, cors);
+    }
+  }
+
+  if (req.method === "POST" && route === "tick") {
+    try {
+      const client = getAdminClient();
+      const response = await handleDryRunTick(req, client);
+      return new Response(response.body, {
+        status: response.status,
+        headers: { ...Object.fromEntries(response.headers), ...cors },
+      });
+    } catch (error) {
+      return json({ ok: false, error: error instanceof Error ? error.message : String(error), telegramSendingEnabled: false }, 503, cors);
     }
   }
 
