@@ -1,5 +1,7 @@
 # Supabase Cron setup — run only after the Edge Function is deployed and tested.
 
+> **Hold — not ready to schedule:** as of 2026-11-13 the deployed `okx-telegram-worker` function only supports read-only routes and a protected one-time `/bootstrap`. The recurring `/tick` route and Telegram delivery logic are not implemented. Do not create this Cron job until the full worker has been implemented, tested in dry-run, and explicitly approved for cutover.
+
 This is intentionally not part of the initial database migration. Do not create a schedule until:
 1. Supabase project exists and the SQL migration has been applied.
 2. The okx-telegram-worker Edge Function is deployed.
