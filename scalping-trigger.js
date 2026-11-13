@@ -47,6 +47,12 @@
   let audioContext = null;
   let polling = false;
   let lastCheckAt = 0;
+  let lastBarsCount = 0;
+  let lastEvaluationAt = 0;
+  let lastEvaluatedPair = "";
+  let lastEvaluatedTf = "";
+  let lastBosState = "ещё не проверялся";
+  let lastPollError = "";
   let modal = null;
   let journalModal = null;
   let statusNode = null;
@@ -396,6 +402,10 @@
         previousRsi >= cfg.rsiOverbought && currentRsi < cfg.rsiOverbought));
 
     const bos = detectBos(bars);
+    lastEvaluationAt = Date.now();
+    lastEvaluatedPair = pair;
+    lastEvaluatedTf = normalizeTf(tf);
+    lastBosState = bos ? (bos.label + " · уровень " + Number(bos.level).toPrecision(8)) : "на последней закрытой свече не обнаружен";
     if (bos && cfg.bosEnabled && cfg.bosAlerts) {
       const pivotId = ["bos", pair, normalizeTf(tf), bos.direction, bos.pivotTs].join("|");
       const bosZoneRadius=Math.max((averageTrueRange(bars,14)||0)*1.25,Math.abs(Number(candle.c)||0)*.00025);
@@ -437,10 +447,15 @@
     }
     polling = true;
     try {
-      await Promise.allSettled(target.pairs.map(async (pair) => {
+      const results = await Promise.allSettled(target.pairs.map(async (pair) => {
         const bars = await window.OKXSignalApp.fetchCandles(pair, target.tf, 100);
-        if (Array.isArray(bars) && bars.length) evaluateBars(bars, pair, target.tf);
+        if (!Array.isArray(bars) || !bars.length) throw new Error("OKX не вернул свечи для " + pair);
+        lastBarsCount = bars.length;
+        evaluateBars(bars, pair, target.tf);
       }));
+      const failures = results.filter((result) => result.status === "rejected")
+        .map((result) => result.reason && result.reason.message ? result.reason.message : String(result.reason));
+      lastPollError = failures.length ? failures.slice(0, 3).join(" · ") : "";
       lastCheckAt = Date.now();
       updateStatus();
     } finally {
@@ -532,7 +547,10 @@
       : "—";
     const status = baseStatus +
       "\nПроверка: " + formatTime(lastCheckAt) +
-      " • Сигналов в журнале: " + history.length + " / 500" +
+      " • Свечей OKX: " + (lastBarsCount || "—") +
+      "\nBOS (" + (lastEvaluatedPair || "—") + " " + (lastEvaluatedTf || "—") + "): " + lastBosState +
+      (lastPollError ? "\nОшибка получения данных: " + lastPollError : "") +
+      "\nСигналов в журнале: " + history.length + " / 500" +
       "\nОбъединено RSI-повторов: " + (Number(state.rsiClusterSuppressed) || 0) +
       "\nПоследний сигнал: " + lastSignal;
     if (statusNode) statusNode.textContent = status;

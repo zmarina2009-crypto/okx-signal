@@ -104,3 +104,12 @@ test("journal UI is a separate window with its own quick-access button", () => {
   assert.ok(settingsStart >= 0 && journalStart >= 0 && settingsEnd > journalStart);
   assert.doesNotMatch(source.slice(settingsStart, journalStart), /id="stHistoryList"/);
 });
+
+
+test("scalping status exposes BOS evaluation and OKX polling failures", () => {
+  assert.match(source, /lastBosState = bos \?/);
+  assert.match(source, /lastBarsCount = bars\.length/);
+  assert.match(source, /results\.filter\(\(result\) => result\.status === "rejected"\)/);
+  assert.match(source, /Ошибка получения данных:/);
+  assert.match(source, /Свечей OKX:/);
+});
