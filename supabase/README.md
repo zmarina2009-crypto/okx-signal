@@ -34,7 +34,13 @@ Verified through live HTTP requests:
 - The function read 2 active rules, all 6 imported Telegram history entries, and the 2,500-signal / 14-group aggregate statistics snapshot.
 - An unauthenticated `POST /bootstrap` returned HTTP 401.
 
-The deployed function currently has **no Telegram sending logic and no recurring tick route**. Its protected `POST /bootstrap` endpoint requires the `WORKER_CRON_TOKEN` Edge Function secret. Once that new secret is configured in the Supabase Dashboard, the endpoint can initialize `lastClosed` from the latest confirmed OKX candle for each stored rule. This operation is idempotent and does not send messages.
+The deployed function currently has **no Telegram sending logic and no recurring tick route**. Its protected `POST /bootstrap` endpoint uses a randomly generated 96-character token stored encrypted in Supabase Vault under `okx_v2_worker_cron_token`. The token is retrieved only by a restricted database function executable by `service_role`; it was not output to chat or committed to GitHub.
+
+The one-time bootstrap has now completed successfully (2026-11-13 19:58:30 UTC). It seeded `lastClosed` from the latest confirmed OKX candles for both active rules:
+- `SOL-USDT-SWAP:15m` → `1794598200000`
+- `ZEC-USDT-SWAP:1m` → `1794599820000`
+
+The stored Telegram history remains at 6 entries and the aggregate statistics snapshot remains at 2,500 signals across 14 groups. The bootstrap explicitly reports `telegramSendingEnabled: false`; no Telegram message was sent. The old raw cooldown timestamps, recent combo staging records, and individual performance signal records were not exported. Those fields are initialized empty / preserved as empty, and the missing raw performance data cannot be reconstructed from the aggregate snapshot.
 
 **Do not create a Cron schedule yet.** The `/tick` route has not been implemented. The full trading worker logic, signal evaluation and Telegram integration still need to be ported and tested separately. Keep Railway online and unchanged until the new backend has completed its dry-run and a deliberate cutover is ready. The new worker must first support a one-time safe bootstrap of candle de-duplication state (so it does not replay the last closed candle), then pass an authenticated dry-run before any Telegram send is enabled. Do not run the new worker in send mode while Railway could still send alerts.
 
