@@ -12,6 +12,23 @@ This folder is the isolated migration track. It is **not connected to a producti
 
 The current source branch contains the later async HTTP-handler correction. The most recent failed Railway deployment we could inspect was built from an earlier commit and failed at startup with SyntaxError: Unexpected reserved word on an await inside a non-async HTTP callback. The follow-up source commit made the callback async, but the deployment history does not show a currently successful live deployment. The old service has not been changed by this migration.
 
+
+## Migration checkpoint — 2026-11-13
+
+The Supabase destination is active at project ref `okyrkdkzshycubadfvba` in `eu-central-1`. The database schema and RPC functions are installed. The following Railway data has been imported and verified in the singleton rows:
+
+- **2 active pair/timeframe rules** from the worker's read-only `/config` endpoint.
+- **6 Telegram history records** from `/telegram-history?limit=500` (5 combo alerts and 1 test record).
+- **A 90-day aggregate statistics snapshot** from `/stats?days=90`: 2,500 signals, 14 groups, 14 pending 12-hour outcomes. This is an aggregate snapshot, not the individual performance records.
+
+The destination runtime currently has empty `lastClosed`, `lastAlertAt`, `lastSmaTouch`, `recentSignals`, and `performanceSignals` collections. The imported statistics are kept separately as `statsSnapshot`; they cannot be expanded back into the individual 2,500 signal records.
+
+The Railway `state.json` file has **not** been downloaded: Railway's volume SFTP connection closed during the export attempt. The running worker previously reported a state file of 1,580,807 bytes. No credentials were read or copied into GitHub.
+
+At the last live check on 2026-11-13, Railway's `telegram-worker` deployment `1b37df29-45a4-48b1-b33c-180a9c11d996` was `SUCCESS`, the service was `Online` with one running replica, and there were no active warnings or recent failures in the inspected 24-hour window. **Do not stop or redeploy it as part of this migration.** There is a configuration/log discrepancy to resolve separately: Railway's service description reports a maintenance-only start command, while that deployment's runtime logs showed `npm start` / `node index.js`.
+
+No Supabase Edge Function has been deployed, no cron schedule has been created, and no production secrets have been added yet. The new worker must first support a one-time safe bootstrap of candle de-duplication state (so it does not replay the last closed candle), then pass an authenticated dry-run before any Telegram send is enabled. Do not run the new worker in send mode while Railway could still send alerts.
+
 ## Target architecture
 
 - **Cloudflare Pages Free** serves the static v2 UI from this repository, using the migration branch as a preview first.
