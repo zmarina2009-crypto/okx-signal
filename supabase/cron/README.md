@@ -8,15 +8,15 @@ This is intentionally not part of the initial database migration. Do not create 
 3. A manual authenticated /health and dry-run /tick both succeed.
 4. Secrets below are stored in Supabase Vault (never in GitHub).
 
-Store these Vault secrets using the Supabase SQL editor, replacing every placeholder first:
+The bootstrap token `okx_v2_worker_cron_token` has already been generated and stored encrypted in Vault. Do not create a second token with the same name.
+
+When the future `/tick` implementation is complete and ready for scheduling, store only the remaining values in Vault, replacing placeholders:
 - okx_v2_project_url: https://<PROJECT_REF>.supabase.co
-- okx_v2_publishable_key: the project's publishable/anon API key (not the service-role key)
-- okx_v2_worker_cron_token: the separate WORKER_CRON_TOKEN value
+- okx_v2_publishable_key: the project's publishable/anon API key (not a secret/service-role key)
 
 Example:
   select vault.create_secret('https://<PROJECT_REF>.supabase.co', 'okx_v2_project_url');
   select vault.create_secret('<PUBLISHABLE_KEY>', 'okx_v2_publishable_key');
-  select vault.create_secret('<WORKER_CRON_TOKEN>', 'okx_v2_worker_cron_token');
 
 After verifying the three Vault secrets, schedule one worker invocation every 20 seconds:
   
