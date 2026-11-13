@@ -248,6 +248,24 @@ export function replayHistoricalCandles({
   const matchedComponents = signals.filter(signal =>
     matchedKeys.has([signal.pair, signal.tf, signal.kind, Number(signal.ts)].join("|"))
   );
+  const unmatchedComponentSignals = signals.filter(signal =>
+    !matchedKeys.has([signal.pair, signal.tf, signal.kind, Number(signal.ts)].join("|"))
+  );
+  const countByKind = (items) => Object.fromEntries(
+    [...new Set(items.map(item => String(item.kind || "unknown")))].sort().map(kind => [
+      kind, items.filter(item => String(item.kind || "unknown") === kind).length
+    ])
+  );
+  const componentSignalAudit = {
+    candidatesByKind: countByKind(signals),
+    matchedByKind: countByKind(matchedComponents),
+    unmatchedByKind: countByKind(unmatchedComponentSignals),
+    unmatchedSamples: unmatchedComponentSignals.slice(0, 25).map(signal => ({
+      kind: signal.kind, direction: signal.direction,
+      ts: Number(signal.ts), price: Number(signal.price) || null,
+      label: signal.label || ""
+    }))
+  };
   const byDirection = {
     LONG: visibleMarkers.filter(marker => marker.direction === "LONG").length,
     SHORT: visibleMarkers.filter(marker => marker.direction === "SHORT").length
@@ -274,7 +292,8 @@ export function replayHistoricalCandles({
       gaps,
       candidateComponentSignals: signals.length,
       matchedComponentSignals: matchedComponents.length,
-      unmatchedComponentSignals: signals.length - matchedComponents.length
+      unmatchedComponentSignals: unmatchedComponentSignals.length,
+      componentSignalAudit
     },
     result: {
       storedMarkerCount: allMarkers.length,
