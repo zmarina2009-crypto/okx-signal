@@ -27,11 +27,11 @@ The Railway `state.json` file has **not** been downloaded: Railway's volume SFTP
 
 At the last live check on 2026-11-13, Railway's `telegram-worker` deployment `1b37df29-45a4-48b1-b33c-180a9c11d996` was `SUCCESS`, the service was `Online` with one running replica, and there were no active warnings or recent failures in the inspected 24-hour window. **Do not stop or redeploy it as part of this migration.** There is a configuration/log discrepancy to resolve separately: Railway's service description reports a maintenance-only start command, while that deployment's runtime logs showed `npm start` / `node index.js`.
 
-The initial storage migration has been applied to the Supabase project. The `okx-telegram-worker` Edge Function is deployed as **ACTIVE, version 3**.
+The initial storage migration has been applied to the Supabase project. The `okx-telegram-worker` Edge Function is deployed as **ACTIVE, version 4**.
 
 Verified through live HTTP requests:
 - `GET /health`, `GET /config`, `GET /telegram-history?limit=500`, and `GET /stats?days=90` returned HTTP 200.
-- The function reads 2 active rules, all 6 imported Telegram history entries, and the 2,500-signal / 14-group aggregate statistics snapshot.
+- The function reads 2 active rules, all 6 imported Telegram history entries, and the 2,500-signal / 14-group aggregate statistics snapshot. Its CORS allowlist accepts the second-version Railway frontend and rejects the first-version GitHub Pages origin (HTTP 403), keeping the two app versions separate.
 - `POST /bootstrap` is token-protected; a request without the Vault token returned HTTP 401.
 - `POST /tick` accepts only `{"mode":"dry_run"}`. A request with `{"mode":"live"}` returned HTTP 400, and a dry-run request without the Vault token returned HTTP 401.
 
