@@ -27,23 +27,25 @@ The Railway `state.json` file has **not** been downloaded: Railway's volume SFTP
 
 At the last live check on 2026-11-13, Railway's `telegram-worker` deployment `1b37df29-45a4-48b1-b33c-180a9c11d996` was `SUCCESS`, the service was `Online` with one running replica, and there were no active warnings or recent failures in the inspected 24-hour window. **Do not stop or redeploy it as part of this migration.** There is a configuration/log discrepancy to resolve separately: Railway's service description reports a maintenance-only start command, while that deployment's runtime logs showed `npm start` / `node index.js`.
 
-The initial storage migration has been applied to the Supabase project. The `okx-telegram-worker` Edge Function is deployed as **ACTIVE, version 1** in `bootstrap-only` mode.
+The initial storage migration has been applied to the Supabase project. The `okx-telegram-worker` Edge Function is deployed as **ACTIVE, version 3**.
 
 Verified through live HTTP requests:
-- `GET /health`, `GET /config`, `GET /telegram-history?limit=500`, and `GET /stats?days=90` all returned HTTP 200.
-- The function read 2 active rules, all 6 imported Telegram history entries, and the 2,500-signal / 14-group aggregate statistics snapshot.
-- An unauthenticated `POST /bootstrap` returned HTTP 401.
+- `GET /health`, `GET /config`, `GET /telegram-history?limit=500`, and `GET /stats?days=90` returned HTTP 200.
+- The function reads 2 active rules, all 6 imported Telegram history entries, and the 2,500-signal / 14-group aggregate statistics snapshot.
+- `POST /bootstrap` is token-protected; a request without the Vault token returned HTTP 401.
+- `POST /tick` accepts only `{"mode":"dry_run"}`. A request with `{"mode":"live"}` returned HTTP 400, and a dry-run request without the Vault token returned HTTP 401.
 
-The deployed function currently has **no Telegram sending logic and no recurring tick route**. Its protected `POST /bootstrap` endpoint uses a randomly generated 96-character token stored encrypted in Supabase Vault under `okx_v2_worker_cron_token`. The token is retrieved only by a restricted database function executable by `service_role`; it was not output to chat or committed to GitHub.
+The one-time bootstrap completed successfully on 2026-11-13. It initialized `lastClosed` from confirmed OKX candles. A later authenticated dry-run successfully processed both active rules and advanced the cursors:
+- `SOL-USDT-SWAP:15m` → `1794599100000`
+- `ZEC-USDT-SWAP:1m` → `1794600420000`
 
-The one-time bootstrap has now completed successfully (2026-11-13 19:58:30 UTC). It seeded `lastClosed` from the latest confirmed OKX candles for both active rules:
-- `SOL-USDT-SWAP:15m` → `1794598200000`
-- `ZEC-USDT-SWAP:1m` → `1794599820000`
+The dry-run recorded two raw performance signals for the ZEC candle: `VP LONG` and `SMA SHORT`. Since their directions conflict, no COMBO was produced. The response was HTTP 200 with no processing errors and zero Telegram previews. The imported 2,500-signal aggregate snapshot and 6 historical Telegram entries remained intact. No Telegram message was sent.
 
-The stored Telegram history remains at 6 entries and the aggregate statistics snapshot remains at 2,500 signals across 14 groups. The bootstrap explicitly reports `telegramSendingEnabled: false`; no Telegram message was sent. The old raw cooldown timestamps, recent combo staging records, and individual performance signal records were not exported. Those fields are initialized empty / preserved as empty, and the missing raw performance data cannot be reconstructed from the aggregate snapshot.
+The dry-run engine reuses the worker's existing `statistics.js`, `volume-profile.js`, `combo-reversal.js`, and `telegram-history.js` modules. It stores raw signals generated from this point forward separately as `performanceSignals`; historical raw performance records and the original cooldown/SMA-touch runtime data were not exported and cannot be recreated from the aggregate statistics. Dry-run cooldowns are stored separately from real Telegram cooldowns.
 
-**Do not create a Cron schedule yet.** The `/tick` route has not been implemented. The full trading worker logic, signal evaluation and Telegram integration still need to be ported and tested separately. Keep Railway online and unchanged until the new backend has completed its dry-run and a deliberate cutover is ready. The new worker must first support a one-time safe bootstrap of candle de-duplication state (so it does not replay the last closed candle), then pass an authenticated dry-run before any Telegram send is enabled. Do not run the new worker in send mode while Railway could still send alerts.
+The bootstrap token is a randomly generated 96-character value encrypted in Supabase Vault under `okx_v2_worker_cron_token`. A restricted SQL function exposes it only to `service_role`; the token was not output to chat or committed to GitHub.
 
+**Do not create a Cron schedule yet.** The current `/tick` route is dry-run only. Telegram delivery logic, send-mode cooldown handling, and the production cutover procedure still need to be ported and verified. Keep Railway online and unchanged until the full backend is ready and a deliberate cutover is approved.
 ## Target architecture
 
 - **Cloudflare Pages Free** serves the static v2 UI from this repository, using the migration branch as a preview first.
