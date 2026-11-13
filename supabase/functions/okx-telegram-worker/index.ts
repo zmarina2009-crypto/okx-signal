@@ -144,7 +144,11 @@ async function loadRules(client: ReturnType<typeof getAdminClient>) {
 }
 
 async function handleBootstrap(req: Request, client: ReturnType<typeof getAdminClient>) {
-  const expectedToken = Deno.env.get("WORKER_CRON_TOKEN") || "";
+  const { data: storedToken, error: tokenError } = await client.rpc("get_okx_v2_worker_cron_token");
+  if (tokenError) {
+    throw new Error("Could not read bootstrap token from Supabase Vault: " + tokenError.message);
+  }
+  const expectedToken = typeof storedToken === "string" ? storedToken : "";
   const suppliedToken = req.headers.get("x-worker-cron-token") || "";
   if (!expectedToken || !safeEquals(suppliedToken, expectedToken)) {
     return json({ ok: false, error: "Unauthorized" }, 401);
