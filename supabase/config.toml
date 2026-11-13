@@ -1,4 +1,4 @@
-project_id = "okx-signal-pro-v2"
+project_id = "okyrkdkzshycubadfvba"
 
 [functions.okx-telegram-worker]
 verify_jwt = false
