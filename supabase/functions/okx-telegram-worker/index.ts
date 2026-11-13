@@ -5,7 +5,7 @@ import { buildPerformanceStats } from "./statistics.js";
 type JsonObject = Record<string, unknown>;
 
 const DEFAULT_ALLOWED_ORIGINS = [
-  "https://zmarina2009-crypto.github.io",
+  // Only the second-version frontend is allowed by default.
   "https://okx-signal-production-14d9.up.railway.app",
 ];
 
