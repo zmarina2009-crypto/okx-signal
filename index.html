@@ -72,6 +72,7 @@
   </div>
 </div>
 <div id="toast" class="toast"></div>
+<script src="./signal-visibility.js?v=1"></script>
 <script>
 const BASE="https://www.okx.com/api/v5/market/candles",TICKERS="https://www.okx.com/api/v5/market/tickers",INSTRUMENTS="https://www.okx.com/api/v5/public/instruments";const $=id=>document.getElementById(id);const CHART_SMA_KEY="okx_v2_chart_sma_settings";
 const DEFAULT_CHART_SMA=[
@@ -493,9 +494,10 @@ function draw(e){window.candles=candles;window.chartState=chartState;
         Number(sources&&sources.combo)>0||
         (Array.isArray(m&&m.situationEvents)&&m.situationEvents.some(event=>String(event&&event.kind||"").toLowerCase()==="combo"));
     };
-    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||isComboSituation(m))).slice(-24);
+    const signalSettings=window.OKXSignalVisibility.readSettings(localStorage);
+    const visibleMarks=marks.filter(m=>m.pair===currentPair&&String(m.tf).toLowerCase()===String(tf).toLowerCase()&&["LONG","SHORT"].includes(m.direction)&&(!comboOnly||isComboSituation(m))).map(marker=>{const visibility=window.OKXSignalVisibility.forDisplay(marker,signalSettings);return visibility?{marker,visibility}:null;}).filter(Boolean).slice(-24);
     const indexByTs=new Map(series.map((c,i)=>[Number(c.ts),i]));
-    visibleMarks.forEach(m=>{
+    visibleMarks.forEach(({marker:m,visibility})=>{
       let gi=indexByTs.get(Number(m.ts));
       // Alert timestamps are candle-open timestamps. If the feed differs by a few ms,
       // attach the marker to the candle interval containing that timestamp.
@@ -513,10 +515,10 @@ function draw(e){window.candles=candles;window.chartState=chartState;
       if(!Number.isFinite(x)||!Number.isFinite(anchor)||anchor<p.t-25||anchor>p.t+mainH+25)return;
       const isLong=m.direction==="LONG",color=isLong?"#27e58a":"#ff5f68";
       const ay=Math.max(p.t+10,Math.min(p.t+mainH-10,anchor+(isLong?20:-20)));
-      const count=Math.max(1,Math.round(Number(m.displayEventCount)||Number(m.eventCount)||Number(m.touches)||1));
+      const count=Math.max(1,Math.round(Number(visibility.eventCount)||1));
       const signalUnit=count%10===1&&count%100!==11?"сигнал":count%10>=2&&count%10<=4&&(count%100<12||count%100>14)?"сигнала":"сигналов";
-      const countText=m.kind==="sma"?count+" кас.":count+" "+signalUnit;
-      const label=(isLong?"↑ LONG":"↓ SHORT")+" · "+(m.label||m.kind||"ALERT")+" · "+countText;
+      const countText=visibility.sources.length===1&&visibility.sources[0]==="sma"?count+" кас.":count+" "+signalUnit;
+      const label=(isLong?"↑ LONG":"↓ SHORT")+" · "+visibility.label+" · "+countText;
       q.save();q.globalAlpha=1;q.lineWidth=2;q.strokeStyle=color;q.fillStyle=color;q.beginPath();
       if(isLong){q.moveTo(x,ay+9);q.lineTo(x,ay-5);q.moveTo(x-4,ay-1);q.lineTo(x,ay-6);q.lineTo(x+4,ay-1)}
       else{q.moveTo(x,ay-9);q.lineTo(x,ay+5);q.moveTo(x-4,ay+1);q.lineTo(x,ay+6);q.lineTo(x+4,ay+1)}
@@ -974,3 +976,20 @@ if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=75",{
 })();
 </script>
 </body></html>
+
+<script>
+(function(){
+  const watchedIds=new Set(["alertVolume","alertRsi","alertSma","alertVP","alertCombo","alertComboCount","alertComboWindow","stEnabled","stVolumeRsiEnabled","stBosEnabled","stBosAlerts"]);
+  function redrawSignalMarkers(){
+    const state=window.OKXSignalApp&&typeof window.OKXSignalApp.getState==="function"?window.OKXSignalApp.getState():null;
+    if(state&&state.last&&typeof window.draw==="function")requestAnimationFrame(()=>window.draw(state.last));
+  }
+  document.addEventListener("change",event=>{
+    const target=event.target;
+    if(target&&watchedIds.has(target.id))redrawSignalMarkers();
+  });
+  window.addEventListener("storage",event=>{
+    if(["okx_alerts_v1","okx_scalping_trigger_v1","okx_combo_mode_active"].includes(event.key))redrawSignalMarkers();
+  });
+})();
+</script>
