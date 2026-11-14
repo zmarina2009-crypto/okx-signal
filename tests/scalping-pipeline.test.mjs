@@ -90,6 +90,56 @@ test("a 200-candle volume period can be evaluated when enough candles are suppli
   assert.equal(api.getMarkers().length, 1);
 });
 
-test.todo("poll requests enough candles for the configured maximum 200-candle volume period");
-test.todo("volume baseline is calculated from prior candles and excludes the signal candle");
-test.todo("a failed candle request is surfaced in status and does not advance successful-check time");
+test("volume baseline excludes the signal candle", () => {
+  const api = createHarness();
+  const bars = fallingBars(21);
+  for (const bar of bars) bar.v = 10;
+  bars[bars.length - 1].v = 1000;
+
+  assert.equal(api.averageVolume(bars, 20), 10);
+  assert.equal(api.averageVolume(bars.slice(0, 20), 20), null);
+});
+
+test("insufficient candle history is not marked processed and can be retried", () => {
+  const api = createHarness();
+  enableVolumeRsi(api, { volumePeriod: 20 });
+  const bars = fallingBars(20);
+  api.evaluateBars(bars, "SUI-USDT-SWAP", "1m");
+  assert.equal(api.getHistory().length, 0);
+
+  api.evaluateBars(fallingBars(21), "SUI-USDT-SWAP", "1m");
+  assert.equal(api.getHistory().length, 1);
+});
+
+test("poll requests enough candles for the configured 200-candle volume period", async () => {
+  const api = createHarness();
+  enableVolumeRsi(api, { volumePeriod: 200 });
+  let requestedLimit = 0;
+  api.setApp({
+    getState: () => ({ currentPair: "SUI-USDT-SWAP", tf: "1m" }),
+    fetchCandles: async (_pair, _tf, limit) => {
+      requestedLimit = limit;
+      return fallingBars(220);
+    }
+  });
+
+  await api.poll();
+  assert.equal(requestedLimit, 201);
+  assert.ok(api.getLastCheckAt() > 0);
+  assert.equal(api.getLastPollSummary(), "1/1 пар");
+  assert.equal(api.getLastPollError(), "");
+});
+
+test("a failed candle request is surfaced and does not advance successful-check time", async () => {
+  const api = createHarness();
+  enableVolumeRsi(api);
+  api.setApp({
+    getState: () => ({ currentPair: "SUI-USDT-SWAP", tf: "1m" }),
+    fetchCandles: async () => { throw new Error("OKX timeout"); }
+  });
+
+  await api.poll();
+  assert.equal(api.getLastCheckAt(), 0);
+  assert.match(api.getLastPollError(), /OKX timeout/);
+  assert.equal(api.getLastPollSummary(), "0/1 пар");
+});
