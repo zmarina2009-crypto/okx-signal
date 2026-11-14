@@ -444,10 +444,15 @@
     try {
       const limit = Math.max(100, cfg.volumePeriod + 1, cfg.rsiLength + 1, cfg.swingLength * 2 + 3);
       const results = await Promise.allSettled(target.pairs.map(async (pair) => {
-        const bars = await window.OKXSignalApp.fetchCandles(pair, target.tf, limit);
-        if (!Array.isArray(bars) || !bars.length) throw new Error("OKX вернула пустой список свечей");
-        evaluateBars(bars, pair, target.tf);
-        return pair;
+        try {
+          const bars = await window.OKXSignalApp.fetchCandles(pair, target.tf, limit);
+          if (!Array.isArray(bars) || !bars.length) throw new Error("OKX вернула пустой список свечей");
+          evaluateBars(bars, pair, target.tf);
+          return pair;
+        } catch (error) {
+          const message = error && error.message ? error.message : String(error || "ошибка загрузки");
+          throw new Error(pair + ": " + message);
+        }
       }));
       const succeeded = results.filter((item) => item.status === "fulfilled").length;
       const failed = results.filter((item) => item.status === "rejected");
@@ -549,7 +554,7 @@
       : "—";
     const status = baseStatus +
       "\nУспешная проверка: " + formatTime(lastCheckAt) +
-      (lastPollSummary ? " • Получено: " + lastPollSummary : "") +
+      (lastPollSummary ? "\nРезультат опроса: " + lastPollSummary : "") +
       (lastPollError ? "\nОшибка проверки: " + lastPollError : "") +
       " • Сигналов в журнале: " + history.length + " / 500" +
       "\nОбъединено RSI-повторов: " + (Number(state.rsiClusterSuppressed) || 0) +
