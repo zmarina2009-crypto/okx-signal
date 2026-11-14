@@ -774,6 +774,14 @@
   }
 
   if (window.__OKX_SCALPING_TEST__) {
+    const testMarkers = [];
+    window.OKXSignalMarkers = {
+      add(meta) {
+        const marker = Object.assign({ id: "test-marker-" + testMarkers.length }, meta);
+        testMarkers.push(marker);
+        return { marker, merged: false };
+      }
+    };
     window.__OKXScalpingTest = {
       addHistory,
       mergeRsiRepeat,
@@ -782,7 +790,13 @@
       setHistory: (items) => { history = Array.isArray(items) ? items.slice() : []; },
       setState: (value) => { state = Object.assign({}, state, value || {}); },
       getState: () => JSON.parse(JSON.stringify(state)),
-      setConfig: (value) => { cfg = Object.assign({}, cfg, value || {}); }
+      setConfig: (value) => { cfg = Object.assign({}, cfg, value || {}); },
+      evaluateBars,
+      averageVolume,
+      rsiSeries,
+      poll,
+      getMarkers: () => testMarkers.slice(),
+      getLastCheckAt: () => lastCheckAt
     };
     return;
   }
