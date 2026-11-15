@@ -47,6 +47,8 @@
   let audioContext = null;
   let polling = false;
   let lastCheckAt = 0;
+  let lastPollError = "";
+  let lastPollSummary = "";
   let modal = null;
   let journalModal = null;
   let statusNode = null;
@@ -126,11 +128,13 @@
   }
 
   function averageVolume(bars, period) {
-    if (bars.length < period) return null;
+    // Compare the signal candle with the preceding completed candles only.
+    if (!Array.isArray(bars) || !Number.isInteger(period) || period < 1 || bars.length <= period) return null;
     let sum = 0;
-    for (let i = bars.length - period; i < bars.length; i++) {
-      const value = Number(bars[i].v);
-      if (!Number.isFinite(value)) return null;
+    const end = bars.length - 1;
+    for (let i = end - period; i < end; i++) {
+      const value = Number(bars[i] && bars[i].v);
+      if (!Number.isFinite(value) || value < 0) return null;
       sum += value;
     }
     return sum / period;
@@ -372,10 +376,9 @@
     const scopeKey = pair + "|" + normalizeTf(tf);
     if (Number(state.processed[scopeKey]) === candleTs) return;
 
-    const required = Math.max(cfg.volumePeriod, cfg.rsiLength + 1, cfg.swingLength * 2 + 3);
+    const required = Math.max(cfg.volumePeriod + 1, cfg.rsiLength + 1, cfg.swingLength * 2 + 3);
     if (bars.length < required) {
-      state.processed[scopeKey] = candleTs;
-      saveState();
+      // Do not mark this candle processed: a later poll may provide enough history.
       return;
     }
 
@@ -432,16 +435,35 @@
     const target = getTargets();
     if (!target.pairs.length || !window.OKXSignalApp ||
         typeof window.OKXSignalApp.fetchCandles !== "function") {
+      lastPollError = !target.pairs.length ? "Не выбраны пары для проверки" : "Функция загрузки свечей недоступна";
+      lastPollSummary = "";
       updateStatus();
       return;
     }
     polling = true;
     try {
-      await Promise.allSettled(target.pairs.map(async (pair) => {
-        const bars = await window.OKXSignalApp.fetchCandles(pair, target.tf, 100);
-        if (Array.isArray(bars) && bars.length) evaluateBars(bars, pair, target.tf);
+      const limit = Math.max(100, cfg.volumePeriod + 1, cfg.rsiLength + 1, cfg.swingLength * 2 + 3);
+      const results = await Promise.allSettled(target.pairs.map(async (pair) => {
+        try {
+          const bars = await window.OKXSignalApp.fetchCandles(pair, target.tf, limit);
+          if (!Array.isArray(bars) || !bars.length) throw new Error("OKX вернула пустой список свечей");
+          evaluateBars(bars, pair, target.tf);
+          return pair;
+        } catch (error) {
+          const message = error && error.message ? error.message : String(error || "ошибка загрузки");
+          throw new Error(pair + ": " + message);
+        }
       }));
-      lastCheckAt = Date.now();
+      const succeeded = results.filter((item) => item.status === "fulfilled").length;
+      const failed = results.filter((item) => item.status === "rejected");
+      lastPollSummary = succeeded + "/" + target.pairs.length + " пар";
+      if (succeeded > 0) lastCheckAt = Date.now();
+      lastPollError = failed.length
+        ? failed.map((item, index) => {
+            const reason = item.reason && item.reason.message ? item.reason.message : String(item.reason || "ошибка");
+            return reason;
+          }).slice(0, 3).join("; ")
+        : "";
       updateStatus();
     } finally {
       polling = false;
@@ -531,7 +553,9 @@
       ? formatTime(history[history.length - 1].signalTs || history[history.length - 1].ts)
       : "—";
     const status = baseStatus +
-      "\nПроверка: " + formatTime(lastCheckAt) +
+      "\nУспешная проверка: " + formatTime(lastCheckAt) +
+      (lastPollSummary ? "\nРезультат опроса: " + lastPollSummary : "") +
+      (lastPollError ? "\nОшибка проверки: " + lastPollError : "") +
       " • Сигналов в журнале: " + history.length + " / 500" +
       "\nОбъединено RSI-повторов: " + (Number(state.rsiClusterSuppressed) || 0) +
       "\nПоследний сигнал: " + lastSignal;
@@ -774,6 +798,14 @@
   }
 
   if (window.__OKX_SCALPING_TEST__) {
+    const testMarkers = [];
+    window.OKXSignalMarkers = {
+      add(meta) {
+        const marker = Object.assign({ id: "test-marker-" + testMarkers.length }, meta);
+        testMarkers.push(marker);
+        return { marker, merged: false };
+      }
+    };
     window.__OKXScalpingTest = {
       addHistory,
       mergeRsiRepeat,
@@ -782,7 +814,16 @@
       setHistory: (items) => { history = Array.isArray(items) ? items.slice() : []; },
       setState: (value) => { state = Object.assign({}, state, value || {}); },
       getState: () => JSON.parse(JSON.stringify(state)),
-      setConfig: (value) => { cfg = Object.assign({}, cfg, value || {}); }
+      setConfig: (value) => { cfg = Object.assign({}, cfg, value || {}); },
+      evaluateBars,
+      averageVolume,
+      rsiSeries,
+      poll,
+      getMarkers: () => testMarkers.slice(),
+      getLastCheckAt: () => lastCheckAt,
+      getLastPollError: () => lastPollError,
+      getLastPollSummary: () => lastPollSummary,
+      setApp: (app) => { window.OKXSignalApp = app; }
     };
     return;
   }
