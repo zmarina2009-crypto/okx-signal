@@ -550,7 +550,9 @@
       ? new Date(Number(value)).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
       : "—";
     const lastSignal = history.length
-      ? formatTime(history[history.length - 1].signalTs || history[history.length - 1].ts)
+      ? new Date(Number(history[history.length - 1].signalTs || history[history.length - 1].ts)).toLocaleString("ru-RU", {
+          day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit"
+        })
       : "—";
     const status = baseStatus +
       "\nУспешная проверка: " + formatTime(lastCheckAt) +
