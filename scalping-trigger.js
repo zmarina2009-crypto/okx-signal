@@ -677,12 +677,6 @@
         if (id === "stScope") poll();
       });
     });
-    $("stClearHistory").onclick = () => {
-      history = [];
-      try { localStorage.setItem(STATE_KEY + "_history", "[]"); } catch (_) {}
-      renderHistory();
-      updateStatus();
-    };
   }
 
   function buildJournalModal() {
