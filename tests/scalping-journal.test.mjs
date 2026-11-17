@@ -104,3 +104,16 @@ test("journal UI is a separate window with its own quick-access button", () => {
   assert.ok(settingsStart >= 0 && journalStart >= 0 && settingsEnd > journalStart);
   assert.doesNotMatch(source.slice(settingsStart, journalStart), /id="stHistoryList"/);
 });
+
+test("settings modal does not access journal controls before the journal modal exists", () => {
+  const settingsStart = source.indexOf("function buildModal()");
+  const journalStart = source.indexOf("function buildJournalModal()");
+  const journalEnd = source.indexOf("function addOpenButton()");
+  assert.ok(settingsStart >= 0 && journalStart > settingsStart && journalEnd > journalStart);
+
+  const settingsSection = source.slice(settingsStart, journalStart);
+  const journalSection = source.slice(journalStart, journalEnd);
+
+  assert.doesNotMatch(settingsSection, /\$\("stClearHistory"\)/);
+  assert.match(journalSection, /document\.body\.appendChild\(journalModal\)[\s\S]*?\$\("stClearHistory"\)\.onclick/);
+});
