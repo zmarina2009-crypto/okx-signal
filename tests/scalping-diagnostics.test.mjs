@@ -76,7 +76,7 @@ test("reports strategy gates without mutating strategy state", () => {
   assert.equal(report.volumeSpike, true);
   assert.equal(report.rsiLong, true);
   assert.equal(report.decisions[0].direction, "LONG");
-  assert.deepEqual(report.decisions[0].reasons, []);
+  assert.equal(report.decisions[0].reasons.length, 0);
   assert.equal(JSON.stringify(state), before);
 });
 
