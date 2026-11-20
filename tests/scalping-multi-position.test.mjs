@@ -47,7 +47,7 @@ test("multi-position mode ignores disabled slots and deduplicates repeated pair/
       { enabled: true, pair: "BTC", tf: "5m" }
     ]
   });
-  assert.deepEqual(api.getTargets().targets, [
+  assert.deepEqual(JSON.parse(JSON.stringify(api.getTargets().targets)), [
     { pair: "BTC-USDT-SWAP", tf: "1m" },
     { pair: "BTC-USDT-SWAP", tf: "5m" }
   ]);
