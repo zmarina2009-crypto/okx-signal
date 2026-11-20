@@ -31,7 +31,7 @@ test("multi-position mode tracks up to three independently selected pairs and ti
       { enabled: false, pair: "SUI", tf: "15m" }
     ]
   });
-  assert.deepEqual(api.getTargets().targets, [
+  assert.deepEqual(JSON.parse(JSON.stringify(api.getTargets().targets)), [
     { pair: "ZEC-USDT-SWAP", tf: "1m" },
     { pair: "SOL-USDT-SWAP", tf: "5m" }
   ]);
