@@ -22,7 +22,12 @@
     shortEnabled: true,
     soundEnabled: true,
     cooldownSeconds: 60,
-    rsiClusterAtrMultiplier: 1
+    rsiClusterAtrMultiplier: 1,
+    slots: [
+      { enabled: true, pair: "", tf: "1m" },
+      { enabled: false, pair: "", tf: "1m" },
+      { enabled: false, pair: "", tf: "1m" }
+    ]
   };
 
   const $ = (id) => document.getElementById(id);
@@ -64,7 +69,13 @@
   cfg.swingLength = clamp(Math.round(Number(cfg.swingLength) || 3), 1, 20);
   cfg.cooldownSeconds = clamp(Math.round(Number(cfg.cooldownSeconds) || 60), 1, 86400);
   cfg.rsiClusterAtrMultiplier = clamp(Number(cfg.rsiClusterAtrMultiplier) || 1, 0.25, 3);
-  if (!["chart", "alerts"].includes(cfg.scope)) cfg.scope = "chart";
+  if (!["chart", "alerts", "multi"].includes(cfg.scope)) cfg.scope = "chart";
+  if (!Array.isArray(cfg.slots)) cfg.slots = DEFAULTS.slots.map(slot => Object.assign({}, slot));
+  cfg.slots = Array.from({ length: 3 }, (_, index) => {
+    const slot = cfg.slots[index] && typeof cfg.slots[index] === "object" ? cfg.slots[index] : {};
+    return { enabled: index === 0 ? slot.enabled !== false : !!slot.enabled,
+      pair: String(slot.pair || "").trim().toUpperCase(), tf: normalizeTf(slot.tf || "1m") };
+  });
 
   function saveConfig() {
     try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (_) {}
@@ -88,18 +99,39 @@
       ? window.OKXSignalApp.getState() : null;
   }
 
+  function normalizePair(value) {
+    const pair = String(value || "").trim().toUpperCase();
+    if (!pair) return "";
+    if (pair.endsWith("-USDT-SWAP")) return pair;
+    if (pair.endsWith("-USDT")) return pair + "-SWAP";
+    if (pair.endsWith("USDT")) return pair.slice(0, -4) + "-USDT-SWAP";
+    return pair.replace(/[^A-Z0-9-]/g, "") + "-USDT-SWAP";
+  }
+
   function getTargets() {
     const app = appState();
+    let targets = [], label = "";
     if (cfg.scope === "alerts") {
       const alertCfg = window.OKXAlerts && typeof window.OKXAlerts.getConfig === "function"
         ? window.OKXAlerts.getConfig() : null;
       const pairs = alertCfg && Array.isArray(alertCfg.selectedPairs) ? alertCfg.selectedPairs.slice(0, 20) : [];
       const tf = normalizeTf(alertCfg && alertCfg.alertTf || "15m");
-      return { pairs, tf, label: "Пары и таймфрейм из раздела «Алерты»" };
+      targets = pairs.map(pair => ({ pair: normalizePair(pair), tf })).filter(item => item.pair);
+      label = "Пары и таймфрейм из раздела «Алерты»";
+    } else if (cfg.scope === "multi") {
+      targets = cfg.slots.filter(slot => slot.enabled && slot.pair)
+        .map(slot => ({ pair: normalizePair(slot.pair), tf: normalizeTf(slot.tf) }))
+        .filter(item => item.pair);
+      label = "Три независимые позиции скальпинга";
+    } else {
+      const pair = app && app.currentPair ? String(app.currentPair) : "";
+      const tf = normalizeTf(app && app.tf || "15m");
+      targets = pair ? [{ pair: normalizePair(pair), tf }] : [];
+      label = "Текущая пара и таймфрейм графика";
     }
-    const pair = app && app.currentPair ? String(app.currentPair) : "";
-    const tf = normalizeTf(app && app.tf || "15m");
-    return { pairs: pair ? [pair] : [], tf, label: "Текущая пара и таймфрейм графика" };
+    const unique = [];
+    targets.forEach(item => { if (!unique.some(x => x.pair === item.pair && x.tf === item.tf)) unique.push(item); });
+    return { targets: unique, pairs: unique.map(item => item.pair), tf: unique.length ? unique.map(item => item.tf).join(", ") : "", label };
   }
 
   function rsiSeries(bars, period) {
@@ -443,20 +475,21 @@
     polling = true;
     try {
       const limit = Math.max(100, cfg.volumePeriod + 1, cfg.rsiLength + 1, cfg.swingLength * 2 + 3);
-      const results = await Promise.allSettled(target.pairs.map(async (pair) => {
+      const results = await Promise.allSettled(target.targets.map(async (item) => {
+        const pair = item.pair, tf = item.tf;
         try {
-          const bars = await window.OKXSignalApp.fetchCandles(pair, target.tf, limit);
+          const bars = await window.OKXSignalApp.fetchCandles(pair, tf, limit);
           if (!Array.isArray(bars) || !bars.length) throw new Error("OKX вернула пустой список свечей");
-          evaluateBars(bars, pair, target.tf);
-          return pair;
+          evaluateBars(bars, pair, tf);
+          return pair + " " + tf;
         } catch (error) {
           const message = error && error.message ? error.message : String(error || "ошибка загрузки");
-          throw new Error(pair + ": " + message);
+          throw new Error(pair + " " + tf + ": " + message);
         }
       }));
       const succeeded = results.filter((item) => item.status === "fulfilled").length;
       const failed = results.filter((item) => item.status === "rejected");
-      lastPollSummary = succeeded + "/" + target.pairs.length + " пар";
+      lastPollSummary = succeeded + "/" + target.targets.length + " позиций";
       if (succeeded > 0) lastCheckAt = Date.now();
       lastPollError = failed.length
         ? failed.map((item, index) => {
@@ -544,8 +577,8 @@
   function updateStatus() {
     const target = getTargets();
     const baseStatus = !cfg.enabled ? "Выключено" :
-      !target.pairs.length ? (cfg.scope === "alerts" ? "Выбери пары в разделе «Алерты»" : "Нет выбранной пары") :
-      "Активно • " + target.pairs.length + (target.pairs.length === 1 ? " пара" : " пар") + " • " + target.tf;
+      !target.targets.length ? (cfg.scope === "alerts" ? "Выбери пары в разделе «Алерты»" : cfg.scope === "multi" ? "Заполни и включи позиции" : "Нет выбранной пары") :
+      "Активно • " + target.targets.length + " позиций • " + target.targets.map(item => item.pair.replace("-USDT-SWAP", "") + " " + item.tf).join(" · ");
     const formatTime = (value) => Number(value) > 0
       ? new Date(Number(value)).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
       : "—";
@@ -573,7 +606,7 @@
       journalButton.classList.toggle("has-signal", history.length > 0);
     }
     const scopeLabel = $("stScopeDescription");
-    if (scopeLabel) scopeLabel.textContent = target.label + " · " + (target.pairs.length ? target.pairs.length + " пар · " + target.tf : "пары не выбраны");
+    if (scopeLabel) scopeLabel.textContent = target.label + " · " + (target.targets.length ? target.targets.map(item => item.pair.replace("-USDT-SWAP", "") + " " + item.tf).join(" · ") : "позиции не выбраны");
   }
 
   function syncControls() {
@@ -592,6 +625,14 @@
       if (el.type === "checkbox") el.checked = !!cfg[key];
       else el.value = String(cfg[key]);
     });
+    cfg.slots.forEach((slot, index) => {
+      const pair = $("stSlotPair" + (index + 1)), tf = $("stSlotTf" + (index + 1)), enabled = $("stSlotEnabled" + (index + 1));
+      if (pair) pair.value = slot.pair;
+      if (tf) tf.value = slot.tf;
+      if (enabled) enabled.checked = !!slot.enabled;
+    });
+    const slotsWrap = $("stSlots");
+    if (slotsWrap) slotsWrap.hidden = cfg.scope !== "multi";
     updateStatus();
   }
 
@@ -608,8 +649,12 @@
           '<button type="button" id="stClose" aria-label="Закрыть окно">✕</button></header>' +
         '<div class="st-body">' +
           '<label class="st-main-toggle"><input id="stEnabled" type="checkbox"> Включить мониторинг и алерты</label>' +
-          '<div class="st-scope"><label>Откуда брать пары и таймфрейм<select id="stScope"><option value="chart">Текущая пара и ТФ графика</option><option value="alerts">Список пар и ТФ из раздела «Алерты»</option></select></label>' +
-          '<div id="stScopeDescription" class="st-hint"></div></div>' +
+          '<div class="st-scope"><label>Откуда брать пары и таймфрейм<select id="stScope"><option value="chart">Текущая пара и ТФ графика</option><option value="alerts">Список пар и ТФ из раздела «Алерты»</option><option value="multi">До 3 независимых позиций</option></select></label>' +
+          '<div id="stScopeDescription" class="st-hint"></div><div id="stSlots" class="st-slots" hidden>' +
+          '<div class="st-slot"><label><input id="stSlotEnabled1" type="checkbox"> Позиция 1</label><input id="stSlotPair1" type="text" placeholder="Например ZEC"><select id="stSlotTf1"><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option><option>4h</option><option>1d</option></select></div>' +
+          '<div class="st-slot"><label><input id="stSlotEnabled2" type="checkbox"> Позиция 2</label><input id="stSlotPair2" type="text" placeholder="Например SOL"><select id="stSlotTf2"><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option><option>4h</option><option>1d</option></select></div>' +
+          '<div class="st-slot"><label><input id="stSlotEnabled3" type="checkbox"> Позиция 3</label><input id="stSlotPair3" type="text" placeholder="Например SUI"><select id="stSlotTf3"><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option><option>4h</option><option>1d</option></select></div>' +
+          '<p class="st-hint st-wide">Для каждой позиции можно выбрать отдельную пару и таймфрейм. Пара указывается тикером (например BTC) или полным инструментом OKX.</p></div></div>' +
           '<div class="st-grid">' +
             '<section class="st-card"><label class="st-check"><input id="stVolumeRsiEnabled" type="checkbox"> <b>Volume + RSI</b></label>' +
               '<div class="st-fields"><label>Период объёма<input id="stVolumePeriod" type="number" min="2" max="200"></label>' +
@@ -649,7 +694,7 @@
 
     const fieldMap = {
       stEnabled: ["enabled", (v) => v],
-      stScope: ["scope", (v) => v === "alerts" ? "alerts" : "chart"],
+      stScope: ["scope", (v) => ["alerts", "multi"].includes(v) ? v : "chart"],
       stVolumeRsiEnabled: ["volumeRsiEnabled", (v) => v],
       stVolumePeriod: ["volumePeriod", (v) => clamp(Math.round(Number(v) || 20), 2, 200)],
       stVolumeMultiplier: ["volumeMultiplier", (v) => clamp(Number(v) || 2, 1, 20)],
@@ -671,11 +716,21 @@
       el.addEventListener("change", () => {
         const value = el.type === "checkbox" ? el.checked : el.value;
         cfg[tuple[0]] = tuple[1](value);
+        if (id === "stScope" && cfg.scope === "multi" && !cfg.slots[0].pair) {
+          const app = appState(); cfg.slots[0].pair = app && app.currentPair ? String(app.currentPair).replace("-USDT-SWAP", "") : "";
+        }
         saveConfig();
         syncControls();
         if (id === "stEnabled" && cfg.enabled) poll();
         if (id === "stScope") poll();
       });
+    });
+    cfg.slots.forEach((slot, index) => {
+      const pairInput = $("stSlotPair" + (index + 1)), tfInput = $("stSlotTf" + (index + 1)), enabledInput = $("stSlotEnabled" + (index + 1));
+      [pairInput, tfInput, enabledInput].forEach(el => { if (!el) return; el.addEventListener("change", () => {
+        slot.pair = pairInput.value.trim().toUpperCase(); slot.tf = normalizeTf(tfInput.value); slot.enabled = !!enabledInput.checked;
+        saveConfig(); syncControls(); poll();
+      }); });
     });
   }
 
@@ -783,7 +838,7 @@
     const style = document.createElement("style");
     style.id = "scalpingTriggerCss";
     style.textContent =
-      ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number]{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{display:block!important;min-height:72px;border:1px solid #263547;border-radius:10px;overflow:hidden;background:#0b1118}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-columns,.st-history-row{display:grid;grid-template-columns:minmax(120px,1.35fr) minmax(120px,1.2fr) minmax(105px,1fr) minmax(76px,.65fr) minmax(90px,.8fr);gap:8px;align-items:center}.st-history-columns{padding:7px 10px;background:#0c141e;color:#8998a9;font-size:10px}.st-history-list{display:block;max-height:260px;overflow:auto}.st-history-row{padding:8px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.35}.st-history-cell{min-width:0;overflow-wrap:anywhere}.st-history-row .st-time{display:grid;gap:2px}.st-history-row time{color:#d0dbe6;font-variant-numeric:tabular-nums}.st-history-row small{color:#718296;font-size:9px}.st-history-direction{font-weight:800}.st-history-row .st-history-direction.is-long{color:#48d99a}.st-history-row .st-history-direction.is-short{color:#ff7b84}.st-history-price{font-variant-numeric:tabular-nums;font-weight:700}.st-history-detail{grid-column:1/-1;color:#8998a9;font-size:9px;overflow-wrap:anywhere}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}.st-history-columns{display:none}.st-history-list{max-height:220px}.st-history-row{grid-template-columns:1fr 1fr;gap:6px 10px}.st-history-row .st-time{grid-column:1/-1}}";
+      ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number],.st-slot input[type=text],.st-slot select{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-slots{display:grid;gap:8px;margin-top:8px}.st-slot{display:grid;grid-template-columns:minmax(95px,.7fr) minmax(130px,1.5fr) minmax(75px,.6fr);gap:7px;align-items:center}.st-slot label{display:flex;align-items:center;gap:5px;color:#b7c5d4;font-size:11px}.st-slot input[type=checkbox]{width:auto;margin:0}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{display:block!important;min-height:72px;border:1px solid #263547;border-radius:10px;overflow:hidden;background:#0b1118}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-columns,.st-history-row{display:grid;grid-template-columns:minmax(120px,1.35fr) minmax(120px,1.2fr) minmax(105px,1fr) minmax(76px,.65fr) minmax(90px,.8fr);gap:8px;align-items:center}.st-history-columns{padding:7px 10px;background:#0c141e;color:#8998a9;font-size:10px}.st-history-list{display:block;max-height:260px;overflow:auto}.st-history-row{padding:8px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.35}.st-history-cell{min-width:0;overflow-wrap:anywhere}.st-history-row .st-time{display:grid;gap:2px}.st-history-row time{color:#d0dbe6;font-variant-numeric:tabular-nums}.st-history-row small{color:#718296;font-size:9px}.st-history-direction{font-weight:800}.st-history-row .st-history-direction.is-long{color:#48d99a}.st-history-row .st-history-direction.is-short{color:#ff7b84}.st-history-price{font-variant-numeric:tabular-nums;font-weight:700}.st-history-detail{grid-column:1/-1;color:#8998a9;font-size:9px;overflow-wrap:anywhere}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}.st-history-columns{display:none}.st-history-list{max-height:220px}.st-history-row{grid-template-columns:1fr 1fr;gap:6px 10px}.st-history-row .st-time{grid-column:1/-1}.st-slot{grid-template-columns:1fr 1fr}.st-slot label{grid-column:1/-1}}";
     document.head.appendChild(style);
 
     const journalStyle = document.createElement("style");
@@ -811,6 +866,8 @@
       setState: (value) => { state = Object.assign({}, state, value || {}); },
       getState: () => JSON.parse(JSON.stringify(state)),
       setConfig: (value) => { cfg = Object.assign({}, cfg, value || {}); },
+      getTargets,
+      normalizePair,
       evaluateBars,
       averageVolume,
       rsiSeries,
