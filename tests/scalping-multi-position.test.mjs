@@ -60,3 +60,19 @@ test("pair normalization accepts ticker, USDT symbol and full OKX instrument", (
   assert.equal(api.normalizePair("ETH-USDT"), "ETH-USDT-SWAP");
   assert.equal(api.normalizePair("ETH-USDT-SWAP"), "ETH-USDT-SWAP");
 });
+
+test("favorites list is loaded from the active saved watchlist and other saved lists", () => {
+  const api = createHarness();
+  api.setLocalStorage("okx_v2_watchlists", JSON.stringify({
+    "Избранное": ["ZEC", "SOL", "BTC"],
+    "Альтернативы": ["SOL", "NEAR"]
+  }));
+  api.setLocalStorage("okx_v2_active_watchlist", "Избранное");
+  assert.deepEqual(JSON.parse(JSON.stringify(api.favoritePairs())), ["ZEC", "SOL", "BTC", "NEAR"]);
+});
+
+test("favorites fall back to the custom pair list when no saved lists exist", () => {
+  const api = createHarness();
+  api.setLocalStorage("okx_v2_custom_coins", JSON.stringify(["ZEC", "SOL-USDT", "BTCUSDT"]));
+  assert.deepEqual(JSON.parse(JSON.stringify(api.favoritePairs())), ["ZEC", "SOL", "BTC"]);
+});
