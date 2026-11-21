@@ -771,6 +771,7 @@
       el.addEventListener("change", () => {
         const value = el.type === "checkbox" ? el.checked : el.value;
         cfg[tuple[0]] = tuple[1](value);
+        if (id === "stGroupSignals") { state.rsiClusters = {}; saveState(); }
         if (id === "stScope" && cfg.scope === "multi" && !cfg.slots[0].pair) {
           const app = appState(); cfg.slots[0].pair = app && app.currentPair ? String(app.currentPair).replace("-USDT-SWAP", "") : "";
         }
