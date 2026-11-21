@@ -912,6 +912,7 @@
       setState: (value) => { state = Object.assign({}, state, value || {}); },
       getState: () => JSON.parse(JSON.stringify(state)),
       setConfig: (value) => { cfg = Object.assign({}, cfg, value || {}); },
+      setLocalStorage: (key, value) => localStorage.setItem(key, value),
       getTargets,
       normalizePair,
       evaluateBars,
