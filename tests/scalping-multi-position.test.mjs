@@ -104,3 +104,28 @@ test("multi-position polling requests each selected pair and reports per-pair st
   assert.match(api.getLastPollSummary(), /ZEC 1m ✓/);
   assert.match(api.getLastPollSummary(), /SOL 1m ✓/);
 });
+
+
+test("signal grouping toggle off records repeats independently without suppressing them", () => {
+  const api = createHarness();
+  api.setConfig({ groupSignals: false });
+  api.setState({ rsiClusters: { "ZEC-USDT-SWAP|1m": {
+    direction: "LONG", anchorPrice: 100, radius: 1, neutralSeen: false, suppressedCount: 0
+  } } });
+  const result = api.mergeRsiRepeat("ZEC-USDT-SWAP", "1m", { ts: 123, c: 100.2 }, "LONG");
+  assert.equal(result, false);
+  assert.equal(api.getHistory().length, 0);
+  assert.equal(api.getState().rsiClusterSuppressed, 0);
+});
+
+test("signal grouping toggle on still merges repeated RSI triggers", () => {
+  const api = createHarness();
+  api.setConfig({ groupSignals: true });
+  api.setState({ rsiClusters: { "ZEC-USDT-SWAP|1m": {
+    direction: "LONG", anchorPrice: 100, radius: 1, neutralSeen: false, suppressedCount: 0
+  } } });
+  const result = api.mergeRsiRepeat("ZEC-USDT-SWAP", "1m", { ts: 123, c: 100.2 }, "LONG");
+  assert.equal(result, true);
+  assert.equal(api.getHistory().length, 1);
+  assert.equal(api.getState().rsiClusterSuppressed, 1);
+});
