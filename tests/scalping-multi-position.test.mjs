@@ -60,3 +60,47 @@ test("pair normalization accepts ticker, USDT symbol and full OKX instrument", (
   assert.equal(api.normalizePair("ETH-USDT"), "ETH-USDT-SWAP");
   assert.equal(api.normalizePair("ETH-USDT-SWAP"), "ETH-USDT-SWAP");
 });
+
+test("favorites list is loaded from the active saved watchlist and other saved lists", () => {
+  const api = createHarness();
+  api.setLocalStorage("okx_v2_watchlists", JSON.stringify({
+    "Избранное": ["ZEC", "SOL", "BTC"],
+    "Альтернативы": ["SOL", "NEAR"]
+  }));
+  api.setLocalStorage("okx_v2_active_watchlist", "Избранное");
+  assert.deepEqual(JSON.parse(JSON.stringify(api.favoritePairs())), ["ZEC", "SOL", "BTC", "NEAR"]);
+});
+
+test("favorites fall back to the custom pair list when no saved lists exist", () => {
+  const api = createHarness();
+  api.setLocalStorage("okx_v2_custom_coins", JSON.stringify(["ZEC", "SOL-USDT", "BTCUSDT"]));
+  assert.deepEqual(JSON.parse(JSON.stringify(api.favoritePairs())), ["ZEC", "SOL", "BTC"]);
+});
+
+test("multi-position polling requests each selected pair and reports per-pair status", async () => {
+  const api = createHarness();
+  const calls = [];
+  const bars = Array.from({ length: 120 }, (_, index) => ({
+    ts: 1700000000000 + index * 60000,
+    o: 100 + index * 0.01,
+    h: 101 + index * 0.01,
+    l: 99 + index * 0.01,
+    c: 100 + index * 0.01,
+    v: 100
+  }));
+  api.setConfig({
+    enabled: true,
+    scope: "multi",
+    volumeRsiEnabled: true,
+    slots: [
+      { enabled: true, pair: "ZEC", tf: "1m" },
+      { enabled: true, pair: "SOL", tf: "1m" },
+      { enabled: false, pair: "", tf: "1m" }
+    ]
+  });
+  api.setApp({ fetchCandles: async (pair, tf, limit) => { calls.push(pair + " " + tf); return bars; } });
+  await api.poll();
+  assert.deepEqual(calls, ["ZEC-USDT-SWAP 1m", "SOL-USDT-SWAP 1m"]);
+  assert.match(api.getLastPollSummary(), /ZEC 1m ✓/);
+  assert.match(api.getLastPollSummary(), /SOL 1m ✓/);
+});

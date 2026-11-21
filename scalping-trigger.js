@@ -134,6 +134,52 @@
     return { targets: unique, pairs: unique.map(item => item.pair), tf: unique.length ? unique.map(item => item.tf).join(", ") : "", label };
   }
 
+  function favoritePairs() {
+    const lists = safeParse("okx_v2_watchlists", {});
+    const activeName = String(localStorage.getItem("okx_v2_active_watchlist") || "");
+    const orderedNames = Object.keys(lists || {});
+    const raw = [];
+    if (activeName && Array.isArray(lists[activeName])) raw.push(...lists[activeName]);
+    orderedNames.forEach(name => {
+      if (name !== activeName && Array.isArray(lists[name])) raw.push(...lists[name]);
+    });
+    if (!raw.length) {
+      const custom = safeParse("okx_v2_custom_coins", []);
+      if (Array.isArray(custom)) raw.push(...custom);
+    }
+    const result = [];
+    raw.forEach(value => {
+      const pair = normalizePair(value);
+      const symbol = pair.replace(/-USDT-SWAP$/, "");
+      if (symbol && !result.includes(symbol)) result.push(symbol);
+    });
+    return result;
+  }
+
+  function populatePairSelect(select, chosen) {
+    if (!select) return;
+    const favorites = favoritePairs();
+    const selected = String(chosen || "").trim().toUpperCase();
+    select.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = favorites.length ? "Выбрать из избранного…" : "Избранное не найдено";
+    select.appendChild(placeholder);
+    favorites.forEach(symbol => {
+      const option = document.createElement("option");
+      option.value = symbol;
+      option.textContent = symbol;
+      select.appendChild(option);
+    });
+    if (selected && !favorites.includes(selected)) {
+      const option = document.createElement("option");
+      option.value = selected;
+      option.textContent = selected + " · сохранённая позиция";
+      select.appendChild(option);
+    }
+    select.value = selected;
+  }
+
   function rsiSeries(bars, period) {
     const out = new Array(bars.length).fill(null);
     if (bars.length <= period) return out;
@@ -489,7 +535,11 @@
       }));
       const succeeded = results.filter((item) => item.status === "fulfilled").length;
       const failed = results.filter((item) => item.status === "rejected");
-      lastPollSummary = succeeded + "/" + target.targets.length + " позиций";
+      lastPollSummary = results.map((item, index) => {
+        const targetItem = target.targets[index];
+        const symbol = targetItem.pair.replace("-USDT-SWAP", "");
+        return symbol + " " + targetItem.tf + " " + (item.status === "fulfilled" ? "✓" : "✕");
+      }).join(" · ") + " (" + succeeded + "/" + target.targets.length + ")";
       if (succeeded > 0) lastCheckAt = Date.now();
       lastPollError = failed.length
         ? failed.map((item, index) => {
@@ -627,7 +677,7 @@
     });
     cfg.slots.forEach((slot, index) => {
       const pair = $("stSlotPair" + (index + 1)), tf = $("stSlotTf" + (index + 1)), enabled = $("stSlotEnabled" + (index + 1));
-      if (pair) pair.value = slot.pair;
+      if (pair) populatePairSelect(pair, slot.pair);
       if (tf) tf.value = slot.tf;
       if (enabled) enabled.checked = !!slot.enabled;
     });
@@ -651,10 +701,10 @@
           '<label class="st-main-toggle"><input id="stEnabled" type="checkbox"> Включить мониторинг и алерты</label>' +
           '<div class="st-scope"><label>Откуда брать пары и таймфрейм<select id="stScope"><option value="chart">Текущая пара и ТФ графика</option><option value="alerts">Список пар и ТФ из раздела «Алерты»</option><option value="multi">До 3 независимых позиций</option></select></label>' +
           '<div id="stScopeDescription" class="st-hint"></div><div id="stSlots" class="st-slots" hidden>' +
-          '<div class="st-slot"><label><input id="stSlotEnabled1" type="checkbox"> Позиция 1</label><input id="stSlotPair1" type="text" placeholder="Например ZEC"><select id="stSlotTf1"><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option><option>4h</option><option>1d</option></select></div>' +
-          '<div class="st-slot"><label><input id="stSlotEnabled2" type="checkbox"> Позиция 2</label><input id="stSlotPair2" type="text" placeholder="Например SOL"><select id="stSlotTf2"><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option><option>4h</option><option>1d</option></select></div>' +
-          '<div class="st-slot"><label><input id="stSlotEnabled3" type="checkbox"> Позиция 3</label><input id="stSlotPair3" type="text" placeholder="Например SUI"><select id="stSlotTf3"><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option><option>4h</option><option>1d</option></select></div>' +
-          '<p class="st-hint st-wide">Для каждой позиции можно выбрать отдельную пару и таймфрейм. Пара указывается тикером (например BTC) или полным инструментом OKX.</p></div></div>' +
+          '<div class="st-slot"><label><input id="stSlotEnabled1" type="checkbox"> Позиция 1</label><select id="stSlotPair1"><option value="">Выбрать из избранного…</option></select><select id="stSlotTf1"><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option><option>4h</option><option>1d</option></select></div>' +
+          '<div class="st-slot"><label><input id="stSlotEnabled2" type="checkbox"> Позиция 2</label><select id="stSlotPair2"><option value="">Выбрать из избранного…</option></select><select id="stSlotTf2"><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option><option>4h</option><option>1d</option></select></div>' +
+          '<div class="st-slot"><label><input id="stSlotEnabled3" type="checkbox"> Позиция 3</label><select id="stSlotPair3"><option value="">Выбрать из избранного…</option></select><select id="stSlotTf3"><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option><option>4h</option><option>1d</option></select></div>' +
+          '<p class="st-hint st-wide">Пары выбираются из сохранённых списков избранного. При первом включении режима до трёх позиций автоматически заполняются избранными парами; для каждой можно настроить свой таймфрейм.</p></div></div>' +
           '<div class="st-grid">' +
             '<section class="st-card"><label class="st-check"><input id="stVolumeRsiEnabled" type="checkbox"> <b>Volume + RSI</b></label>' +
               '<div class="st-fields"><label>Период объёма<input id="stVolumePeriod" type="number" min="2" max="200"></label>' +
@@ -838,7 +888,7 @@
     const style = document.createElement("style");
     style.id = "scalpingTriggerCss";
     style.textContent =
-      ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number],.st-slot input[type=text],.st-slot select{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-slots{display:grid;gap:8px;margin-top:8px}.st-slot{display:grid;grid-template-columns:minmax(95px,.7fr) minmax(130px,1.5fr) minmax(75px,.6fr);gap:7px;align-items:center}.st-slot label{display:flex;align-items:center;gap:5px;color:#b7c5d4;font-size:11px}.st-slot input[type=checkbox]{width:auto;margin:0}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{display:block!important;min-height:72px;border:1px solid #263547;border-radius:10px;overflow:hidden;background:#0b1118}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-columns,.st-history-row{display:grid;grid-template-columns:minmax(120px,1.35fr) minmax(120px,1.2fr) minmax(105px,1fr) minmax(76px,.65fr) minmax(90px,.8fr);gap:8px;align-items:center}.st-history-columns{padding:7px 10px;background:#0c141e;color:#8998a9;font-size:10px}.st-history-list{display:block;max-height:260px;overflow:auto}.st-history-row{padding:8px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.35}.st-history-cell{min-width:0;overflow-wrap:anywhere}.st-history-row .st-time{display:grid;gap:2px}.st-history-row time{color:#d0dbe6;font-variant-numeric:tabular-nums}.st-history-row small{color:#718296;font-size:9px}.st-history-direction{font-weight:800}.st-history-row .st-history-direction.is-long{color:#48d99a}.st-history-row .st-history-direction.is-short{color:#ff7b84}.st-history-price{font-variant-numeric:tabular-nums;font-weight:700}.st-history-detail{grid-column:1/-1;color:#8998a9;font-size:9px;overflow-wrap:anywhere}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}.st-history-columns{display:none}.st-history-list{max-height:220px}.st-history-row{grid-template-columns:1fr 1fr;gap:6px 10px}.st-history-row .st-time{grid-column:1/-1}.st-slot{grid-template-columns:1fr 1fr}.st-slot label{grid-column:1/-1}}";
+      ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number],.st-slot select{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-slots{display:grid;gap:8px;margin-top:8px}.st-slot{display:grid;grid-template-columns:minmax(95px,.7fr) minmax(130px,1.5fr) minmax(75px,.6fr);gap:7px;align-items:center}.st-slot label{display:flex;align-items:center;gap:5px;color:#b7c5d4;font-size:11px}.st-slot input[type=checkbox]{width:auto;margin:0}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{display:block!important;min-height:72px;border:1px solid #263547;border-radius:10px;overflow:hidden;background:#0b1118}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-columns,.st-history-row{display:grid;grid-template-columns:minmax(120px,1.35fr) minmax(120px,1.2fr) minmax(105px,1fr) minmax(76px,.65fr) minmax(90px,.8fr);gap:8px;align-items:center}.st-history-columns{padding:7px 10px;background:#0c141e;color:#8998a9;font-size:10px}.st-history-list{display:block;max-height:260px;overflow:auto}.st-history-row{padding:8px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.35}.st-history-cell{min-width:0;overflow-wrap:anywhere}.st-history-row .st-time{display:grid;gap:2px}.st-history-row time{color:#d0dbe6;font-variant-numeric:tabular-nums}.st-history-row small{color:#718296;font-size:9px}.st-history-direction{font-weight:800}.st-history-row .st-history-direction.is-long{color:#48d99a}.st-history-row .st-history-direction.is-short{color:#ff7b84}.st-history-price{font-variant-numeric:tabular-nums;font-weight:700}.st-history-detail{grid-column:1/-1;color:#8998a9;font-size:9px;overflow-wrap:anywhere}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}.st-history-columns{display:none}.st-history-list{max-height:220px}.st-history-row{grid-template-columns:1fr 1fr;gap:6px 10px}.st-history-row .st-time{grid-column:1/-1}.st-slot{grid-template-columns:1fr 1fr}.st-slot label{grid-column:1/-1}}";
     document.head.appendChild(style);
 
     const journalStyle = document.createElement("style");
@@ -866,8 +916,10 @@
       setState: (value) => { state = Object.assign({}, state, value || {}); },
       getState: () => JSON.parse(JSON.stringify(state)),
       setConfig: (value) => { cfg = Object.assign({}, cfg, value || {}); },
+      setLocalStorage: (key, value) => localStorage.setItem(key, value),
       getTargets,
       normalizePair,
+      favoritePairs,
       evaluateBars,
       averageVolume,
       rsiSeries,
