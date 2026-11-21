@@ -919,6 +919,7 @@
       setLocalStorage: (key, value) => localStorage.setItem(key, value),
       getTargets,
       normalizePair,
+      favoritePairs,
       evaluateBars,
       averageVolume,
       rsiSeries,
