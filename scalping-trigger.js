@@ -23,6 +23,7 @@
     soundEnabled: true,
     cooldownSeconds: 60,
     rsiClusterAtrMultiplier: 1,
+    groupSignals: true,
     slots: [
       { enabled: true, pair: "", tf: "1m" },
       { enabled: false, pair: "", tf: "1m" },
@@ -386,6 +387,7 @@
   }
 
   function mergeRsiRepeat(pair, tf, candle, direction) {
+    if (!cfg.groupSignals) return false;
     const key = rsiClusterKey(pair, tf);
     const cluster = state.rsiClusters[key];
     if (!cluster || cluster.direction !== direction) return false;
@@ -426,6 +428,7 @@
   }
 
   function startRsiCluster(pair, tf, candle, direction, price, bars, historyItem) {
+    if (!cfg.groupSignals) return;
     const atr = averageTrueRange(bars, 14);
     const fallbackFloor = Math.max(Math.abs(Number(price)) * 0.00025, 0.01);
     const radius = Math.max((Number(atr) || 0) * cfg.rsiClusterAtrMultiplier, fallbackFloor);
@@ -664,7 +667,7 @@
       stEnabled: "enabled", stScope: "scope", stVolumeRsiEnabled: "volumeRsiEnabled",
       stVolumePeriod: "volumePeriod", stVolumeMultiplier: "volumeMultiplier",
       stRsiLength: "rsiLength", stRsiOversold: "rsiOversold", stRsiOverbought: "rsiOverbought",
-      stRsiClusterAtr: "rsiClusterAtrMultiplier",
+      stRsiClusterAtr: "rsiClusterAtrMultiplier", stGroupSignals: "groupSignals",
       stBosEnabled: "bosEnabled", stBosAlerts: "bosAlerts", stSwingLength: "swingLength",
       stRequireBos: "requireBos", stLongEnabled: "longEnabled", stShortEnabled: "shortEnabled",
       stSoundEnabled: "soundEnabled", stCooldown: "cooldownSeconds"
@@ -712,7 +715,8 @@
               '<label>RSI период<input id="stRsiLength" type="number" min="2" max="100"></label>' +
               '<label>Уровни RSI<input id="stRsiOversold" type="number" min="1" max="49"> / <input id="stRsiOverbought" type="number" min="51" max="99"></label>' +
               '<label>Зона объединения повторов, ATR ×<input id="stRsiClusterAtr" type="number" min="0.25" max="3" step="0.25"></label></div>' +
-              '<p class="st-hint">Повторные Volume + RSI в одной ценовой области объединяются. Новая ситуация разрешается после возврата RSI в нейтральную зону и выхода цены за границу области. По умолчанию граница — 1 ATR.</p>' +
+              '<label class="st-check st-wide"><input id="stGroupSignals" type="checkbox"> <b>Объединять повторные сигналы</b></label>' +
+              '<p class="st-hint">Включено: повторные Volume + RSI в одной ценовой области объединяются до возврата RSI в нейтральную зону и выхода цены за границу области. Выключено: каждый сигнал фиксируется отдельно. BOS не группируется этой настройкой.</p>' +
               '<p class="st-hint">LONG: всплеск объёма + RSI ≤ нижней зоны или выход вверх через неё. SHORT: всплеск объёма + RSI ≥ верхней зоны или выход вниз через неё.</p></section>' +
             '<section class="st-card"><label class="st-check"><input id="stBosEnabled" type="checkbox"> <b>BOS · слом микроструктуры</b></label>' +
               '<div class="st-fields"><label>Размер swing (свечей слева/справа)<input id="stSwingLength" type="number" min="1" max="20"></label>' +
@@ -752,6 +756,7 @@
       stRsiOversold: ["rsiOversold", (v) => clamp(Math.round(Number(v) || 30), 1, 49)],
       stRsiOverbought: ["rsiOverbought", (v) => clamp(Math.round(Number(v) || 70), 51, 99)],
       stRsiClusterAtr: ["rsiClusterAtrMultiplier", (v) => clamp(Number(v) || 1, 0.25, 3)],
+      stGroupSignals: ["groupSignals", (v) => v],
       stBosEnabled: ["bosEnabled", (v) => v],
       stBosAlerts: ["bosAlerts", (v) => v],
       stSwingLength: ["swingLength", (v) => clamp(Math.round(Number(v) || 3), 1, 20)],
