@@ -535,7 +535,11 @@
       }));
       const succeeded = results.filter((item) => item.status === "fulfilled").length;
       const failed = results.filter((item) => item.status === "rejected");
-      lastPollSummary = succeeded + "/" + target.targets.length + " позиций";
+      lastPollSummary = results.map((item, index) => {
+        const targetItem = target.targets[index];
+        const symbol = targetItem.pair.replace("-USDT-SWAP", "");
+        return symbol + " " + targetItem.tf + " " + (item.status === "fulfilled" ? "✓" : "✕");
+      }).join(" · ") + " (" + succeeded + "/" + target.targets.length + ")";
       if (succeeded > 0) lastCheckAt = Date.now();
       lastPollError = failed.length
         ? failed.map((item, index) => {
