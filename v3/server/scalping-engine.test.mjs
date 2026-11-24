@@ -118,7 +118,7 @@ test("groups repeated RSI triggers in one trading situation into the original jo
   assert.equal(first.events.length, 1);
   assert.ok(first.state.rsiClusters["ZEC-USDT-SWAP|1m"]);
 
-  const secondBars = candles([100, 99, 98, 97, 98, 97, 98], [10, 10, 10, 10, 100, 10, 100]);
+  const secondBars = candles([100, 99, 98, 97, 98, 97, 98], [10, 10, 10, 10, 10, 10, 100]);
   const second = evaluateScalpingBars(secondBars, "ZEC", "1m", {
     config, state: first.state, now: 1_700_000_420_000
   });
