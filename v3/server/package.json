@@ -1,0 +1,14 @@
+{
+  "name": "okx-signal-pro-v3-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node worker.mjs",
+    "test": "node --test *.test.mjs"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  }
+}
