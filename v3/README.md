@@ -25,10 +25,10 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - The v3 settings page under `v3/` supports connecting to the worker with an HTTPS URL and API token, editing pair/timeframe targets, independent target switches, and the global monitor switch.
 - The page also exposes the supported scalping parameters (Volume + RSI, BOS, LONG/SHORT, RSI grouping, cooldown), IANA timezone, weekdays, up to 10 notification windows, and independent Push/Telegram channel toggles.
 - The signal journal UI reads `/history`, shows the latest 100 signals, filters by delivery status, displays per-channel outcomes, and can be refreshed manually.
-- A v3-scoped service worker (`v3/sw.js`) displays Push notifications and opens the v3 page when clicked.
-- Push registration is an explicit per-device action: the browser asks permission only after the user clicks the registration button; the subscription is saved through the authenticated `/push-subscriptions` endpoint. Unsubscribing removes only the current browser/device endpoint from the server and browser.
-- Safe `/health` fields show whether complete VAPID configuration is present and how many device subscriptions are registered. The API token remains only in current page memory, never browser storage.
-- Each computer/phone browser must be registered separately. The page and service worker remain in the draft PR and are not published; Push cannot work until the worker is deployed and VAPID variables are configured.
+- A v3-scoped service worker (`v3/sw.js`) displays Push notifications and opens the v3 page when clicked. An installable web-app manifest, SVG app icon, and PNG Apple Home Screen icon are included.
+- The service worker is prepared without asking notification permission. Permission and subscription are requested only from the explicit per-device button; the subscription is saved through the authenticated `/push-subscriptions` endpoint. Unsubscribing removes only the current browser/device endpoint from the server and browser.
+- Safe `/health` fields show whether complete VAPID configuration (including `VAPID_SUBJECT`) is present and how many device subscriptions are registered. The API token remains only in current page memory, never browser storage.
+- Each computer/phone browser must be registered separately. On iPhone/iPad, add the web app to the Home Screen and open it from its icon before enabling Push. The page and service worker remain in the draft PR and are not published; Push cannot work until the worker is deployed and VAPID variables are configured.
 
 ## Initial architecture
 
