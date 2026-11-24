@@ -20,6 +20,12 @@ export function createDefaultWorkerConfig() {
   });
 }
 
+export function getEnabledTargets(config) {
+  return Array.isArray(config?.targets)
+    ? config.targets.filter(target => target?.enabled !== false)
+    : [];
+}
+
 export function normalizeWorkerConfig(input = {}) {
   const targetsInput = Array.isArray(input.targets) ? input.targets : [];
   if (targetsInput.length > 100) throw new RangeError("At most 100 pair/timeframe targets are supported.");
@@ -42,7 +48,9 @@ export function normalizeWorkerConfig(input = {}) {
     if (!SUPPORTED_TIMEFRAMES.has(tf)) {
       throw new RangeError("Unsupported OKX timeframe: " + tf);
     }
-    unique.set(pair + "|" + tf, { pair, tf });
+    // Each pair/timeframe target has an independent switch. Existing saved
+    // configurations remain enabled unless they explicitly set enabled: false.
+    unique.set(pair + "|" + tf, { pair, tf, enabled: item?.enabled !== false });
   }
   if (new Set([...unique.values()].map(target => target.pair)).size > 20) {
     throw new RangeError("At most 20 distinct OKX pairs are supported.");
