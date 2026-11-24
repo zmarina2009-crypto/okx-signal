@@ -7,7 +7,9 @@
     config: null,
     connected: false,
     dirty: false,
-    health: null
+    health: null,
+    vapidPublicKey: null,
+    history: { signals: [], deliveries: [], totalSignals: 0, totalDeliveries: 0 }
   };
 
   const SCALPING_DEFAULTS = {
@@ -81,6 +83,238 @@
     if (className) node.className = className;
     if (text !== undefined) node.textContent = text;
     return node;
+  }
+
+  function formatJournalDate(value) {
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return "Время неизвестно";
+    return date.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "medium" });
+  }
+
+  function notificationStatusLabel(status) {
+    const labels = {
+      sent: "Отправлено",
+      failed: "Ошибка",
+      pending: "Ожидает",
+      skipped: "Не отправлялось",
+      expired: "Истёк срок",
+      outside_notification_window: "Вне расписания",
+      outside_current_notification_window: "Окно закрыто",
+      expired_signal: "Сигнал устарел",
+      max_delivery_attempts_reached: "Лимит попыток"
+    };
+    return labels[status] || status || "Нет статуса";
+  }
+
+  function renderHistory() {
+    const list = $("signal-journal");
+    const filter = $("history-filter").value;
+    const signals = Array.isArray(state.history.signals) ? state.history.signals : [];
+    $("journal-counts").textContent =
+      "Сигналов: " + state.history.totalSignals +
+      " · Попыток доставки: " + state.history.totalDeliveries;
+
+    const filtered = signals.filter(signal => {
+      const channels = Array.isArray(signal.notificationChannels) ? signal.notificationChannels : [];
+      if (filter === "sent") return signal.notificationStatus === "sent" || channels.some(item => item.status === "sent");
+      if (filter === "failed") return signal.notificationStatus === "failed" || channels.some(item => item.status === "failed");
+      if (filter === "pending") return signal.notificationStatus === "pending";
+      if (filter === "skipped") return ["skipped", "expired", "outside_notification_window", "outside_current_notification_window", "expired_signal"].includes(signal.notificationStatus);
+      return true;
+    });
+
+    list.replaceChildren();
+    if (!filtered.length) {
+      list.append(createElement("div", "empty-state", signals.length
+        ? "По выбранному фильтру сигналов нет."
+        : "Сигналов пока нет. Они появятся после включения монитора и выбора пар."));
+      return;
+    }
+
+    filtered.forEach(signal => {
+      const card = createElement("article", "journal-card");
+      const top = createElement("div", "journal-card-top");
+      const identity = createElement("div", "journal-identity");
+      identity.append(
+        createElement("strong", "journal-pair", signal.pair || "—"),
+        createElement("span", "tf-chip", signal.tf || "—")
+      );
+      const direction = createElement("span",
+        "direction-chip " + (signal.direction === "LONG" ? "direction-long" : "direction-short"),
+        signal.direction || "—"
+      );
+      top.append(identity, direction);
+
+      const details = createElement("div", "journal-details");
+      details.append(
+        createElement("span", "", formatJournalDate(signal.detectedAt || signal.recordedAt || signal.candleTs)),
+        createElement("span", "", "Цена: " + (Number.isFinite(Number(signal.price))
+          ? Number(signal.price).toLocaleString("en-US", { maximumFractionDigits: 8 })
+          : "—")),
+        createElement("span", "", signal.label || signal.kind || "Сигнал")
+      );
+
+      const message = createElement("p", "journal-message", signal.message || "Детали сигнала не указаны.");
+      const status = createElement("div", "journal-status-row");
+      const overall = createElement("span", "delivery-status delivery-" + (signal.notificationStatus || "unknown"),
+        "Доставка: " + notificationStatusLabel(signal.notificationStatus));
+      status.append(overall);
+
+      const channels = Array.isArray(signal.notificationChannels) ? signal.notificationChannels : [];
+      channels.forEach(channel => {
+        const label = (channel.channel === "push" ? "Push" : channel.channel === "telegram" ? "Telegram" : channel.channel || "Канал");
+        const chip = createElement("span", "delivery-status delivery-" + (channel.status || "unknown"),
+          label + ": " + notificationStatusLabel(channel.status));
+        if (channel.error) chip.title = channel.error;
+        status.append(chip);
+      });
+
+      if (Number(signal.mergedCount) > 0) {
+        status.append(createElement("span", "delivery-status delivery-merged", "Объединено повторов: " + signal.mergedCount));
+      }
+      card.append(top, details, message, status);
+      list.append(card);
+    });
+  }
+
+  async function refreshHistory() {
+    if (!state.connected) return;
+    const button = $("refresh-history");
+    button.disabled = true;
+    try {
+      const result = await request("/history?limit=100", { method: "GET" });
+      state.history = {
+        signals: Array.isArray(result.signals) ? result.signals : [],
+        deliveries: Array.isArray(result.deliveries) ? result.deliveries : [],
+        totalSignals: Number(result.totalSignals) || 0,
+        totalDeliveries: Number(result.totalDeliveries) || 0
+      };
+      renderHistory();
+      $("history-updated").textContent = "Обновлено: " + new Date().toLocaleTimeString("ru-RU");
+    } catch (error) {
+      $("history-updated").textContent = "Ошибка загрузки: " + error.message;
+    } finally {
+      button.disabled = !state.connected;
+    }
+  }
+
+  function base64UrlToUint8Array(base64Url) {
+    const padding = "=".repeat((4 - (base64Url.length % 4)) % 4);
+    const base64 = (base64Url + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(base64);
+    return Uint8Array.from(raw, char => char.charCodeAt(0));
+  }
+
+  function pushScopePath() {
+    return new URL("./", window.location.href).pathname;
+  }
+
+  async function refreshPushDeviceStatus() {
+    const subscribe = $("push-subscribe");
+    const unsubscribe = $("push-unsubscribe");
+    if (!state.connected) {
+      subscribe.disabled = true;
+      unsubscribe.disabled = true;
+      return;
+    }
+    if (!window.isSecureContext || !("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+      $("push-device-status").textContent = "Этот браузер или контекст не поддерживает Web Push. Открой приложение по HTTPS в поддерживаемом браузере.";
+      subscribe.disabled = true;
+      unsubscribe.disabled = true;
+      return;
+    }
+    if (!state.vapidPublicKey) {
+      $("push-device-status").textContent = "Сервер пока не настроен для Push: отсутствует VAPID public key.";
+      subscribe.disabled = true;
+      unsubscribe.disabled = true;
+      return;
+    }
+    try {
+      const registration = await navigator.serviceWorker.getRegistration(pushScopePath());
+      const subscription = await registration?.pushManager?.getSubscription();
+      if (subscription) {
+        $("push-device-status").textContent = "Это устройство уже подписано на Push. Разрешение браузера: " + Notification.permission + ".";
+        subscribe.disabled = true;
+        unsubscribe.disabled = false;
+      } else {
+        const permissionText = Notification.permission === "denied"
+          ? "Разрешение заблокировано в настройках браузера."
+          : Notification.permission === "granted"
+            ? "Разрешение браузера выдано, подписка ещё не создана."
+            : "После нажатия браузер запросит разрешение на уведомления.";
+        $("push-device-status").textContent = permissionText + " Подписка оформляется отдельно для каждого устройства.";
+        subscribe.disabled = Notification.permission === "denied";
+        unsubscribe.disabled = true;
+      }
+    } catch (error) {
+      $("push-device-status").textContent = "Не удалось проверить Push-подписку: " + error.message;
+      subscribe.disabled = false;
+      unsubscribe.disabled = true;
+    }
+  }
+
+  async function subscribePushOnThisDevice() {
+    const button = $("push-subscribe");
+    button.disabled = true;
+    $("push-device-status").textContent = "Регистрирую Push для этого устройства…";
+    try {
+      if (!state.connected || !state.vapidPublicKey) throw new Error("Сначала подключись к настроенному Push-серверу.");
+      if (!window.isSecureContext || !("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+        throw new Error("Web Push недоступен в этом браузере или соединение не защищено HTTPS.");
+      }
+
+      let permission = Notification.permission;
+      if (permission === "default") permission = await Notification.requestPermission();
+      if (permission !== "granted") throw new Error("Разрешение на уведомления не выдано. Проверь настройки сайта в браузере.");
+
+      const registration = await navigator.serviceWorker.register(new URL("./sw.js", window.location.href), {
+        scope: pushScopePath()
+      });
+      await navigator.serviceWorker.ready;
+
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: base64UrlToUint8Array(state.vapidPublicKey)
+        });
+      }
+
+      await request("/push-subscriptions", {
+        method: "POST",
+        body: JSON.stringify({ subscription: subscription.toJSON() })
+      });
+      $("push-device-status").textContent = "Готово: это устройство зарегистрировано. Для телефона повтори подключение в браузере телефона.";
+      await refreshPushDeviceStatus();
+    } catch (error) {
+      $("push-device-status").textContent = "Не удалось подключить Push: " + error.message;
+      button.disabled = false;
+    }
+  }
+
+  async function unsubscribePushOnThisDevice() {
+    const button = $("push-unsubscribe");
+    button.disabled = true;
+    $("push-device-status").textContent = "Отключаю Push на этом устройстве…";
+    try {
+      const registration = await navigator.serviceWorker.getRegistration(pushScopePath());
+      const subscription = await registration?.pushManager?.getSubscription();
+      if (!subscription) {
+        $("push-device-status").textContent = "На этом устройстве активной Push-подписки нет.";
+        await refreshPushDeviceStatus();
+        return;
+      }
+      await request("/push-subscriptions", {
+        method: "DELETE",
+        body: JSON.stringify({ endpoint: subscription.endpoint })
+      });
+      await subscription.unsubscribe();
+      $("push-device-status").textContent = "Push отключён на этом устройстве. Остальные зарегистрированные устройства не затронуты.";
+      await refreshPushDeviceStatus();
+    } catch (error) {
+      $("push-device-status").textContent = "Не удалось отключить Push: " + error.message;
+      button.disabled = false;
+    }
   }
 
   function renderTargets() {
@@ -240,8 +474,8 @@
   function updateChannelReadiness() {
     const configured = state.health?.channelsConfigured || {};
     $("push-readiness").textContent = configured.push
-      ? "VAPID-ключи обнаружены; ещё потребуется разрешение браузера и подписка"
-      : "На сервере пока не настроены VAPID-ключи и подписка";
+      ? "VAPID настроен; дополнительно подключи каждое устройство"
+      : "На сервере пока не настроены VAPID-ключи и VAPID contact";
     $("telegram-readiness").textContent = configured.telegram
       ? "Настройки Telegram обнаружены на сервере"
       : "На сервере нужны TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID";
@@ -266,6 +500,7 @@
       const result = await request("/config", { method: "GET" });
       if (!result.config || !Array.isArray(result.config.targets)) throw new Error("Сервер вернул неизвестный формат настроек.");
       state.config = result.config;
+      state.vapidPublicKey = result.vapidPublicKey || null;
       state.config.targets = state.config.targets.map(target => ({ ...target, enabled: target.enabled !== false }));
       state.config.scalping = { ...SCALPING_DEFAULTS, ...(state.config.scalping || {}) };
       state.config.notificationSchedule = {
@@ -288,6 +523,8 @@
       renderTargets();
       setConnectionStatus("Подключён", "ok");
       setSaveStatus("Настройки загружены. Изменения ещё не вносились.");
+      $("refresh-history").disabled = false;
+      await Promise.all([refreshHistory(), refreshPushDeviceStatus()]);
     } catch (error) {
       state.connected = false;
       setConnectionStatus("Ошибка подключения", "error");
@@ -412,6 +649,10 @@
   $("connect-button").addEventListener("click", connect);
   $("add-target").addEventListener("click", addTarget);
   $("save-button").addEventListener("click", save);
+  $("refresh-history").addEventListener("click", refreshHistory);
+  $("history-filter").addEventListener("change", renderHistory);
+  $("push-subscribe").addEventListener("click", subscribePushOnThisDevice);
+  $("push-unsubscribe").addEventListener("click", unsubscribePushOnThisDevice);
   $("monitor-enabled").addEventListener("change", markDirty);
   $("new-pair").addEventListener("keydown", event => {
     if (event.key === "Enter") addTarget();
