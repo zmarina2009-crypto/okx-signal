@@ -280,10 +280,12 @@
         });
       }
 
-      await request("/push-subscriptions", {
+      const saved = await request("/push-subscriptions", {
         method: "POST",
         body: JSON.stringify({ subscription: subscription.toJSON() })
       });
+      state.health = { ...(state.health || {}), registeredPushDevices: saved.subscriptions };
+      updateChannelReadiness();
       $("push-device-status").textContent = "Готово: это устройство зарегистрировано. Для телефона повтори подключение в браузере телефона.";
       await refreshPushDeviceStatus();
     } catch (error) {
@@ -304,11 +306,13 @@
         await refreshPushDeviceStatus();
         return;
       }
-      await request("/push-subscriptions", {
+      const deleted = await request("/push-subscriptions", {
         method: "DELETE",
         body: JSON.stringify({ endpoint: subscription.endpoint })
       });
       await subscription.unsubscribe();
+      state.health = { ...(state.health || {}), registeredPushDevices: deleted.subscriptions };
+      updateChannelReadiness();
       $("push-device-status").textContent = "Push отключён на этом устройстве. Остальные зарегистрированные устройства не затронуты.";
       await refreshPushDeviceStatus();
     } catch (error) {
@@ -473,8 +477,9 @@
 
   function updateChannelReadiness() {
     const configured = state.health?.channelsConfigured || {};
+    const deviceCount = Number(state.health?.registeredPushDevices) || 0;
     $("push-readiness").textContent = configured.push
-      ? "VAPID настроен; дополнительно подключи каждое устройство"
+      ? "VAPID настроен · устройств подключено: " + deviceCount
       : "На сервере пока не настроены VAPID-ключи и VAPID contact";
     $("telegram-readiness").textContent = configured.telegram
       ? "Настройки Telegram обнаружены на сервере"
