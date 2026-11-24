@@ -10,6 +10,7 @@ import { diagnoseComboReversal, shouldSendStandaloneTelegram } from "./combo-rev
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
+const TELEGRAM_NOTIFICATIONS_ENABLED = !["0", "false", "no", "off", "disabled"].includes(String(process.env.TELEGRAM_NOTIFICATIONS_ENABLED ?? "true").trim().toLowerCase());
 const CONFIG_API_TOKEN = process.env.CONFIG_API_TOKEN || "";
 const CONFIG_ALLOWED_ORIGIN = process.env.CONFIG_ALLOWED_ORIGIN || "https://zmarina2009-crypto.github.io";
 const CONFIG_ALLOWED_ORIGINS = new Set([
@@ -210,6 +211,10 @@ async function persistTelegramState(stage, historyId) {
 }
 async function emit(kind, pair, tf, direction, closePrice, details = "", metadata = {}) {
   const key = [kind, pair, tf, direction].join(":");
+  if (!TELEGRAM_NOTIFICATIONS_ENABLED) {
+    console.log("Telegram notification suppressed by global switch:", key);
+    return;
+  }
   const now = Date.now();
   const signalTs = Number(metadata.signalTs);
   const entry = {
@@ -477,7 +482,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (requestUrl.pathname === "/config" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    res.end(JSON.stringify({ rules: ALERT_RULES.map(({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, vpNear, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, vpNear, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
+    res.end(JSON.stringify({ telegramNotificationsEnabled: TELEGRAM_NOTIFICATIONS_ENABLED, rules: ALERT_RULES.map(({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, vpNear, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold }) => ({ pair, tf, telegram, comboOnly, volume, rsi, sma, vp, vpNear, combo, comboCount, comboWindowBars, comboMode, chopFilter, chopPeriod, chopThreshold })) }, null, 2));
     return;
   }
   if (requestUrl.pathname === "/config" && req.method === "PUT") {
@@ -524,6 +529,11 @@ const server = http.createServer(async (req, res) => {
     if (auth !== "Bearer " + CONFIG_API_TOKEN) {
       res.writeHead(401, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
       res.end(JSON.stringify({ ok: false, error: "Unauthorized" }));
+      return;
+    }
+    if (!TELEGRAM_NOTIFICATIONS_ENABLED) {
+      res.writeHead(423, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      res.end(JSON.stringify({ ok: false, error: "Telegram notifications are temporarily paused." }));
       return;
     }
     if (!BOT_TOKEN || !CHAT_ID) {
@@ -579,7 +589,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (requestUrl.pathname === "/health") {
     res.writeHead(BOT_TOKEN && CHAT_ID ? 200 : 503, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: Boolean(BOT_TOKEN && CHAT_ID), service: "okx-signal-telegram-worker", pairs: new Set(ALERT_RULES.map(rule => rule.pair)).size, rules: ALERT_RULES.length, timeframes: [...new Set(ALERT_RULES.map(rule => rule.tf))], intervalMs: POLL_MS }));
+    res.end(JSON.stringify({ ok: Boolean(BOT_TOKEN && CHAT_ID), telegramNotificationsEnabled: TELEGRAM_NOTIFICATIONS_ENABLED, service: "okx-signal-telegram-worker", pairs: new Set(ALERT_RULES.map(rule => rule.pair)).size, rules: ALERT_RULES.length, timeframes: [...new Set(ALERT_RULES.map(rule => rule.tf))], intervalMs: POLL_MS }));
     return;
   }
   res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
