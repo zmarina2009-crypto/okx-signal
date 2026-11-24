@@ -218,7 +218,11 @@
       return;
     }
     if (!window.isSecureContext || !("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
-      $("push-device-status").textContent = "Этот браузер или контекст не поддерживает Web Push. Открой приложение по HTTPS в поддерживаемом браузере.";
+      const isAppleMobile = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+      $("push-device-status").textContent = isAppleMobile
+        ? "На iPhone/iPad добавь приложение на экран «Домой» и открой его с этого значка. Если Push всё ещё недоступен, проверь обновление iOS/iPadOS."
+        : "Этот браузер или контекст не поддерживает Web Push. Открой приложение по HTTPS в актуальном браузере.";
       subscribe.disabled = true;
       unsubscribe.disabled = true;
       return;
