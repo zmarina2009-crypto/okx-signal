@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101a2b">
+  <title>OKX Signal Pro v3 — Скальпинг</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div class="brand-mark">OKX</div>
+      <div>
+        <p class="eyebrow">SIGNAL PRO · VERSION 3</p>
+        <h1>Настройки скальпинга</h1>
+        <p class="subhead">Выбирай пары и таймфреймы независимо друг от друга</p>
+      </div>
+      <span class="draft-label">Предварительная версия</span>
+    </header>
+
+    <section class="panel connection-panel" aria-labelledby="connection-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ПОДКЛЮЧЕНИЕ</p>
+          <h2 id="connection-title">Сервер скальпинга</h2>
+        </div>
+        <span id="connection-state" class="status status-idle">Не подключён</span>
+      </div>
+      <div class="connection-grid">
+        <label class="field">
+          <span>Адрес сервера Railway (HTTPS)</span>
+          <input id="server-url" type="url" inputmode="url" placeholder="https://your-v3-worker.up.railway.app" autocomplete="url">
+        </label>
+        <label class="field">
+          <span>Ключ доступа к настройкам</span>
+          <input id="api-token" type="password" placeholder="CONFIG_API_TOKEN" autocomplete="off">
+        </label>
+      </div>
+      <div class="actions">
+        <button id="connect-button" class="button button-secondary" type="button">Загрузить настройки</button>
+        <p class="hint">Адрес и ключ используются только в этой вкладке и не сохраняются в браузере.</p>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="monitor-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ОБЩИЙ РЕЖИМ</p>
+          <h2 id="monitor-title">Монитор скальпинга</h2>
+        </div>
+        <label class="switch large-switch">
+          <input id="monitor-enabled" type="checkbox" disabled>
+          <span class="switch-track"></span>
+          <span class="sr-only">Включить монитор скальпинга</span>
+        </label>
+      </div>
+      <p class="section-copy">Общий выключатель останавливает монитор целиком. Индивидуальные переключатели ниже управляют каждой комбинацией отдельно.</p>
+      <div class="list-heading">
+        <div>
+          <p class="eyebrow">МОИ КОМБИНАЦИИ</p>
+          <h2>Пары и таймфреймы</h2>
+        </div>
+        <span id="target-count" class="count-pill">0 позиций</span>
+      </div>
+      <div id="targets-list" class="targets-list">
+        <div class="empty-state">Сначала подключись к серверу, чтобы загрузить настройки.</div>
+      </div>
+      <div class="add-target">
+        <label class="field pair-field">
+          <span>Новая пара</span>
+          <input id="new-pair" type="text" value="BTC" maxlength="24" placeholder="Например, BTC">
+        </label>
+        <label class="field timeframe-field">
+          <span>Таймфрейм</span>
+          <select id="new-timeframe">
+            <option>1m</option><option>3m</option><option>5m</option><option>15m</option>
+            <option>30m</option><option>1h</option><option>2h</option><option>4h</option>
+            <option>6h</option><option>12h</option><option>1d</option><option>1w</option>
+          </select>
+        </label>
+        <button id="add-target" class="button button-secondary add-button" type="button" disabled>Добавить позицию</button>
+      </div>
+      <div class="footer-actions">
+        <p id="save-status" class="hint" aria-live="polite">Подключи сервер, чтобы редактировать список.</p>
+        <button id="save-button" class="button button-primary" type="button" disabled>Сохранить настройки</button>
+      </div>
+    </section>
+
+    <section class="note-panel">
+      <span class="note-icon">i</span>
+      <p><strong>Как работает индивидуальное отключение.</strong> Выключенная комбинация не опрашивается и не создаёт новые сигналы. Её настройки, состояние и предыдущая история сохраняются. Включение обратно продолжит отслеживание без создания правила заново.</p>
+    </section>
+
+    <footer>OKX Signal Pro v3 · Только публичные рыночные данные OKX · Автоторговля отключена</footer>
+  </main>
+</body>
+</html>
