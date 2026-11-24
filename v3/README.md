@@ -67,7 +67,7 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - The v2 worker keeps its mounted `/data` volume and its existing per-pair/timeframe rules, Volume Profile, COMBO, CHOP, runtime config API, statistics, and delivery history. No Telegram credential values were read or changed.
 - Previous v2 logs showed state-file rename errors. The v3 state store instead serializes writes and uses a unique temporary filename, with concurrent-write regression tests. This is a v3-specific fix; v2 persistence has not been rewritten.
 - No new Railway project, service, or database was created. The v1 and v2 front ends, charts, and Live features remain unchanged.
-- The v3 worker is not deployed. Its monitor defaults to disabled and has no selected targets until configured. The server-side Push/Telegram adapters exist, but the browser settings UI, service worker registration, and VAPID environment configuration are still pending.
+- The v3 worker is not deployed. Its monitor defaults to disabled and has no selected targets until configured. The pair/timeframe manager exists in the draft static page but is not published. The schedule/channel settings UI, service worker registration, Push subscription flow, and VAPID environment configuration are still pending.
 
 ## Delivery phases
 
