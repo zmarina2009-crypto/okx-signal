@@ -9,6 +9,7 @@
     dirty: false,
     health: null,
     vapidPublicKey: null,
+    serviceWorkerRegistration: null,
     history: { signals: [], deliveries: [], totalSignals: 0, totalDeliveries: 0 }
   };
 
@@ -209,6 +210,16 @@
     return new URL("./", window.location.href).pathname;
   }
 
+  async function preparePushServiceWorker() {
+    if (!window.isSecureContext || !("serviceWorker" in navigator)) return null;
+    const registration = await navigator.serviceWorker.register(new URL("./sw.js", window.location.href), {
+      scope: pushScopePath()
+    });
+    await navigator.serviceWorker.ready;
+    state.serviceWorkerRegistration = registration;
+    return registration;
+  }
+
   async function refreshPushDeviceStatus() {
     const subscribe = $("push-subscribe");
     const unsubscribe = $("push-unsubscribe");
@@ -234,7 +245,8 @@
       return;
     }
     try {
-      const registration = await navigator.serviceWorker.getRegistration(pushScopePath());
+      const registration = state.serviceWorkerRegistration ||
+        await navigator.serviceWorker.getRegistration(pushScopePath());
       const subscription = await registration?.pushManager?.getSubscription();
       if (subscription) {
         $("push-device-status").textContent = "Это устройство уже подписано на Push. Разрешение браузера: " + Notification.permission + ".";
@@ -273,14 +285,15 @@
         throw new Error("На iPhone/iPad сначала нажми «Поделиться» → «На экран Домой», открой приложение с появившегося значка и повтори подключение Push.");
       }
 
+      // The scoped service worker is prepared when the user connects to the server.
+      // Keep the permission prompt and subscribe operation in this explicit button flow.
+      const registration = state.serviceWorkerRegistration ||
+        await navigator.serviceWorker.getRegistration(pushScopePath());
+      if (!registration) throw new Error("Service Worker ещё не готов. Перезагрузи страницу и повтори подключение.");
+
       let permission = Notification.permission;
       if (permission === "default") permission = await Notification.requestPermission();
       if (permission !== "granted") throw new Error("Разрешение на уведомления не выдано. Проверь настройки сайта в браузере.");
-
-      const registration = await navigator.serviceWorker.register(new URL("./sw.js", window.location.href), {
-        scope: pushScopePath()
-      });
-      await navigator.serviceWorker.ready;
 
       let subscription = await registration.pushManager.getSubscription();
       if (!subscription) {
@@ -309,7 +322,8 @@
     button.disabled = true;
     $("push-device-status").textContent = "Отключаю Push на этом устройстве…";
     try {
-      const registration = await navigator.serviceWorker.getRegistration(pushScopePath());
+      const registration = state.serviceWorkerRegistration ||
+        await navigator.serviceWorker.getRegistration(pushScopePath());
       const subscription = await registration?.pushManager?.getSubscription();
       if (!subscription) {
         $("push-device-status").textContent = "На этом устройстве активной Push-подписки нет.";
@@ -534,6 +548,12 @@
       state.connected = true;
       state.dirty = false;
       ["monitor-enabled", "add-target", "save-button"].forEach(id => { $(id).disabled = false; });
+      try {
+        await preparePushServiceWorker();
+      } catch (serviceWorkerError) {
+        state.serviceWorkerRegistration = null;
+        $("push-device-status").textContent = "Не удалось подготовить Push Service Worker: " + serviceWorkerError.message;
+      }
       syncUiFromConfig();
       renderTargets();
       setConnectionStatus("Подключён", "ok");
