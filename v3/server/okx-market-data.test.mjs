@@ -48,5 +48,5 @@ test("retries temporary HTTP/API failures and rejects invalid instrument types",
   };
   await fetchOkxCandles("ETH", "5m", { fetchImpl: fakeFetch, attempts: 2, timeoutMs: 2000 });
   assert.equal(calls, 2);
-  await assert.rejects(fetchOkxCandles("BTC-USDT", "1m", { fetchImpl: fakeFetch }), /USDT perpetual/);
+  await assert.rejects(fetchOkxCandles("BTC-USDC-SWAP", "1m", { fetchImpl: fakeFetch }), /USDT perpetual/);
 });
