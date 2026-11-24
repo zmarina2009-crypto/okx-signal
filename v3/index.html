@@ -4,6 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101a2b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="OKX Signal">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icon.svg">
   <title>OKX Signal Pro v3 — Скальпинг</title>
   <link rel="stylesheet" href="./style.css">
   <script src="./app.js" defer></script>
@@ -242,7 +248,7 @@
       <div class="push-device-panel">
         <div>
           <strong>Подключить это устройство к Push</strong>
-          <small id="push-device-status" aria-live="polite">Подключись к серверу. Для каждого компьютера и телефона подписка оформляется отдельно.</small>
+          <small id="push-device-status" aria-live="polite">Подключись к серверу. Каждый компьютер и телефон регистрируется отдельно. На iPhone/iPad сначала добавь приложение на экран «Домой».</small>
         </div>
         <div class="push-device-actions">
           <button id="push-subscribe" class="button button-secondary compact-button" type="button" disabled>Разрешить Push на этом устройстве</button>
