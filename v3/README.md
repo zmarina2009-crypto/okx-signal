@@ -8,10 +8,21 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 
 - Do not create a new Railway project or service for the first MVP.
 - Keep the v3 static interface separate from v1, for example under `/v3/` on the existing GitHub Pages site.
-- Audit and, only after validation, repurpose an existing worker resource in Railway project `natural-integrity`.
-- Prefer the existing persistent `/data` volume and existing Telegram credentials; never copy secret values into Git.
+- Do not create a third Railway project or service for the MVP.
+- Prefer an existing paused worker resource only after checking what APIs and app features depend on it; do not replace the live v2 worker without a dependency audit.
+- Reuse a persistent `/data` volume only with a v3-specific state filename; never overwrite v1/v2 state.
+- Reuse existing Telegram credentials only through Railway variables; never copy secret values into Git.
 - Do not add a managed database or paid notification provider for the MVP.
-- Reassess resource use before enabling the worker for continuous production operation.
+- Measure the additional runtime usage before enabling continuous monitoring; reusing a service avoids a new service, but does not make active compute free.
+
+## Implementation status (2026-11-24)
+
+- Server-side Volume + RSI / BOS engine and OKX public candle adapter are implemented.
+- Notification schedule supports weekdays, multiple windows, and IANA time zones.
+- Telegram and Web Push server adapters are implemented; Push requires VAPID public/private keys and an explicit valid `VAPID_SUBJECT`.
+- A persistent notification outbox retries failed destinations with a bounded number of attempts, skips destinations already confirmed, and expires stale signals after 90 seconds or when the active time window ends.
+- CI currently validates deterministic engine, schedule, market-data, persistence, delivery, and outbox behavior. The current PR remains draft and is not merged or deployed.
+- No v3 browser UI or service worker has been published yet; no Push subscription can be registered from the app until that work is complete.
 
 ## Initial architecture
 
@@ -47,11 +58,12 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 ## Existing infrastructure audit (2026-11-24)
 
 - Railway workspace currently has two projects: `natural-integrity` and `OKX Signal Telegram Alerts`.
-- The v1 worker in `OKX Signal Telegram Alerts` runs from `main/telegram-worker`, has a mounted `/data` volume, and is actively sending Telegram alerts. Its implementation supports basic Volume, RSI, SMA, and event-based Combo; it is not the same as the browser scalping engine.
-- The v2 worker resource in `natural-integrity` has a mounted `/data` volume, per-pair/timeframe rules, Volume Profile, COMBO options, CHOP filtering, a runtime config API, signal statistics, and Telegram delivery history.
-- The v2 worker's current desired Railway start command is a maintenance-only HTTP process, while its recent runtime logs still show polling activity. Reconcile desired config with the deployed snapshot before repurposing it.
-- v2 worker logs include state-persistence rename errors. Do not copy or promote that persistence implementation without a concurrency fix and tests.
-- The v1 and v2 app front ends must remain unchanged during v3 foundation work.
+- The v1 worker in `OKX Signal Telegram Alerts` is now `Sleeping` with the `telegram-paused-v1` start command. Its mounted `/data` volume is retained; the v1 app front end is not changed.
+- The v2 worker in `natural-integrity` remains `Online` so its existing runtime API and monitoring are not removed. A Railway variable `TELEGRAM_NOTIFICATIONS_ENABLED=false` and a code guard were added on its existing feature branch; the new deployment completed successfully on 2026-11-24. Telegram delivery is paused while the v2 worker remains available.
+- The v2 worker keeps its mounted `/data` volume and its existing per-pair/timeframe rules, Volume Profile, COMBO, CHOP, runtime config API, statistics, and delivery history. No Telegram credential values were read or changed.
+- Previous v2 logs showed state-file rename errors. The v3 state store instead serializes writes and uses a unique temporary filename, with concurrent-write regression tests. This is a v3-specific fix; v2 persistence has not been rewritten.
+- No new Railway project, service, or database was created. The v1 and v2 front ends, charts, and Live features remain unchanged.
+- The v3 worker is not deployed. Its monitor defaults to disabled and has no selected targets until configured. The server-side Push/Telegram adapters exist, but the browser settings UI, service worker registration, and VAPID environment configuration are still pending.
 
 ## Delivery phases
 
