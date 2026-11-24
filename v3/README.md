@@ -24,8 +24,11 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - CI currently validates deterministic engine, schedule, market-data, persistence, delivery, and outbox behavior. The current PR remains draft and is not merged or deployed.
 - The v3 settings page under `v3/` supports connecting to the worker with an HTTPS URL and API token, editing pair/timeframe targets, independent target switches, and the global monitor switch.
 - The page also exposes the supported scalping parameters (Volume + RSI, BOS, LONG/SHORT, RSI grouping, cooldown), IANA timezone, weekdays, up to 10 notification windows, and independent Push/Telegram channel toggles.
-- The UI does not store the API token in browser storage; it is kept only in the current page memory. Channel readiness is shown from safe `/health` booleans.
-- The page is still in the draft PR and is not published to GitHub Pages. Push subscription registration still requires the v3 service worker and browser permission flow.
+- The signal journal UI reads `/history`, shows the latest 100 signals, filters by delivery status, displays per-channel outcomes, and can be refreshed manually.
+- A v3-scoped service worker (`v3/sw.js`) displays Push notifications and opens the v3 page when clicked.
+- Push registration is an explicit per-device action: the browser asks permission only after the user clicks the registration button; the subscription is saved through the authenticated `/push-subscriptions` endpoint. Unsubscribing removes only the current browser/device endpoint from the server and browser.
+- Safe `/health` fields show whether complete VAPID configuration is present and how many device subscriptions are registered. The API token remains only in current page memory, never browser storage.
+- Each computer/phone browser must be registered separately. The page and service worker remain in the draft PR and are not published; Push cannot work until the worker is deployed and VAPID variables are configured.
 
 ## Initial architecture
 
@@ -68,7 +71,7 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - The v2 worker keeps its mounted `/data` volume and its existing per-pair/timeframe rules, Volume Profile, COMBO, CHOP, runtime config API, statistics, and delivery history. No Telegram credential values were read or changed.
 - Previous v2 logs showed state-file rename errors. The v3 state store instead serializes writes and uses a unique temporary filename, with concurrent-write regression tests. This is a v3-specific fix; v2 persistence has not been rewritten.
 - No new Railway project, service, or database was created. The v1 and v2 front ends, charts, and Live features remain unchanged.
-- The v3 worker is not deployed. Its monitor defaults to disabled and has no selected targets until configured. The pair/timeframe, strategy, schedule, and channel settings UI exists in the draft static page but is not published. Service worker registration, Push subscription flow, and VAPID environment configuration are still pending.
+- The v3 worker is not deployed. Its monitor defaults to disabled and has no selected targets until configured. Pair/timeframe, strategy, schedule, channel, journal, and explicit Push registration controls exist in the draft static page but are not published. Railway VAPID environment configuration and a safe existing worker resource selection are still pending.
 
 ## Delivery phases
 
