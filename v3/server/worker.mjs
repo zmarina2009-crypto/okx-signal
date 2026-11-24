@@ -4,11 +4,8 @@ import { createJsonStateStore } from "./json-state-store.mjs";
 import { evaluateScalpingBars, normalizePair, normalizeTimeframe } from "./scalping-engine.mjs";
 import { fetchOkxCandles } from "./okx-market-data.mjs";
 import { createDefaultWorkerConfig, normalizeWorkerConfig } from "./worker-config.mjs";
-import {
-  deliverSignalNotifications,
-  recordDeliveryAttempts,
-  validatePushSubscription
-} from "./notification-delivery.mjs";
+import { validatePushSubscription } from "./notification-delivery.mjs";
+import { flushPendingNotifications } from "./notification-outbox.mjs";
 
 const PORT = Math.max(1, Number(process.env.PORT) || 3000);
 const POLL_INTERVAL_MS = Math.max(10_000, Math.min(120_000, Number(process.env.POLL_INTERVAL_MS) || 20_000));
@@ -29,6 +26,7 @@ let stopping = false;
 let lastPollAt = null;
 let lastPollErrors = [];
 let pollTimer = null;
+let outboxFlushing = false;
 
 function defaultState() {
   return {
@@ -108,15 +106,20 @@ function makeSignalKey(signal) {
   return [signal.kind, signal.pair, signal.tf, signal.direction, signal.candleTs].join("|");
 }
 
-async function dispatchSignal(signal) {
-  const result = await deliverSignalNotifications(
-    signal,
-    state.config.notificationSchedule,
-    state.pushSubscriptions,
-    { env: process.env }
-  );
-  recordDeliveryAttempts(state, result);
-  return result;
+async function flushNotificationOutbox(now = Date.now()) {
+  if (!state || outboxFlushing) return { skipped: true, reason: "already_flushing_or_uninitialized" };
+  outboxFlushing = true;
+  try {
+    return await flushPendingNotifications(state, {
+      schedule: state.config.notificationSchedule,
+      subscriptions: state.pushSubscriptions,
+      env: process.env,
+      now,
+      saveState: snapshot => store.save(snapshot)
+    });
+  } finally {
+    outboxFlushing = false;
+  }
 }
 
 export async function runPollingCycle(options = {}) {
@@ -180,25 +183,13 @@ export async function runPollingCycle(options = {}) {
     // must not re-detect the same candle and emit the same signal again.
     await store.save(state);
 
-    for (const signal of pendingSignals) {
-      const delivery = await dispatchSignal(signal);
-      const journalItem = state.signalJournal.find(item => item.id === makeSignalKey(signal));
-      if (journalItem) {
-        journalItem.notificationStatus = delivery.reason;
-        journalItem.notificationChannels = delivery.records.map(record => ({
-          channel: record.channel,
-          status: record.status,
-          error: record.error || null
-        }));
-      }
-    }
-
-    await store.save(state);
+    const notificationSummary = await flushNotificationOutbox();
     return {
       skipped: false,
       targetsConfigured: state.config.targets.length,
       targetsProcessed: processedTargets,
       signalsDetected: pendingSignals.length,
+      notificationSummary,
       errors
     };
   } finally {
@@ -327,11 +318,16 @@ async function start() {
     console.log("Push configured:", Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY));
   });
 
+  void flushNotificationOutbox().catch(error => console.error("Initial notification outbox flush failed:", error));
   if (state.config.enabled && state.config.targets.length) {
     void runPollingCycle().catch(error => console.error("Initial v3 poll failed:", error));
   }
   pollTimer = setInterval(() => {
-    void runPollingCycle().catch(error => console.error("V3 poll failed:", error));
+    if (state.config.enabled && state.config.targets.length) {
+      void runPollingCycle().catch(error => console.error("V3 poll failed:", error));
+    } else {
+      void flushNotificationOutbox().catch(error => console.error("V3 notification outbox flush failed:", error));
+    }
   }, POLL_INTERVAL_MS);
 }
 
