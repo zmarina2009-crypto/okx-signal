@@ -21,6 +21,7 @@ jobs:
         run: npm install --ignore-scripts --no-audit --no-fund
       - name: Run v3 unit tests
         run: npm test
-      - name: Check v3 server syntax
+      - name: Check v3 server and browser syntax
         run: |
           for file in *.mjs; do node --check "$file"; done
+          node --check ../app.js
