@@ -47,7 +47,7 @@ function candles(closes, volumes = []) {
 }
 
 function fieldsFromV1(history) {
-  return history.map(item => ({
+  return JSON.parse(JSON.stringify(history.map(item => ({
     kind: item.kind,
     pair: item.pair,
     tf: item.tf,
@@ -55,11 +55,11 @@ function fieldsFromV1(history) {
     message: item.message,
     price: item.price,
     candleTs: item.ts
-  }));
+  }))));
 }
 
 function fieldsFromV3(events) {
-  return events.map(item => ({
+  return JSON.parse(JSON.stringify(events.map(item => ({
     kind: item.kind,
     pair: item.pair,
     tf: item.tf,
@@ -67,7 +67,7 @@ function fieldsFromV3(events) {
     message: item.message,
     price: item.price,
     candleTs: item.candleTs
-  }));
+  }))));
 }
 
 const baseConfig = {
@@ -136,7 +136,7 @@ test("v3 BOS alert matches the first-version BOS direction, level, and message",
 test("v3 RSI grouping matches first-version repeat suppression and journal entries", () => {
   const config = { ...baseConfig, groupSignals: true, rsiOverbought: 80 };
   const firstBars = candles([100, 99, 98, 97, 98], [10, 10, 10, 10, 100]);
-  const secondBars = candles([100, 99, 98, 97, 98, 97, 98], [10, 10, 10, 10, 100, 10, 100]);
+  const secondBars = candles([100, 99, 98, 97, 98, 97, 98], [10, 10, 10, 10, 100, 10, 200]);
 
   const v1 = createV1Harness();
   v1.setConfig({ ...config, soundEnabled: false });
