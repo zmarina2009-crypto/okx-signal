@@ -205,3 +205,12 @@ footer { padding: 14px 0 0; text-align: center; color: #71859c; font-size: 10px;
   .journal-card { padding: 12px 10px; }
   .journal-pair { font-size: 12px; }
 }
+
+
+/* Local browser sound and automatic journal refresh */
+.journal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.sound-status { margin: 12px 0 0; line-height: 1.45; }
+@media (max-width: 680px) {
+  .journal-actions { width: 100%; justify-content: stretch; }
+  .journal-actions .button { flex: 1 1 auto; }
+}

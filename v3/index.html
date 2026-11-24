@@ -264,8 +264,13 @@
           <h2 id="journal-title">Журнал сигналов</h2>
           <p id="journal-counts" class="hint">Журнал будет загружен после подключения к серверу.</p>
         </div>
-        <button id="refresh-history" class="button button-secondary" type="button" disabled>Обновить</button>
+        <div class="journal-actions">
+          <button id="sound-toggle" class="button button-secondary" type="button" disabled aria-pressed="false">Включить звук</button>
+          <button id="sound-test" class="button button-secondary" type="button" disabled>Проверить звук</button>
+          <button id="refresh-history" class="button button-secondary" type="button" disabled>Обновить</button>
+        </div>
       </div>
+      <p id="sound-status" class="hint sound-status" aria-live="polite">Звук выключен. Включи его, чтобы слышать новые сигналы.</p>
       <div class="journal-toolbar">
         <label class="field journal-filter-field">
           <span>Показать</span>

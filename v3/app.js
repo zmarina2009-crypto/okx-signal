@@ -10,7 +10,13 @@
     health: null,
     vapidPublicKey: null,
     serviceWorkerRegistration: null,
-    history: { signals: [], deliveries: [], totalSignals: 0, totalDeliveries: 0 }
+    history: { signals: [], deliveries: [], totalSignals: 0, totalDeliveries: 0 },
+    knownSignalIds: new Set(),
+    historyInitialized: false,
+    historyRefreshTimer: null,
+    historyRefreshInFlight: false,
+    soundEnabled: false,
+    audioContext: null
   };
 
   const SCALPING_DEFAULTS = {
@@ -39,6 +45,7 @@
     windows: [],
     channels: { push: false, telegram: false }
   };
+  const HISTORY_REFRESH_INTERVAL_MS = 15_000;
 
   function apiBase() {
     return $("server-url").value.trim().replace(/\/+$/, "");
@@ -59,6 +66,93 @@
 
   function setSaveStatus(text) {
     $("save-status").textContent = text;
+  }
+
+  function updateSoundControls() {
+    const toggle = $("sound-toggle");
+    const test = $("sound-test");
+    if (!toggle || !test) return;
+    toggle.disabled = !state.connected;
+    toggle.textContent = state.soundEnabled ? "Выключить звук" : "Включить звук";
+    toggle.setAttribute("aria-pressed", state.soundEnabled ? "true" : "false");
+    test.disabled = !state.connected || !state.soundEnabled;
+    $("sound-status").textContent = state.soundEnabled
+      ? "Звук включён. Для LONG и SHORT используются разные короткие сигналы."
+      : "Звук выключен. Включи его, чтобы слышать новые сигналы.";
+  }
+
+  async function getAudioContext() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) throw new Error("Этот браузер не поддерживает звуковые уведомления.");
+    if (!state.audioContext) state.audioContext = new AudioContextClass();
+    if (state.audioContext.state === "suspended") await state.audioContext.resume();
+    if (state.audioContext.state !== "running") throw new Error("Браузер не разрешил воспроизведение звука.");
+    return state.audioContext;
+  }
+
+  async function playSignalSound(direction) {
+    if (!state.soundEnabled) return;
+    const context = await getAudioContext();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const startedAt = context.currentTime;
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(direction === "SHORT" ? 620 : 880, startedAt);
+    gain.gain.setValueAtTime(0.0001, startedAt);
+    gain.gain.exponentialRampToValueAtTime(0.13, startedAt + 0.025);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + 0.19);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(startedAt);
+    oscillator.stop(startedAt + 0.2);
+  }
+
+  async function toggleSound() {
+    if (state.soundEnabled) {
+      state.soundEnabled = false;
+      updateSoundControls();
+      return;
+    }
+    try {
+      await getAudioContext();
+      state.soundEnabled = true;
+      updateSoundControls();
+      await playSignalSound("LONG");
+      $("sound-status").textContent = "Звук включён. Проверочный сигнал прозвучал.";
+    } catch (error) {
+      state.soundEnabled = false;
+      updateSoundControls();
+      $("sound-status").textContent = "Не удалось включить звук: " + error.message;
+    }
+  }
+
+  async function testSound() {
+    if (!state.soundEnabled) return;
+    try {
+      await playSignalSound("LONG");
+      $("sound-status").textContent = "Проверочный звук воспроизведён.";
+    } catch (error) {
+      $("sound-status").textContent = "Не удалось воспроизвести звук: " + error.message;
+    }
+  }
+
+  function stopHistoryAutoRefresh() {
+    if (state.historyRefreshTimer) window.clearInterval(state.historyRefreshTimer);
+    state.historyRefreshTimer = null;
+  }
+
+  function updateHistoryAutoRefresh() {
+    stopHistoryAutoRefresh();
+    const hasEnabledTarget = Array.isArray(state.config?.targets) &&
+      state.config.targets.some(target => target.enabled !== false);
+    if (state.connected && state.config?.enabled === true && hasEnabledTarget) {
+      state.historyRefreshTimer = window.setInterval(() => {
+        void refreshHistory({ automatic: true });
+      }, HISTORY_REFRESH_INTERVAL_MS);
+      $("history-updated").textContent = "Автообновление журнала: каждые 15 секунд.";
+    } else if (state.connected) {
+      $("history-updated").textContent = "Автообновление включится вместе с монитором и выбранными парами.";
+    }
   }
 
   function markDirty() {
@@ -178,24 +272,59 @@
     });
   }
 
-  async function refreshHistory() {
-    if (!state.connected) return;
+  async function refreshHistory({ automatic = false } = {}) {
+    if (!state.connected || state.historyRefreshInFlight) return;
     const button = $("refresh-history");
-    button.disabled = true;
+    state.historyRefreshInFlight = true;
+    if (!automatic) button.disabled = true;
     try {
       const result = await request("/history?limit=100", { method: "GET" });
+      const signals = Array.isArray(result.signals) ? result.signals : [];
+      const newSignals = [];
+
+      // The first successful load seeds known IDs without sounding old journal entries.
+      if (!state.historyInitialized) {
+        state.knownSignalIds = new Set(signals.map(signal => signal?.id).filter(Boolean));
+        state.historyInitialized = true;
+      } else {
+        for (const signal of signals) {
+          if (!signal?.id) continue;
+          if (!state.knownSignalIds.has(signal.id)) newSignals.push(signal);
+          state.knownSignalIds.add(signal.id);
+        }
+        while (state.knownSignalIds.size > 1000) {
+          state.knownSignalIds.delete(state.knownSignalIds.values().next().value);
+        }
+      }
+
       state.history = {
-        signals: Array.isArray(result.signals) ? result.signals : [],
+        signals,
         deliveries: Array.isArray(result.deliveries) ? result.deliveries : [],
         totalSignals: Number(result.totalSignals) || 0,
         totalDeliveries: Number(result.totalDeliveries) || 0
       };
       renderHistory();
-      $("history-updated").textContent = "Обновлено: " + new Date().toLocaleTimeString("ru-RU");
+
+      const updatedAt = new Date().toLocaleTimeString("ru-RU");
+      if (newSignals.length) {
+        const latestNewSignal = newSignals[0];
+        $("history-updated").textContent = "Новых сигналов: " + newSignals.length + " · " + updatedAt;
+        if (state.soundEnabled) {
+          void playSignalSound(latestNewSignal.direction).catch(error => {
+            $("sound-status").textContent = "Браузер не смог воспроизвести звук: " + error.message;
+          });
+        } else {
+          $("sound-status").textContent = "Появились новые сигналы (" + newSignals.length + "). Включи звук для звукового оповещения.";
+        }
+      } else {
+        $("history-updated").textContent = "Обновлено: " + updatedAt +
+          (state.historyRefreshTimer ? " · автообновление 15 с" : "");
+      }
     } catch (error) {
       $("history-updated").textContent = "Ошибка загрузки: " + error.message;
     } finally {
-      button.disabled = !state.connected;
+      state.historyRefreshInFlight = false;
+      if (!automatic) button.disabled = !state.connected;
     }
   }
 
@@ -524,6 +653,9 @@
 
   async function connect() {
     $("connect-button").disabled = true;
+    state.historyInitialized = false;
+    state.knownSignalIds.clear();
+    stopHistoryAutoRefresh();
     setConnectionStatus("Подключаемся…");
     try {
       const result = await request("/config", { method: "GET" });
@@ -548,6 +680,7 @@
       state.connected = true;
       state.dirty = false;
       ["monitor-enabled", "add-target", "save-button"].forEach(id => { $(id).disabled = false; });
+      updateSoundControls();
       try {
         await preparePushServiceWorker();
       } catch (serviceWorkerError) {
@@ -560,8 +693,11 @@
       setSaveStatus("Настройки загружены. Изменения ещё не вносились.");
       $("refresh-history").disabled = false;
       await Promise.all([refreshHistory(), refreshPushDeviceStatus()]);
+      updateHistoryAutoRefresh();
     } catch (error) {
       state.connected = false;
+      stopHistoryAutoRefresh();
+      updateSoundControls();
       setConnectionStatus("Ошибка подключения", "error");
       setSaveStatus(error.message);
       ["monitor-enabled", "add-target", "save-button"].forEach(id => { $(id).disabled = true; });
@@ -658,6 +794,7 @@
       state.dirty = false;
       syncUiFromConfig();
       renderTargets();
+      updateHistoryAutoRefresh();
       const schedule = state.config.notificationSchedule;
       if (schedule.enabled && (!schedule.weekdays.length || !schedule.windows.length)) {
         setSaveStatus("Сохранено, но отправка не начнётся: выбери хотя бы один день и временное окно.");
@@ -685,6 +822,8 @@
   $("add-target").addEventListener("click", addTarget);
   $("save-button").addEventListener("click", save);
   $("refresh-history").addEventListener("click", refreshHistory);
+  $("sound-toggle").addEventListener("click", () => { void toggleSound(); });
+  $("sound-test").addEventListener("click", () => { void testSound(); });
   $("history-filter").addEventListener("change", renderHistory);
   $("push-subscribe").addEventListener("click", subscribePushOnThisDevice);
   $("push-unsubscribe").addEventListener("click", unsubscribePushOnThisDevice);
