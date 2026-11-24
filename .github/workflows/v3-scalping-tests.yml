@@ -9,13 +9,18 @@ on:
 jobs:
   v3-scalping-engine:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: v3/server
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install v3 worker dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
       - name: Run v3 unit tests
-        run: node --test v3/server/*.test.mjs
+        run: npm test
       - name: Check v3 server syntax
         run: |
-          for file in v3/server/*.mjs; do node --check "$file"; done
+          for file in *.mjs; do node --check "$file"; done
