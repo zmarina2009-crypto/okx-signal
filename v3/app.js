@@ -262,7 +262,8 @@
       if (!window.isSecureContext || !("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
         throw new Error("Web Push недоступен в этом браузере или соединение не защищено HTTPS.");
       }
-      const isAppleMobile = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const isAppleMobile = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
       const isInstalledApp = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
       if (isAppleMobile && !isInstalledApp) {
         throw new Error("На iPhone/iPad сначала нажми «Поделиться» → «На экран Домой», открой приложение с появившегося значка и повтори подключение Push.");
