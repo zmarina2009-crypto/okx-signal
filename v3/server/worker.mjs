@@ -22,6 +22,7 @@ const STATE_FILE = process.env.V3_STATE_FILE || path.join(volumeMount, "okx-sign
 const store = STATE_BACKEND === "supabase"
   ? createSupabaseStateStore({
     supabaseUrl: process.env.SUPABASE_URL,
+    secretKey: process.env.SUPABASE_SECRET_KEY,
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY
   })
   : STATE_BACKEND === "file"

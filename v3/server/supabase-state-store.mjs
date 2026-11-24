@@ -11,14 +11,18 @@ function isPlainState(value) {
 
 export function createSupabaseStateStore({
   supabaseUrl,
+  secretKey,
   serviceRoleKey,
   fetchImpl = globalThis.fetch
 } = {}) {
   if (typeof supabaseUrl !== "string" || !supabaseUrl.trim()) {
     throw new TypeError("SUPABASE_URL is required when V3_STATE_BACKEND=supabase.");
   }
-  if (typeof serviceRoleKey !== "string" || !serviceRoleKey.trim()) {
-    throw new TypeError("SUPABASE_SERVICE_ROLE_KEY is required when V3_STATE_BACKEND=supabase.");
+  const serverApiKey = typeof secretKey === "string" && secretKey.trim()
+    ? secretKey.trim()
+    : typeof serviceRoleKey === "string" ? serviceRoleKey.trim() : "";
+  if (!serverApiKey) {
+    throw new TypeError("SUPABASE_SECRET_KEY (preferred) or SUPABASE_SERVICE_ROLE_KEY (legacy) is required when V3_STATE_BACKEND=supabase.");
   }
   if (typeof fetchImpl !== "function") {
     throw new TypeError("A fetch implementation is required.");
@@ -35,10 +39,12 @@ export function createSupabaseStateStore({
   }
 
   const endpoint = new URL("/rest/v1/" + TABLE_NAME, baseUrl.origin).toString();
-  const authHeaders = {
-    apikey: serviceRoleKey.trim(),
-    authorization: "Bearer " + serviceRoleKey.trim()
-  };
+  // New sb_secret_* keys are not JWTs: send them only as apikey.
+  // Keep the Authorization header only for the legacy JWT service_role key.
+  const authHeaders = { apikey: serverApiKey };
+  if (!serverApiKey.startsWith("sb_secret_")) {
+    authHeaders.authorization = "Bearer " + serverApiKey;
+  }
   let writeQueue = Promise.resolve();
 
   async function load(fallback = {}) {

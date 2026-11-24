@@ -21,7 +21,7 @@ test("requires a valid HTTPS Supabase URL and server-only key", () => {
   );
   assert.throws(
     () => createSupabaseStateStore({ ...baseOptions, serviceRoleKey: "" }),
-    /SUPABASE_SERVICE_ROLE_KEY/
+    /SUPABASE_SECRET_KEY.*SUPABASE_SERVICE_ROLE_KEY/
   );
 });
 
@@ -42,6 +42,28 @@ test("loads the persisted v3 singleton state", async () => {
   assert.equal(request.options.method, "GET");
   assert.equal(request.options.headers.apikey, baseOptions.serviceRoleKey);
   assert.equal(request.options.headers.authorization, "Bearer " + baseOptions.serviceRoleKey);
+});
+
+test("sends modern Supabase secret keys only through the apikey header", async () => {
+  const modernSecretKey = "sb_secret_test_key_value";
+  const requests = [];
+  const store = createSupabaseStateStore({
+    supabaseUrl: baseOptions.supabaseUrl,
+    secretKey: modernSecretKey,
+    fetchImpl: async (url, options) => {
+      requests.push({ url: new URL(url), options });
+      return options.method === "GET" ? response([]) : response(null, 204);
+    }
+  });
+
+  await store.load({});
+  await store.save({ enabled: false });
+
+  assert.equal(requests.length, 2);
+  for (const request of requests) {
+    assert.equal(request.options.headers.apikey, modernSecretKey);
+    assert.equal(request.options.headers.authorization, undefined);
+  }
 });
 
 test("returns an independent fallback when the v3 singleton row does not exist", async () => {
