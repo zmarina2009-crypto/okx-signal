@@ -64,7 +64,7 @@ test("emits a LONG Volume + RSI signal only after a confirmed candle", () => {
   assert.equal(result.events.length, 1);
   assert.equal(result.events[0].kind, "scalping");
   assert.equal(result.events[0].direction, "LONG");
-  assert.match(result.events[0].message, /Volume ×10.00 + RSI 50.0/);
+  assert.ok(result.events[0].message.includes("Volume ×10.00 + RSI 50.0"));
 });
 
 test("does not emit the same candle twice after the state is restored", () => {
@@ -109,7 +109,7 @@ test("ignores an unfinished current candle and keeps the previous closed candle"
 test("groups repeated RSI triggers in one trading situation into the original journal entry", () => {
   const config = {
     volumePeriod: 2, volumeMultiplier: 2, rsiLength: 2,
-    rsiOversold: 40, rsiOverbought: 60, swingLength: 1,
+    rsiOversold: 40, rsiOverbought: 80, swingLength: 1,
     bosEnabled: false, bosAlerts: false, groupSignals: true,
     cooldownSeconds: 60, rsiClusterAtrMultiplier: 1
   };
