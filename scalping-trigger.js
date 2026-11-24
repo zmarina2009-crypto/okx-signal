@@ -259,29 +259,43 @@
 
   function ensureAudio() {
     try {
-      if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioContext.state === "suspended") return audioContext.resume();
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) throw new Error("Web Audio API недоступен");
+      if (!audioContext || audioContext.state === "closed") audioContext = new AudioContextClass();
+      if (audioContext.state !== "running") return audioContext.resume();
       return Promise.resolve();
     } catch (error) { return Promise.reject(error); }
   }
 
-  function tone(direction) {
-    if (!cfg.soundEnabled) return;
-    ensureAudio().then(() => {
-      if (!audioContext) return;
+  // Браузер разрешает запуск Web Audio после явного действия пользователя.
+  function unlockAudioFromGesture() {
+    if (!cfg.soundEnabled || (audioContext && audioContext.state === "running")) return;
+    ensureAudio().catch(error => console.warn("Scalping audio unlock failed:", error));
+  }
+
+  function tone(direction, force = false) {
+    if (!cfg.soundEnabled && !force) return Promise.resolve(false);
+    return ensureAudio().then(() => {
+      if (!audioContext || audioContext.state !== "running") {
+        throw new Error("Аудиоконтекст не запущен");
+      }
       const now = audioContext.currentTime;
       const oscillator = audioContext.createOscillator();
       const gain = audioContext.createGain();
       oscillator.type = "triangle";
       oscillator.frequency.value = direction === "LONG" ? 880 : 420;
       gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.09, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.14, now + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
       oscillator.connect(gain);
       gain.connect(audioContext.destination);
       oscillator.start(now);
       oscillator.stop(now + 0.38);
-    }).catch(() => {});
+      return true;
+    }).catch(error => {
+      console.warn("Scalping sound playback failed:", error);
+      return false;
+    });
   }
 
   function addChartMarker(meta) {
@@ -729,7 +743,7 @@
             '<label class="st-check"><input id="stShortEnabled" type="checkbox"> SHORT</label>' +
             '<label class="st-check"><input id="stSoundEnabled" type="checkbox"> Звук</label>' +
             '<label>Антиспам, сек<input id="stCooldown" type="number" min="1" max="86400"></label>' +
-          '</div></section>' +
+          '</div><button id="stTestSound" class="st-test-sound" type="button">Проверить звук LONG / SHORT</button></section>' +
           '<div id="stStatus" class="st-status">Подготовка…</div>' +
           '<p class="st-footnote">Маркеры появятся на основном графике выбранной пары и таймфрейма. Двойной щелчок по маркеру удаляет его, как и другие маркеры алертов. Этот модуль не меняет Telegram-правила, основной COMBO, Live или тестер.</p>' +
         '</div></section>';
@@ -738,6 +752,26 @@
     syncControls();
 
     $("stClose").onclick = closeModal;
+    const testSoundButton = $("stTestSound");
+    if (testSoundButton) testSoundButton.addEventListener("click", async () => {
+      const defaultLabel = "Проверить звук LONG / SHORT";
+      testSoundButton.disabled = true;
+      try {
+        await ensureAudio();
+        const longPlayed = await tone("LONG", true);
+        await new Promise(resolve => window.setTimeout(resolve, 520));
+        const shortPlayed = await tone("SHORT", true);
+        if (!longPlayed || !shortPlayed) throw new Error("Не удалось воспроизвести оба тестовых сигнала");
+        testSoundButton.textContent = "✓ LONG / SHORT воспроизведены";
+      } catch (error) {
+        console.warn("Scalping sound test failed:", error);
+        testSoundButton.textContent = "⚠️ Проверь звук браузера";
+      }
+      window.setTimeout(() => {
+        if (testSoundButton.isConnected) testSoundButton.textContent = defaultLabel;
+        testSoundButton.disabled = false;
+      }, 2500);
+    });
     modal.addEventListener("click", (event) => { if (event.target === modal) closeModal(); });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
@@ -777,6 +811,7 @@
         }
         saveConfig();
         syncControls();
+        if (id === "stSoundEnabled" && cfg.soundEnabled) unlockAudioFromGesture();
         if (id === "stEnabled" && cfg.enabled) poll();
         if (id === "stScope") poll();
       });
@@ -894,7 +929,7 @@
     const style = document.createElement("style");
     style.id = "scalpingTriggerCss";
     style.textContent =
-      ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number],.st-slot select{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-slots{display:grid;gap:8px;margin-top:8px}.st-slot{display:grid;grid-template-columns:minmax(95px,.7fr) minmax(130px,1.5fr) minmax(75px,.6fr);gap:7px;align-items:center}.st-slot label{display:flex;align-items:center;gap:5px;color:#b7c5d4;font-size:11px}.st-slot input[type=checkbox]{width:auto;margin:0}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{display:block!important;min-height:72px;border:1px solid #263547;border-radius:10px;overflow:hidden;background:#0b1118}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-columns,.st-history-row{display:grid;grid-template-columns:minmax(120px,1.35fr) minmax(120px,1.2fr) minmax(105px,1fr) minmax(76px,.65fr) minmax(90px,.8fr);gap:8px;align-items:center}.st-history-columns{padding:7px 10px;background:#0c141e;color:#8998a9;font-size:10px}.st-history-list{display:block;max-height:260px;overflow:auto}.st-history-row{padding:8px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.35}.st-history-cell{min-width:0;overflow-wrap:anywhere}.st-history-row .st-time{display:grid;gap:2px}.st-history-row time{color:#d0dbe6;font-variant-numeric:tabular-nums}.st-history-row small{color:#718296;font-size:9px}.st-history-direction{font-weight:800}.st-history-row .st-history-direction.is-long{color:#48d99a}.st-history-row .st-history-direction.is-short{color:#ff7b84}.st-history-price{font-variant-numeric:tabular-nums;font-weight:700}.st-history-detail{grid-column:1/-1;color:#8998a9;font-size:9px;overflow-wrap:anywhere}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}.st-history-columns{display:none}.st-history-list{max-height:220px}.st-history-row{grid-template-columns:1fr 1fr;gap:6px 10px}.st-history-row .st-time{grid-column:1/-1}.st-slot{grid-template-columns:1fr 1fr}.st-slot label{grid-column:1/-1}}";
+      ".st-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}.st-backdrop[hidden]{display:none!important}.st-window{width:min(850px,100%);max-height:min(92vh,900px);overflow:hidden;background:#0b1118;border:1px solid #304154;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);color:#eaf0f6;display:flex;flex-direction:column}.st-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #233142}.st-header h2{font-size:17px;margin:0 0 5px}.st-header p,.st-hint,.st-footnote{font-size:11px;color:#91a0b1;line-height:1.5;margin:0}.st-header button,.st-history-head button{padding:6px 10px}.st-body{overflow:auto;padding:14px 18px 18px;display:grid;gap:12px}.st-main-toggle{font-weight:800;display:flex;align-items:center;gap:8px}.st-scope{display:grid;gap:5px;padding:9px 11px;background:#101925;border:1px solid #243244;border-radius:9px}.st-scope label,.st-fields>label{display:grid;gap:4px;color:#9caabd;font-size:11px}.st-scope select,.st-fields input,.st-inline input[type=number],.st-slot select{width:100%;min-width:0;padding:7px;border:1px solid #304154;border-radius:6px;background:#080e15;color:#eaf0f6}.st-slots{display:grid;gap:8px;margin-top:8px}.st-slot{display:grid;grid-template-columns:minmax(95px,.7fr) minmax(130px,1.5fr) minmax(75px,.6fr);gap:7px;align-items:center}.st-slot label{display:flex;align-items:center;gap:5px;color:#b7c5d4;font-size:11px}.st-slot input[type=checkbox]{width:auto;margin:0}.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.st-card{padding:11px;border:1px solid #263547;border-radius:10px;background:#0e151e;min-width:0}.st-check{display:flex;gap:7px;align-items:center;font-size:12px}.st-check input,.st-main-toggle input{width:auto;margin:0}.st-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.st-fields .st-wide{grid-column:1/-1}.st-card .st-hint{margin-top:9px}.st-inline{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px}.st-inline>label:last-child{display:flex;align-items:center;gap:8px;color:#9caabd;font-size:11px}.st-inline input[type=number]{width:110px}.st-test-sound{margin-top:10px;padding:7px 10px;border:1px solid #304154;border-radius:7px;background:#142333;color:#dce9f5;font-size:11px;cursor:pointer}.st-test-sound:disabled{opacity:.65;cursor:wait}.st-status{padding:9px 11px;border-radius:8px;background:#111d2a;border:1px solid #2c4560;color:#9acbff;font-size:11px;line-height:1.55;white-space:pre-line}.st-history{display:block!important;min-height:72px;border:1px solid #263547;border-radius:10px;overflow:hidden;background:#0b1118}.st-history-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#101925;font-size:12px}.st-history-head button{font-size:10px}.st-history-columns,.st-history-row{display:grid;grid-template-columns:minmax(120px,1.35fr) minmax(120px,1.2fr) minmax(105px,1fr) minmax(76px,.65fr) minmax(90px,.8fr);gap:8px;align-items:center}.st-history-columns{padding:7px 10px;background:#0c141e;color:#8998a9;font-size:10px}.st-history-list{display:block;max-height:260px;overflow:auto}.st-history-row{padding:8px 10px;border-top:1px solid #202d3b;font-size:10px;line-height:1.35}.st-history-cell{min-width:0;overflow-wrap:anywhere}.st-history-row .st-time{display:grid;gap:2px}.st-history-row time{color:#d0dbe6;font-variant-numeric:tabular-nums}.st-history-row small{color:#718296;font-size:9px}.st-history-direction{font-weight:800}.st-history-row .st-history-direction.is-long{color:#48d99a}.st-history-row .st-history-direction.is-short{color:#ff7b84}.st-history-price{font-variant-numeric:tabular-nums;font-weight:700}.st-history-detail{grid-column:1/-1;color:#8998a9;font-size:9px;overflow-wrap:anywhere}.st-empty{padding:12px;color:#8998a9;font-size:11px}.st-footnote{padding:0 2px}.st-modal-open{overflow:hidden}#scalpTriggerButton.is-active{border-color:#6e5522;color:#ffd166}#scalpTriggerButton.has-signal{box-shadow:inset 0 -2px #ffd166}@media(max-width:650px){.st-backdrop{padding:0;align-items:stretch}.st-window{width:100%;max-height:100vh;height:100%;border-radius:0}.st-header{padding:13px}.st-header h2{font-size:14px}.st-body{padding:12px}.st-grid{grid-template-columns:1fr}.st-fields{grid-template-columns:1fr 1fr}.st-inline{gap:10px}.st-history-columns{display:none}.st-history-list{max-height:220px}.st-history-row{grid-template-columns:1fr 1fr;gap:6px 10px}.st-history-row .st-time{grid-column:1/-1}.st-slot{grid-template-columns:1fr 1fr}.st-slot label{grid-column:1/-1}}";
     document.head.appendChild(style);
 
     const journalStyle = document.createElement("style");
@@ -949,6 +984,8 @@
     window.setInterval(poll, 15000);
     window.addEventListener("okx-markets-loaded", updateStatus);
     window.addEventListener("okx-alert-marker", () => {});
+    document.addEventListener("pointerdown", unlockAudioFromGesture, true);
+    document.addEventListener("keydown", unlockAudioFromGesture, true);
   }
 
   if (document.readyState === "loading") {
