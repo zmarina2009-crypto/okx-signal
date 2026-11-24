@@ -1,0 +1,28 @@
+name: V3 scalping engine tests
+
+on:
+  pull_request:
+    paths:
+      - "v3/**"
+      - ".github/workflows/v3-scalping-tests.yml"
+
+jobs:
+  v3-scalping-engine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: v3/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install v3 worker dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Run v3 unit tests
+        run: npm test
+      - name: Check v3 server and browser syntax
+        run: |
+          for file in *.mjs; do node --check "$file"; done
+          node --check ../app.js
+          node --check ../sw.js

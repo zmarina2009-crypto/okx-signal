@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101a2b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="OKX Signal">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png">
+  <title>OKX Signal Pro v3 — Скальпинг</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div class="brand-mark">OKX</div>
+      <div>
+        <p class="eyebrow">SIGNAL PRO · VERSION 3</p>
+        <h1>Настройки скальпинга</h1>
+        <p class="subhead">Выбирай пары и таймфреймы независимо друг от друга</p>
+      </div>
+      <span class="draft-label">Предварительная версия</span>
+    </header>
+
+    <section class="panel connection-panel" aria-labelledby="connection-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ПОДКЛЮЧЕНИЕ</p>
+          <h2 id="connection-title">Сервер скальпинга</h2>
+        </div>
+        <span id="connection-state" class="status status-idle">Не подключён</span>
+      </div>
+      <div class="connection-grid">
+        <label class="field">
+          <span>Адрес сервера Railway (HTTPS)</span>
+          <input id="server-url" type="url" inputmode="url" placeholder="https://your-v3-worker.up.railway.app" autocomplete="url">
+        </label>
+        <label class="field">
+          <span>Ключ доступа к настройкам</span>
+          <input id="api-token" type="password" placeholder="CONFIG_API_TOKEN" autocomplete="off">
+        </label>
+      </div>
+      <div class="actions">
+        <button id="connect-button" class="button button-secondary" type="button">Загрузить настройки</button>
+        <p class="hint">Адрес и ключ используются только в этой вкладке и не сохраняются в браузере.</p>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="monitor-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ОБЩИЙ РЕЖИМ</p>
+          <h2 id="monitor-title">Монитор скальпинга</h2>
+        </div>
+        <label class="switch large-switch">
+          <input id="monitor-enabled" type="checkbox" disabled>
+          <span class="switch-track"></span>
+          <span class="sr-only">Включить монитор скальпинга</span>
+        </label>
+      </div>
+      <p class="section-copy">Общий выключатель останавливает монитор целиком. Индивидуальные переключатели ниже управляют каждой комбинацией отдельно.</p>
+      <div class="list-heading">
+        <div>
+          <p class="eyebrow">МОИ КОМБИНАЦИИ</p>
+          <h2>Пары и таймфреймы</h2>
+        </div>
+        <span id="target-count" class="count-pill">0 позиций</span>
+      </div>
+      <div id="targets-list" class="targets-list">
+        <div class="empty-state">Сначала подключись к серверу, чтобы загрузить настройки.</div>
+      </div>
+      <div class="add-target">
+        <label class="field pair-field">
+          <span>Новая пара</span>
+          <input id="new-pair" type="text" value="BTC" maxlength="24" placeholder="Например, BTC">
+        </label>
+        <label class="field timeframe-field">
+          <span>Таймфрейм</span>
+          <select id="new-timeframe">
+            <option>1m</option><option>3m</option><option>5m</option><option>15m</option>
+            <option>30m</option><option>1h</option><option>2h</option><option>4h</option>
+            <option>6h</option><option>12h</option><option>1d</option><option>1w</option>
+          </select>
+        </label>
+        <button id="add-target" class="button button-secondary add-button" type="button" disabled>Добавить позицию</button>
+      </div>
+      <div class="footer-actions">
+        <p id="save-status" class="hint" aria-live="polite">Подключи сервер, чтобы редактировать список.</p>
+        <button id="save-button" class="button button-primary" type="button" disabled>Сохранить настройки</button>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="strategy-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ТОРГОВАЯ ЛОГИКА</p>
+          <h2 id="strategy-title">Параметры скальпинга</h2>
+        </div>
+        <span class="count-pill">Volume + RSI / BOS</span>
+      </div>
+      <p class="section-copy">Эти настройки применяются ко всем включённым парам и таймфреймам. Основная логика остаётся Volume + RSI из первой версии.</p>
+
+      <div class="settings-grid">
+        <label class="setting-toggle">
+          <span><strong>Volume + RSI</strong><small>Основной скальпинг-триггер</small></span>
+          <input id="volume-rsi-enabled" type="checkbox" checked>
+        </label>
+        <label class="setting-toggle">
+          <span><strong>BOS</strong><small>Определение пробоя структуры</small></span>
+          <input id="bos-enabled" type="checkbox" checked>
+        </label>
+        <label class="setting-toggle">
+          <span><strong>Уведомлять о BOS</strong><small>Отдельные сигналы пробоя</small></span>
+          <input id="bos-alerts" type="checkbox" checked>
+        </label>
+        <label class="setting-toggle">
+          <span><strong>Требовать подтверждение BOS</strong><small>Volume + RSI только вместе с BOS в ту же сторону</small></span>
+          <input id="require-bos" type="checkbox">
+        </label>
+        <label class="setting-toggle">
+          <span><strong>Сигналы LONG</strong><small>Разрешить сигналы на покупку</small></span>
+          <input id="long-enabled" type="checkbox" checked>
+        </label>
+        <label class="setting-toggle">
+          <span><strong>Сигналы SHORT</strong><small>Разрешить сигналы на продажу</small></span>
+          <input id="short-enabled" type="checkbox" checked>
+        </label>
+        <label class="setting-toggle">
+          <span><strong>Группировать повторные RSI</strong><small>Объединять повторы в одну торговую ситуацию</small></span>
+          <input id="group-signals" type="checkbox" checked>
+        </label>
+      </div>
+
+      <div class="parameter-grid">
+        <label class="field">
+          <span>Период среднего объёма</span>
+          <input id="volume-period" type="number" min="2" max="200" step="1" value="20" required>
+        </label>
+        <label class="field">
+          <span>Множитель объёма</span>
+          <input id="volume-multiplier" type="number" min="1" max="20" step="0.1" value="2" required>
+        </label>
+        <label class="field">
+          <span>Период RSI</span>
+          <input id="rsi-length" type="number" min="2" max="100" step="1" value="14" required>
+        </label>
+        <label class="field">
+          <span>RSI перепроданность</span>
+          <input id="rsi-oversold" type="number" min="1" max="49" step="1" value="30" required>
+        </label>
+        <label class="field">
+          <span>RSI перекупленность</span>
+          <input id="rsi-overbought" type="number" min="51" max="99" step="1" value="70" required>
+        </label>
+        <label class="field">
+          <span>Длина BOS swing</span>
+          <input id="swing-length" type="number" min="1" max="20" step="1" value="3" required>
+        </label>
+        <label class="field">
+          <span>Кулдаун, секунд</span>
+          <input id="cooldown-seconds" type="number" min="1" max="86400" step="1" value="60" required>
+        </label>
+        <label class="field">
+          <span>Радиус группировки RSI, ATR</span>
+          <input id="rsi-cluster-atr" type="number" min="0.25" max="3" step="0.05" value="1" required>
+        </label>
+      </div>
+      <p class="hint">Периоды и пороги ограничены допустимыми сервером диапазонами. RSI перепроданности должен быть ниже RSI перекупленности.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="schedule-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">РАСПИСАНИЕ</p>
+          <h2 id="schedule-title">Время уведомлений</h2>
+        </div>
+        <label class="switch large-switch">
+          <input id="schedule-enabled" type="checkbox">
+          <span class="switch-track"></span>
+          <span class="sr-only">Включить расписание уведомлений</span>
+        </label>
+      </div>
+      <p class="section-copy">Монитор может продолжать собирать сигналы круглосуточно. Расписание ограничивает только отправку Push и Telegram. Сигналы вне выбранных окон не будут отправляться позже задним числом.</p>
+
+      <div class="schedule-top-grid">
+        <label class="field timezone-field">
+          <span>Часовой пояс (IANA)</span>
+          <input id="schedule-timezone" type="text" value="Europe/Amsterdam" placeholder="Europe/Amsterdam" required>
+        </label>
+        <div class="field">
+          <span>Быстрый выбор дней</span>
+          <div class="preset-actions">
+            <button id="weekdays-preset" class="button button-secondary compact-button" type="button">Будни</button>
+            <button id="all-days-preset" class="button button-secondary compact-button" type="button">Все дни</button>
+            <button id="clear-days-preset" class="button button-secondary compact-button" type="button">Очистить</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="field weekdays-field">
+        <span>Дни недели</span>
+        <div class="weekday-list">
+          <label><input type="checkbox" data-weekday="1"> Пн</label>
+          <label><input type="checkbox" data-weekday="2"> Вт</label>
+          <label><input type="checkbox" data-weekday="3"> Ср</label>
+          <label><input type="checkbox" data-weekday="4"> Чт</label>
+          <label><input type="checkbox" data-weekday="5"> Пт</label>
+          <label><input type="checkbox" data-weekday="6"> Сб</label>
+          <label><input type="checkbox" data-weekday="7"> Вс</label>
+        </div>
+      </div>
+
+      <div class="window-heading">
+        <div>
+          <strong>Временные интервалы</strong>
+          <small>До 10 окон. Допускаются интервалы через полночь, например 22:00–02:00.</small>
+        </div>
+        <button id="add-window" class="button button-secondary compact-button" type="button">+ Добавить окно</button>
+      </div>
+      <div id="schedule-windows" class="schedule-windows">
+        <div class="empty-state">Временные окна пока не добавлены.</div>
+      </div>
+
+      <div class="channel-heading">
+        <div>
+          <p class="eyebrow">КАНАЛЫ ДОСТАВКИ</p>
+          <h2>Куда отправлять сигналы</h2>
+        </div>
+      </div>
+      <div class="channel-grid">
+        <label class="channel-card">
+          <span class="channel-icon push-icon">P</span>
+          <span class="channel-info"><strong>Browser Push</strong><small id="push-readiness">Ожидает настройки VAPID и разрешения браузера</small></span>
+          <input id="push-enabled" type="checkbox">
+        </label>
+        <label class="channel-card">
+          <span class="channel-icon telegram-icon">T</span>
+          <span class="channel-info"><strong>Telegram</strong><small id="telegram-readiness">Ожидает настройки бота на сервере</small></span>
+          <input id="telegram-enabled" type="checkbox">
+        </label>
+      </div>
+      <p id="schedule-hint" class="hint channel-footnote">Оба канала выключены по умолчанию. Push потребует разрешения браузера и регистрации подписки; Telegram — настройки бота в Railway.</p>
+
+      <div class="push-device-panel">
+        <div>
+          <strong>Подключить это устройство к Push</strong>
+          <small id="push-device-status" aria-live="polite">Подключись к серверу. Каждый компьютер и телефон регистрируется отдельно. На iPhone/iPad сначала добавь приложение на экран «Домой».</small>
+        </div>
+        <div class="push-device-actions">
+          <button id="push-subscribe" class="button button-secondary compact-button" type="button" disabled>Разрешить Push на этом устройстве</button>
+          <button id="push-unsubscribe" class="button button-secondary compact-button" type="button" disabled>Отключить это устройство</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="journal-title">
+      <div class="section-heading journal-heading">
+        <div>
+          <p class="eyebrow">ИСТОРИЯ РАБОТЫ</p>
+          <h2 id="journal-title">Журнал сигналов</h2>
+          <p id="journal-counts" class="hint">Журнал будет загружен после подключения к серверу.</p>
+        </div>
+        <button id="refresh-history" class="button button-secondary" type="button" disabled>Обновить</button>
+      </div>
+      <div class="journal-toolbar">
+        <label class="field journal-filter-field">
+          <span>Показать</span>
+          <select id="history-filter">
+            <option value="all">Все сигналы</option>
+            <option value="sent">Уведомления отправлены</option>
+            <option value="failed">Ошибки отправки</option>
+            <option value="pending">Ожидают отправки</option>
+            <option value="skipped">Без отправки</option>
+          </select>
+        </label>
+        <span id="history-updated" class="hint">Нет данных</span>
+      </div>
+      <div id="signal-journal" class="signal-journal">
+        <div class="empty-state">Сначала подключись к серверу.</div>
+      </div>
+    </section>
+
+    <section class="note-panel">
+      <span class="note-icon">i</span>
+      <p><strong>Как работает индивидуальное отключение.</strong> Выключенная комбинация не опрашивается и не создаёт новые сигналы. Её настройки, состояние и предыдущая история сохраняются. Включение обратно продолжит отслеживание без создания правила заново.</p>
+    </section>
+
+    <footer>OKX Signal Pro v3 · Только публичные рыночные данные OKX · Автоторговля отключена</footer>
+  </main>
+</body>
+</html>
