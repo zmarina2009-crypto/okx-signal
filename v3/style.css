@@ -163,3 +163,45 @@ footer { padding: 14px 0 0; text-align: center; color: #71859c; font-size: 10px;
   .window-time-field { width: min(38%, 125px); }
   .window-remove { margin-left: auto; }
 }
+
+
+/* Signal journal and per-device Push registration */
+.push-device-panel {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  margin-top: 18px; padding: 15px; border: 1px solid #2e4a62; border-radius: 14px; background: rgba(7,19,31,.5);
+}
+.push-device-panel strong, .push-device-panel small { display: block; }
+.push-device-panel strong { color: #ecf5fd; font-size: 13px; }
+.push-device-panel small { margin-top: 4px; max-width: 470px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.push-device-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.journal-heading { align-items: flex-start; }
+.journal-heading .hint { margin: 5px 0 0; }
+.journal-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 18px 0 12px; }
+.journal-filter-field { width: min(310px, 100%); }
+.signal-journal { display: grid; gap: 10px; }
+.journal-card { padding: 14px; border: 1px solid #2b4058; border-radius: 14px; background: rgba(8,18,31,.6); }
+.journal-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.journal-identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.journal-pair { font-size: 14px; overflow-wrap: anywhere; }
+.direction-chip { padding: 4px 9px; border-radius: 8px; font-size: 11px; font-weight: 800; }
+.direction-long { color: #a8f0cf; background: rgba(26,139,91,.2); }
+.direction-short { color: #ffbac4; background: rgba(180,57,76,.2); }
+.journal-details { display: flex; flex-wrap: wrap; gap: 7px 14px; margin-top: 10px; color: #9cafc4; font-size: 10px; }
+.journal-message { margin: 9px 0 11px; color: #dce8f5; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.journal-status-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.delivery-status { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; background: #26374c; color: #c4d4e5; font-size: 10px; }
+.delivery-sent { color: #a6f0cb; background: rgba(31,132,89,.18); }
+.delivery-failed { color: #ffc0c9; background: rgba(184,62,80,.2); }
+.delivery-pending { color: #f2d79d; background: rgba(166,121,38,.18); }
+.delivery-skipped, .delivery-expired, .delivery-outside_notification_window, .delivery-outside_current_notification_window, .delivery-expired_signal { color: #c2cddd; background: rgba(92,110,134,.2); }
+.delivery-merged { color: #cbbcff; background: rgba(115,88,180,.2); }
+.delivery-unknown { color: #c2cddd; background: rgba(92,110,134,.2); }
+@media (max-width: 680px) {
+  .push-device-panel { align-items: stretch; flex-direction: column; }
+  .push-device-actions { justify-content: stretch; }
+  .push-device-actions .button { flex: 1 1 100%; }
+  .journal-toolbar { align-items: stretch; flex-direction: column; }
+  .journal-filter-field { width: 100%; }
+  .journal-card { padding: 12px 10px; }
+  .journal-pair { font-size: 12px; }
+}
