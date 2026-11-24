@@ -238,6 +238,44 @@
         </label>
       </div>
       <p id="schedule-hint" class="hint channel-footnote">Оба канала выключены по умолчанию. Push потребует разрешения браузера и регистрации подписки; Telegram — настройки бота в Railway.</p>
+
+      <div class="push-device-panel">
+        <div>
+          <strong>Подключить это устройство к Push</strong>
+          <small id="push-device-status" aria-live="polite">Подключись к серверу. Для каждого компьютера и телефона подписка оформляется отдельно.</small>
+        </div>
+        <div class="push-device-actions">
+          <button id="push-subscribe" class="button button-secondary compact-button" type="button" disabled>Разрешить Push на этом устройстве</button>
+          <button id="push-unsubscribe" class="button button-secondary compact-button" type="button" disabled>Отключить это устройство</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="journal-title">
+      <div class="section-heading journal-heading">
+        <div>
+          <p class="eyebrow">ИСТОРИЯ РАБОТЫ</p>
+          <h2 id="journal-title">Журнал сигналов</h2>
+          <p id="journal-counts" class="hint">Журнал будет загружен после подключения к серверу.</p>
+        </div>
+        <button id="refresh-history" class="button button-secondary" type="button" disabled>Обновить</button>
+      </div>
+      <div class="journal-toolbar">
+        <label class="field journal-filter-field">
+          <span>Показать</span>
+          <select id="history-filter">
+            <option value="all">Все сигналы</option>
+            <option value="sent">Уведомления отправлены</option>
+            <option value="failed">Ошибки отправки</option>
+            <option value="pending">Ожидают отправки</option>
+            <option value="skipped">Без отправки</option>
+          </select>
+        </label>
+        <span id="history-updated" class="hint">Нет данных</span>
+      </div>
+      <div id="signal-journal" class="signal-journal">
+        <div class="empty-state">Сначала подключись к серверу.</div>
+      </div>
     </section>
 
     <section class="note-panel">
