@@ -221,8 +221,14 @@ async function handleRequest(req, res) {
       stateFile: path.basename(STATE_FILE),
       channelsConfigured: {
         telegram: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID),
-        push: Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY)
-      }
+        push: Boolean(
+          process.env.VAPID_PUBLIC_KEY &&
+          process.env.VAPID_PRIVATE_KEY &&
+          process.env.VAPID_SUBJECT &&
+          /^(mailto:|https:\/\/)/i.test(String(process.env.VAPID_SUBJECT).trim())
+        )
+      },
+      registeredPushDevices: state?.pushSubscriptions?.length || 0
     });
     return;
   }
