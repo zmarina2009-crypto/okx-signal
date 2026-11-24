@@ -22,9 +22,10 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - Telegram and Web Push server adapters are implemented; Push requires VAPID public/private keys and an explicit valid `VAPID_SUBJECT`.
 - A persistent notification outbox retries failed destinations with a bounded number of attempts, skips destinations already confirmed, and expires stale signals after 90 seconds or when the active time window ends.
 - CI currently validates deterministic engine, schedule, market-data, persistence, delivery, and outbox behavior. The current PR remains draft and is not merged or deployed.
-- The first v3 settings page is now added under `v3/`: enter the HTTPS worker URL and API token, load the current config, add/remove pair-timeframe combinations, enable/disable each independently, and save to `/config`.
-- The UI does not store the API token in browser storage; it is kept only in the current page memory.
-- The page is still in the draft PR and is not published to GitHub Pages; no Push subscription can be registered until the service worker and Push registration flow are implemented.
+- The v3 settings page under `v3/` supports connecting to the worker with an HTTPS URL and API token, editing pair/timeframe targets, independent target switches, and the global monitor switch.
+- The page also exposes the supported scalping parameters (Volume + RSI, BOS, LONG/SHORT, RSI grouping, cooldown), IANA timezone, weekdays, up to 10 notification windows, and independent Push/Telegram channel toggles.
+- The UI does not store the API token in browser storage; it is kept only in the current page memory. Channel readiness is shown from safe `/health` booleans.
+- The page is still in the draft PR and is not published to GitHub Pages. Push subscription registration still requires the v3 service worker and browser permission flow.
 
 ## Initial architecture
 
@@ -67,7 +68,7 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - The v2 worker keeps its mounted `/data` volume and its existing per-pair/timeframe rules, Volume Profile, COMBO, CHOP, runtime config API, statistics, and delivery history. No Telegram credential values were read or changed.
 - Previous v2 logs showed state-file rename errors. The v3 state store instead serializes writes and uses a unique temporary filename, with concurrent-write regression tests. This is a v3-specific fix; v2 persistence has not been rewritten.
 - No new Railway project, service, or database was created. The v1 and v2 front ends, charts, and Live features remain unchanged.
-- The v3 worker is not deployed. Its monitor defaults to disabled and has no selected targets until configured. The pair/timeframe manager exists in the draft static page but is not published. The schedule/channel settings UI, service worker registration, Push subscription flow, and VAPID environment configuration are still pending.
+- The v3 worker is not deployed. Its monitor defaults to disabled and has no selected targets until configured. The pair/timeframe, strategy, schedule, and channel settings UI exists in the draft static page but is not published. Service worker registration, Push subscription flow, and VAPID environment configuration are still pending.
 
 ## Delivery phases
 
