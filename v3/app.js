@@ -189,6 +189,13 @@
     $(id).value = String(value ?? "");
   }
 
+  function syncBosControlAvailability() {
+    const enabled = $("bos-enabled").checked;
+    $("bos-alerts").disabled = !enabled;
+    $("require-bos").disabled = !enabled;
+    if (!enabled) $("require-bos").checked = false;
+  }
+
   function syncUiFromConfig() {
     const scalping = { ...SCALPING_DEFAULTS, ...(state.config.scalping || {}) };
     const schedule = {
@@ -205,7 +212,8 @@
     setChecked("volume-rsi-enabled", scalping.volumeRsiEnabled);
     setChecked("bos-enabled", scalping.bosEnabled);
     setChecked("bos-alerts", scalping.bosAlerts);
-    setChecked("require-bos", scalping.requireBos);
+    setChecked("require-bos", scalping.requireBos && scalping.bosEnabled);
+    syncBosControlAvailability();
     setChecked("long-enabled", scalping.longEnabled);
     setChecked("short-enabled", scalping.shortEnabled);
     setChecked("group-signals", scalping.groupSignals);
@@ -416,7 +424,11 @@
     "swing-length", "cooldown-seconds", "rsi-cluster-atr", "schedule-enabled",
     "schedule-timezone", "push-enabled", "telegram-enabled"
   ];
-  settingInputs.forEach(id => {
+  $("bos-enabled").addEventListener("change", () => {
+    syncBosControlAvailability();
+    markDirty();
+  });
+  settingInputs.filter(id => id !== "bos-enabled").forEach(id => {
     $(id).addEventListener("change", markDirty);
     if ($(id).tagName === "INPUT" && $(id).type === "text") $(id).addEventListener("input", markDirty);
   });
