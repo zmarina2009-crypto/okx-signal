@@ -12,7 +12,9 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - Prefer an existing paused worker resource only after checking what APIs and app features depend on it; do not replace the live v2 worker without a dependency audit.
 - Reuse a persistent `/data` volume only with a v3-specific state filename; never overwrite v1/v2 state.
 - Reuse existing Telegram credentials only through Railway variables; never copy secret values into Git.
-- Do not add a managed database or paid notification provider for the MVP.
+- Do not create a new database or pay for a notification provider for the MVP; use the existing free Supabase project only through a dedicated V3 table.
+- Keep the Supabase service-role key in Railway server-side variables only. Never place it in Git, the browser, HTML, or JavaScript.
+- The existing free Supabase plan can pause projects after a period of low activity; it is suitable for a cost-conscious MVP/QA path, not a guaranteed always-on production database.
 - Measure the additional runtime usage before enabling continuous monitoring; reusing a service avoids a new service, but does not make active compute free.
 
 ## Implementation status (2026-11-24)
@@ -21,6 +23,8 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - Notification schedule supports weekdays, multiple windows, and IANA time zones.
 - Telegram and Web Push server adapters are implemented; Push requires VAPID public/private keys and an explicit valid `VAPID_SUBJECT`.
 - A persistent notification outbox retries failed destinations with a bounded number of attempts, skips destinations already confirmed, and expires stale signals after 90 seconds or when the active time window ends.
+- Runtime state can be stored either in the isolated JSON file (`V3_STATE_BACKEND=file`, local tests/volume) or in the existing Supabase project using the dedicated `public.okx_v3_worker_runtime` row (`V3_STATE_BACKEND=supabase`). The Supabase adapter uses the REST Data API with a server-only service-role key; database errors fail startup/load rather than silently resetting the journal.
+- The Supabase migration is included under `supabase/migrations/` but has not been applied to the live project. It enables RLS, revokes browser-role grants, and grants only the backend `service_role` the table operations it needs.
 - CI currently validates deterministic engine, schedule, market-data, persistence, delivery, and outbox behavior. The current PR remains draft and is not merged or deployed.
 - The v3 settings page under `v3/` supports connecting to the worker with an HTTPS URL and API token, editing pair/timeframe targets, independent target switches, and the global monitor switch.
 - The page also exposes the supported scalping parameters (Volume + RSI, BOS, LONG/SHORT, RSI grouping, cooldown), IANA timezone, weekdays, up to 10 notification windows, and independent Push/Telegram channel toggles.
@@ -58,10 +62,11 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
    - Store Push subscriptions and delivery outcomes in persistent state. A browser/OS may still suppress notifications according to its own settings.
 
 5. **Persistence**
-   - For the MVP, reuse an existing mounted Railway volume rather than adding a database service.
-   - Before reuse, repair and test atomic/concurrent state writes. Current v2 worker logs contain `ENOENT` while renaming `/data/state.json.tmp` to `/data/state.json`; concurrent saves sharing one temporary filename are a likely cause and must be confirmed with a regression test.
-   - Keep state writes serialized or use unique temporary filenames and atomic replacement.
-   - Keep config, processed candle timestamps, cooldowns, signal journal, Push subscriptions, and delivery status separate by schema/version.
+   - The existing v1 and v2 Railway volumes are already attached to their workers and must not be detached, shared, or reused for V3.
+   - The currently idle `okx-signal-drawings-test` Railway service has no volume, so its current slot is the candidate V3 backend host only if its drawings-test purpose can be retired.
+   - Use the existing free Supabase project for V3 only through the separate `public.okx_v3_worker_runtime` table. This avoids adding a paid DB or a new Railway volume, but the free project may pause after prolonged low activity.
+   - Keep config, processed candle timestamps, cooldowns, signal journal, Push subscriptions, and delivery status in the single V3 JSONB snapshot. Never read or write the V2 singleton tables from V3.
+   - The existing file store remains available for local tests or a separately provisioned V3-only volume; it serializes writes and uses unique temporary filenames for atomic replacement.
 
 ## Existing infrastructure audit (2026-11-24)
 
@@ -70,7 +75,9 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - The v2 worker in `natural-integrity` remains `Online` so its existing runtime API and monitoring are not removed. A Railway variable `TELEGRAM_NOTIFICATIONS_ENABLED=false` and a code guard were added on its existing feature branch; the new deployment completed successfully on 2026-11-24. Telegram delivery is paused while the v2 worker remains available.
 - The v2 worker keeps its mounted `/data` volume and its existing per-pair/timeframe rules, Volume Profile, COMBO, CHOP, runtime config API, statistics, and delivery history. No Telegram credential values were read or changed.
 - Previous v2 logs showed state-file rename errors. The v3 state store instead serializes writes and uses a unique temporary filename, with concurrent-write regression tests. This is a v3-specific fix; v2 persistence has not been rewritten.
-- No new Railway project, service, or database was created. The v1 and v2 front ends, charts, and Live features remain unchanged.
+- No new Railway project, service, volume, or database was created. The v1 and v2 front ends, charts, and Live features remain unchanged.
+- Read-only audit found `okx-signal-drawings-test` has had no HTTP requests and zero reported CPU/memory usage during the last 7 days; it is a candidate slot, not yet repurposed. The v1/v2 volumes remain attached to their current workers.
+- The existing Supabase project `okx-signal-pro-v2` is on the Free plan and currently contains only the two existing V2 application tables in `public`. A V3-only migration and REST-backed state adapter have been added to this PR; the migration is not applied and no Supabase data has been changed.
 - The v3 worker is not deployed. Its monitor defaults to disabled and has no selected targets until configured. Pair/timeframe, strategy, schedule, channel, journal, and explicit Push registration controls exist in the draft static page but are not published. Railway VAPID environment configuration and a safe existing worker resource selection are still pending.
 
 ## Delivery phases

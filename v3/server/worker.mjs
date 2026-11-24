@@ -1,6 +1,7 @@
 import http from "node:http";
 import path from "node:path";
 import { createJsonStateStore } from "./json-state-store.mjs";
+import { createSupabaseStateStore } from "./supabase-state-store.mjs";
 import { evaluateScalpingBars, normalizePair, normalizeTimeframe } from "./scalping-engine.mjs";
 import { fetchOkxCandles } from "./okx-market-data.mjs";
 import { createDefaultWorkerConfig, getEnabledTargets, normalizeWorkerConfig } from "./worker-config.mjs";
@@ -16,8 +17,16 @@ const ALLOWED_ORIGINS = new Set([
 ].map(value => value.trim()).filter(Boolean));
 
 const volumeMount = process.env.RAILWAY_VOLUME_MOUNT_PATH || "/data";
+const STATE_BACKEND = String(process.env.V3_STATE_BACKEND || "file").trim().toLowerCase();
 const STATE_FILE = process.env.V3_STATE_FILE || path.join(volumeMount, "okx-signal-pro-v3.json");
-const store = createJsonStateStore(STATE_FILE);
+const store = STATE_BACKEND === "supabase"
+  ? createSupabaseStateStore({
+    supabaseUrl: process.env.SUPABASE_URL,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY
+  })
+  : STATE_BACKEND === "file"
+    ? createJsonStateStore(STATE_FILE)
+    : (() => { throw new Error("V3_STATE_BACKEND must be either file or supabase."); })();
 
 const HISTORY_LIMIT = 1000;
 let state;
@@ -236,7 +245,8 @@ async function handleRequest(req, res) {
       enabledTargets: state ? getEnabledTargets(state.config).length : 0,
       lastPollAt,
       lastPollErrors,
-      stateFile: path.basename(STATE_FILE),
+      stateBackend: STATE_BACKEND,
+      stateFile: STATE_BACKEND === "file" ? path.basename(STATE_FILE) : null,
       channelsConfigured: {
         telegram: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID),
         push: Boolean(
@@ -340,7 +350,8 @@ async function start() {
 
   server.listen(PORT, () => {
     console.log("OKX Signal Pro v3 worker listening on", PORT);
-    console.log("V3 state file:", path.basename(STATE_FILE));
+    console.log("V3 state backend:", STATE_BACKEND);
+    if (STATE_BACKEND === "file") console.log("V3 state file:", path.basename(STATE_FILE));
     console.log("Monitor enabled:", state.config.enabled, "targets:", state.config.targets.length);
     console.log("Telegram configured:", Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID));
     console.log("Push configured:", Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY));
