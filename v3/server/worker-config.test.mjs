@@ -26,7 +26,7 @@ test("normalizes and deduplicates pair/timeframe targets", () => {
 });
 
 test("rejects non-perpetual pairs, unsupported timeframes, and too many distinct pairs", () => {
-  assert.throws(() => normalizeWorkerConfig({ targets: [{ pair: "BTC-USDT", tf: "1m" }] }), /USDT perpetual/);
+  assert.throws(() => normalizeWorkerConfig({ targets: [{ pair: "BTC-USDC-SWAP", tf: "1m" }] }), /USDT perpetual/);
   assert.throws(() => normalizeWorkerConfig({ targets: [{ pair: "BTC", tf: "2m" }] }), /Unsupported OKX timeframe/);
   const targets = Array.from({ length: 21 }, (_, index) => ({ pair: "COIN" + index, tf: "1m" }));
   assert.throws(() => normalizeWorkerConfig({ targets }), /At most 20 distinct/);
