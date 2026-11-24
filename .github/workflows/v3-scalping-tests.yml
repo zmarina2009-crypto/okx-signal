@@ -14,7 +14,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Run v3 scalping engine tests
+      - name: Run v3 unit tests
         run: node --test v3/server/*.test.mjs
-      - name: Check v3 engine syntax
-        run: node --check v3/server/scalping-engine.mjs
+      - name: Check v3 server syntax
+        run: |
+          for file in v3/server/*.mjs; do node --check "$file"; done
