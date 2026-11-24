@@ -22,7 +22,9 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - Telegram and Web Push server adapters are implemented; Push requires VAPID public/private keys and an explicit valid `VAPID_SUBJECT`.
 - A persistent notification outbox retries failed destinations with a bounded number of attempts, skips destinations already confirmed, and expires stale signals after 90 seconds or when the active time window ends.
 - CI currently validates deterministic engine, schedule, market-data, persistence, delivery, and outbox behavior. The current PR remains draft and is not merged or deployed.
-- No v3 browser UI or service worker has been published yet; no Push subscription can be registered from the app until that work is complete.
+- The first v3 settings page is now added under `v3/`: enter the HTTPS worker URL and API token, load the current config, add/remove pair-timeframe combinations, enable/disable each independently, and save to `/config`.
+- The UI does not store the API token in browser storage; it is kept only in the current page memory.
+- The page is still in the draft PR and is not published to GitHub Pages; no Push subscription can be registered until the service worker and Push registration flow are implemented.
 
 ## Initial architecture
 
@@ -32,6 +34,8 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
    - Handle rate limits, timeouts, incomplete candles, retries, and per-symbol failures independently.
 
 2. **Scalping engine**
+   - Each `pair + timeframe` target has its own `enabled` switch. Legacy targets default to enabled; disabled targets remain saved but are skipped by the poller. Re-enabling a target retains its per-target processed-candle/cooldown state.
+   - The v3 page provides a target manager for adding/removing pairs and timeframes, toggling individual targets, and enabling/disabling the overall monitor.
    - Port the first-version `scalping-trigger.js` rules into a server-side, testable module.
    - Preserve Volume + RSI logic, optional BOS confirmation/alerts, LONG/SHORT switches, per-pair/timeframe cooldowns, and RSI situation grouping.
    - Keep signal evaluation deterministic and independent from HTTP, storage, and notification delivery.
