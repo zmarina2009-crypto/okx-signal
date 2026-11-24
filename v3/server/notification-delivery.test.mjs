@@ -103,9 +103,13 @@ test("rejects Push delivery when VAPID_SUBJECT is missing", async () => {
 });
 
 test("does not send a signal after its notification window has ended", async () => {
-  const result = await deliverSignalNotifications(signal, schedule, [], {
+  const recentSignal = {
+    ...signal,
+    detectedAt: Date.parse("2026-11-24T12:59:30+01:00")
+  };
+  const result = await deliverSignalNotifications(recentSignal, schedule, [], {
     env: {},
-    now: Date.parse("2026-11-24T13:01:00+01:00")
+    now: Date.parse("2026-11-24T13:00:00+01:00")
   });
   assert.deepEqual(result.records, []);
   assert.equal(result.reason, "outside_current_notification_window");
