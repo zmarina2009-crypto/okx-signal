@@ -20,8 +20,8 @@ test("normalizes and deduplicates pair/timeframe targets", () => {
     ]
   });
   assert.deepEqual(config.targets, [
-    { pair: "ZEC-USDT-SWAP", tf: "1m" },
-    { pair: "SOL-USDT-SWAP", tf: "15m" }
+    { pair: "ZEC-USDT-SWAP", tf: "1m", enabled: true },
+    { pair: "SOL-USDT-SWAP", tf: "15m", enabled: true }
   ]);
 });
 
