@@ -21,8 +21,8 @@ self.addEventListener("push", event => {
   const options = {
     body: String(payload.body || "Поступил новый скальпинг-сигнал."),
     tag: String(payload.tag || "okx-signal-pro-v3"),
+    icon: new URL("./icon.svg", self.registration.scope).href,
     data: payload.data && typeof payload.data === "object" ? payload.data : {},
-    badge: undefined,
     renotify: false
   };
 
