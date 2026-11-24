@@ -161,10 +161,28 @@ export async function runPollingCycle(options = {}) {
           boundedAppend(state.signalJournal, {
             ...signal,
             id: makeSignalKey(signal),
+            mergedCount: 0,
             recordedAt: Date.now(),
             notificationStatus: "pending"
           });
           pendingSignals.push(signal);
+        }
+
+        // Keep the server journal in sync with the engine's RSI grouping counters.
+        // Grouped repeats are not duplicate alerts, but the original signal keeps
+        // a visible count of how many later RSI triggers were merged into it.
+        const journalBySignal = new Map(
+          state.signalJournal
+            .filter(item => item?.kind === "scalping" && item.pair === pair && item.tf === tf)
+            .map(item => [Number(item.candleTs) + "|" + item.direction, item])
+        );
+        for (const historyItem of result.state.history) {
+          if (historyItem?.kind !== "scalping" || historyItem.pair !== pair || normalizeTimeframe(historyItem.tf) !== tf) continue;
+          const journalItem = journalBySignal.get(Number(historyItem.signalTs) + "|" + historyItem.direction);
+          if (!journalItem) continue;
+          journalItem.mergedCount = Number(historyItem.mergedCount) || 0;
+          journalItem.lastMergedTs = historyItem.lastMergedTs || null;
+          journalItem.lastMergedPrice = historyItem.lastMergedPrice ?? null;
         }
       } catch (error) {
         errors.push({
