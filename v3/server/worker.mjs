@@ -3,7 +3,7 @@ import path from "node:path";
 import { createJsonStateStore } from "./json-state-store.mjs";
 import { evaluateScalpingBars, normalizePair, normalizeTimeframe } from "./scalping-engine.mjs";
 import { fetchOkxCandles } from "./okx-market-data.mjs";
-import { createDefaultWorkerConfig, normalizeWorkerConfig } from "./worker-config.mjs";
+import { createDefaultWorkerConfig, getEnabledTargets, normalizeWorkerConfig } from "./worker-config.mjs";
 import { validatePushSubscription } from "./notification-delivery.mjs";
 import { flushPendingNotifications } from "./notification-outbox.mjs";
 
@@ -127,13 +127,15 @@ export async function runPollingCycle(options = {}) {
   if (!state) throw new Error("Worker state has not been initialized.");
   if (!state.config.enabled) return { skipped: true, reason: "monitor_disabled" };
   if (!state.config.targets.length) return { skipped: true, reason: "no_targets_configured" };
+  const enabledTargets = getEnabledTargets(state.config);
+  if (!enabledTargets.length) return { skipped: true, reason: "no_targets_enabled" };
 
   polling = true;
   const pendingSignals = [];
   const errors = [];
   let processedTargets = 0;
   try {
-    for (const target of state.config.targets) {
+    for (const target of enabledTargets) {
       if (stopping) break;
       const pair = normalizePair(target.pair);
       const tf = normalizeTimeframe(target.tf);
@@ -187,6 +189,7 @@ export async function runPollingCycle(options = {}) {
     return {
       skipped: false,
       targetsConfigured: state.config.targets.length,
+      targetsEnabled: enabledTargets.length,
       targetsProcessed: processedTargets,
       signalsDetected: pendingSignals.length,
       notificationSummary,
@@ -212,6 +215,7 @@ async function handleRequest(req, res) {
       service: "okx-signal-pro-v3-scalping",
       monitorEnabled: Boolean(state?.config?.enabled),
       targets: state?.config?.targets?.length || 0,
+      enabledTargets: state ? getEnabledTargets(state.config).length : 0,
       lastPollAt,
       lastPollErrors,
       stateFile: path.basename(STATE_FILE),
@@ -319,11 +323,11 @@ async function start() {
   });
 
   void flushNotificationOutbox().catch(error => console.error("Initial notification outbox flush failed:", error));
-  if (state.config.enabled && state.config.targets.length) {
+  if (state.config.enabled && getEnabledTargets(state.config).length) {
     void runPollingCycle().catch(error => console.error("Initial v3 poll failed:", error));
   }
   pollTimer = setInterval(() => {
-    if (state.config.enabled && state.config.targets.length) {
+    if (state.config.enabled && getEnabledTargets(state.config).length) {
       void runPollingCycle().catch(error => console.error("V3 poll failed:", error));
     } else {
       void flushNotificationOutbox().catch(error => console.error("V3 notification outbox flush failed:", error));
