@@ -26,10 +26,18 @@ export function normalizeWorkerConfig(input = {}) {
 
   const unique = new Map();
   for (const item of targetsInput) {
-    const pair = normalizePair(item?.pair);
+    const rawPair = String(item?.pair || "").trim().toUpperCase();
+    const supportedInput = /^[A-Z0-9]{1,20}$/.test(rawPair) ||
+      /^[A-Z0-9]{1,20}USDT$/.test(rawPair) ||
+      /^[A-Z0-9]{1,20}-USDT$/.test(rawPair) ||
+      /^[A-Z0-9]{1,20}-USDT-SWAP$/.test(rawPair);
+    if (!supportedInput) {
+      throw new RangeError("Only OKX USDT perpetual pairs are supported: " + rawPair);
+    }
+    const pair = normalizePair(rawPair);
     const tf = normalizeTimeframe(item?.tf);
-    if (!pair.endsWith("-USDT-SWAP")) {
-      throw new RangeError("Only OKX USDT perpetual pairs are supported: " + pair);
+    if (!/^[A-Z0-9]{1,20}-USDT-SWAP$/.test(pair)) {
+      throw new RangeError("Invalid OKX perpetual instrument: " + pair);
     }
     if (!SUPPORTED_TIMEFRAMES.has(tf)) {
       throw new RangeError("Unsupported OKX timeframe: " + tf);
