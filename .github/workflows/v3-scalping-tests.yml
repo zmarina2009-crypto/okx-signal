@@ -1,0 +1,20 @@
+name: V3 scalping engine tests
+
+on:
+  pull_request:
+    paths:
+      - "v3/**"
+      - ".github/workflows/v3-scalping-tests.yml"
+
+jobs:
+  v3-scalping-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run v3 scalping engine tests
+        run: node --test v3/server/*.test.mjs
+      - name: Check v3 engine syntax
+        run: node --check v3/server/scalping-engine.mjs
