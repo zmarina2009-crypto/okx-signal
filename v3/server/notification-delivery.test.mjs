@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   deliverSignalNotifications,
   recordDeliveryAttempts,
+  sendWebPush,
   validatePushSubscription
 } from "./notification-delivery.mjs";
 
@@ -37,6 +38,7 @@ test("does not attempt any channel outside the signal's allowed time window", as
     detectedAt: Date.parse("2026-11-24T14:00:00+01:00")
   }, schedule, [], {
     env: {},
+    now: Date.parse("2026-11-24T14:00:01+01:00"),
     sendTelegramMessage: async () => { throw new Error("must not send"); }
   });
   assert.deepEqual(result.records, []);
@@ -50,6 +52,7 @@ test("sends Telegram only when enabled by schedule and configured", async () => 
     channels: { push: false, telegram: true }
   }, [], {
     env: { TELEGRAM_BOT_TOKEN: "test-token", TELEGRAM_CHAT_ID: "test-chat" },
+    now: timestamp + 1_000,
     fetchImpl: async (url, options) => {
       sentText = JSON.parse(options.body).text;
       return { ok: true, json: async () => ({ ok: true, result: { message_id: 42 } }) };
@@ -75,12 +78,46 @@ test("sends Push using a VAPID-backed adapter for each subscription", async () =
     ...schedule,
     channels: { push: true, telegram: false }
   }, subscriptions, {
-    env: { VAPID_PUBLIC_KEY: "public", VAPID_PRIVATE_KEY: "private" },
+    env: { VAPID_PUBLIC_KEY: "public", VAPID_PRIVATE_KEY: "private", VAPID_SUBJECT: "mailto:alerts@example.org" },
+    now: timestamp + 1_000,
     webPushModule
   });
   assert.equal(pushCount, 2);
   assert.equal(result.records.length, 2);
   assert.ok(result.records.every(record => record.status === "sent"));
+});
+
+
+test("rejects Push delivery when VAPID_SUBJECT is missing", async () => {
+  const webPushModule = {
+    setVapidDetails() {},
+    async sendNotification() {}
+  };
+  await assert.rejects(sendWebPush({
+    subscription: { endpoint: "https://push.example/one", keys: { p256dh: "abcdefghijkl", auth: "abcdef" } },
+    payload: { title: "test" },
+    publicKey: "public",
+    privateKey: "private",
+    webPushModule
+  }), /VAPID_SUBJECT must be configured/);
+});
+
+test("does not send a signal after its notification window has ended", async () => {
+  const result = await deliverSignalNotifications(signal, schedule, [], {
+    env: {},
+    now: Date.parse("2026-11-24T13:01:00+01:00")
+  });
+  assert.deepEqual(result.records, []);
+  assert.equal(result.reason, "outside_current_notification_window");
+});
+
+test("expires stale signals instead of sending them later", async () => {
+  const result = await deliverSignalNotifications(signal, schedule, [], {
+    env: {},
+    now: timestamp + 120_000
+  });
+  assert.deepEqual(result.records, []);
+  assert.equal(result.reason, "expired_signal");
 });
 
 test("records channel delivery outcomes and removes expired Push subscriptions", () => {
