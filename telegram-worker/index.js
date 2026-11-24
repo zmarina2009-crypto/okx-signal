@@ -177,6 +177,11 @@ async function saveState(snapshot = state) {
   }
 }
 async function sendTelegram(text) {
+  // Final fail-closed guard: every Telegram send path must pass this check,
+  // including future callers added outside emit() or the HTTP test route.
+  if (!TELEGRAM_NOTIFICATIONS_ENABLED) {
+    throw new Error("Telegram notifications are paused by TELEGRAM_NOTIFICATIONS_ENABLED.");
+  }
   if (!BOT_TOKEN || !CHAT_ID) throw new Error("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the hosting environment.");
   const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
@@ -609,6 +614,7 @@ console.log("State diagnostics:", JSON.stringify({
   latestHistoryAttemptAt: telegramHistoryEntries.at(-1)?.attemptedAt || null
 }));
 server.listen(PORT, () => {
+  console.log("Telegram notifications enabled:", TELEGRAM_NOTIFICATIONS_ENABLED);
   console.log(`Worker listening on ${PORT}; pairs=${PAIRS.join(",")}; timeframes=${TIMEFRAMES.join(",")}; interval=${POLL_MS}ms`);
   if (!BOT_TOKEN || !CHAT_ID) console.warn("Telegram credentials are not configured; set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.");
   void cycle();
