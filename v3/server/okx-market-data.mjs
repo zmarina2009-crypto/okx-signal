@@ -37,9 +37,14 @@ function wait(ms) {
 }
 
 export async function fetchOkxCandles(pairInput, timeframeInput, options = {}) {
-  const pair = normalizePair(pairInput);
+  const rawPair = String(pairInput || "").trim().toUpperCase();
+  const supportedInput = /^[A-Z0-9]{1,20}$/.test(rawPair) ||
+    /^[A-Z0-9]{1,20}USDT$/.test(rawPair) ||
+    /^[A-Z0-9]{1,20}-USDT$/.test(rawPair) ||
+    /^[A-Z0-9]{1,20}-USDT-SWAP$/.test(rawPair);
+  if (!supportedInput) throw new RangeError("Only USDT perpetual candles are supported: " + rawPair);
+  const pair = normalizePair(rawPair);
   const timeframe = normalizeTimeframe(timeframeInput);
-  if (!pair.endsWith("-USDT-SWAP")) throw new RangeError("Only USDT perpetual candles are supported.");
 
   const limit = Math.max(20, Math.min(300, Math.round(Number(options.limit) || 120)));
   const attempts = Math.max(1, Math.min(3, Math.round(Number(options.attempts) || 3)));
