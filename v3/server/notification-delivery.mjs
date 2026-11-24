@@ -36,23 +36,42 @@ export async function sendWebPush({ subscription, payload, publicKey, privateKey
   if (!publicKey || !privateKey) throw new Error("VAPID public/private keys are not configured.");
   const webPush = webPushModule || await import("web-push");
   const api = webPush.default || webPush;
-  api.setVapidDetails(subject || "mailto:admin@example.com", publicKey, privateKey);
+  if (typeof subject !== "string" || !/^(mailto:|https:\/\/)/i.test(subject.trim())) {
+    throw new Error("VAPID_SUBJECT must be configured as a mailto: or https:// contact URI.");
+  }
+  api.setVapidDetails(subject.trim(), publicKey, privateKey);
   return api.sendNotification(subscription, JSON.stringify(payload), { TTL: 60 });
 }
 
 export async function deliverSignalNotifications(signal, schedule, subscriptions, options = {}) {
-  const channels = getEligibleNotificationChannels(signal?.detectedAt, schedule);
   const records = [];
   const expiredSubscriptionEndpoints = [];
-  if (!channels.length) {
-    return { records, expiredSubscriptionEndpoints, reason: "outside_notification_window" };
+  const detectedAt = Number(signal?.detectedAt);
+  const now = Number(options.now ?? Date.now());
+  const maxAgeMs = Math.max(1_000, Number(options.maxAgeMs) || 90_000);
+  if (!Number.isFinite(detectedAt)) {
+    return { records, expiredSubscriptionEndpoints, reason: "missing_detection_time" };
+  }
+  if (!Number.isFinite(now) || now < detectedAt || now - detectedAt > maxAgeMs) {
+    return { records, expiredSubscriptionEndpoints, reason: "expired_signal" };
   }
 
+  const detectedChannels = getEligibleNotificationChannels(detectedAt, schedule);
+  if (!detectedChannels.length) {
+    return { records, expiredSubscriptionEndpoints, reason: "outside_notification_window" };
+  }
+  const currentChannels = getEligibleNotificationChannels(now, schedule);
+  const channels = detectedChannels.filter(channel => currentChannels.includes(channel));
+  if (!channels.length) {
+    return { records, expiredSubscriptionEndpoints, reason: "outside_current_notification_window" };
+  }
+
+  const skipDeliveryIds = new Set(Array.isArray(options.skipDeliveryIds) ? options.skipDeliveryIds : []);
   const env = options.env || process.env;
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const tasks = [];
 
-  if (channels.includes("telegram")) {
+  if (channels.includes("telegram") && !skipDeliveryIds.has(signal.id + ":telegram")) {
     tasks.push((async () => {
       const record = {
         id: signal.id + ":telegram",
@@ -114,6 +133,7 @@ export async function deliverSignalNotifications(signal, schedule, subscriptions
           status: "skipped",
           error: null
         };
+        if (skipDeliveryIds.has(record.id)) continue;
         try {
           await sendWebPush({
             subscription,
@@ -142,7 +162,7 @@ export async function deliverSignalNotifications(signal, schedule, subscriptions
   }
 
   await Promise.all(tasks);
-  return { records, expiredSubscriptionEndpoints, reason: "delivery_attempted" };
+  return { records, expiredSubscriptionEndpoints, reason: records.length ? "delivery_attempted" : "already_delivered" };
 }
 
 export function recordDeliveryAttempts(state, result) {
