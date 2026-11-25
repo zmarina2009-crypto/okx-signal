@@ -77,7 +77,7 @@
     toggle.setAttribute("aria-pressed", state.soundEnabled ? "true" : "false");
     test.disabled = !state.connected || !state.soundEnabled;
     $("sound-status").textContent = state.soundEnabled
-      ? "Звук включён. Для LONG и SHORT используются разные короткие сигналы."
+      ? "Звук включён. Для LONG и SHORT используются разные звуковые сигналы длительностью 2 секунды."
       : "Звук выключен. Включи его, чтобы слышать новые сигналы.";
   }
 
@@ -100,11 +100,11 @@
     oscillator.frequency.setValueAtTime(direction === "SHORT" ? 620 : 880, startedAt);
     gain.gain.setValueAtTime(0.0001, startedAt);
     gain.gain.exponentialRampToValueAtTime(0.13, startedAt + 0.025);
-    gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + 0.19);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + 1.95);
     oscillator.connect(gain);
     gain.connect(context.destination);
     oscillator.start(startedAt);
-    oscillator.stop(startedAt + 0.2);
+    oscillator.stop(startedAt + 2);
   }
 
   async function toggleSound() {
