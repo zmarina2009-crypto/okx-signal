@@ -264,7 +264,7 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
 
   if(config.reversalEnabled&&reversalDirection) return {state:"REVERSAL",direction:reversalDirection,actionable:true,blockSignals:false,
     reasons:["CHoCH: подтверждена смена рыночной структуры",config.requireRetest?"Ретест уровня структуры подтверждён":"Ретест отключён настройкой","Объём и RSI подтверждают разворот",profile?.ready?"Volume Profile старшего ТФ учтён":"Volume Profile отключён"],metrics};
-  if(config.trendEnabled&&trendDirection&&structureConfirmed&&structure.direction===trendDirection&&volumeConfirmed&&canActOnRetest&&
+  if(config.trendEnabled&&trendDirection&&structureConfirmed&&structure.direction===trendDirection&&volumeConfirmed&&
     (trendDirection==="LONG"?profileLong:profileShort)) return {state:"TREND",direction:trendDirection,actionable:true,blockSignals:false,
     reasons:["BOS подтверждает продолжение структуры",config.requireRetest?"Ретест уровня пробоя подтверждён":"Ретест отключён настройкой","Цена и SMA21 направлены одинаково","Объём и Volume Profile поддерживают направление"],metrics};
 
