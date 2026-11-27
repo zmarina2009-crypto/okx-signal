@@ -1,5 +1,6 @@
 import { normalizePair, normalizeTimeframe, normalizeConfig } from "./scalping-engine.mjs";
 import { normalizeNotificationSchedule } from "./notification-schedule.mjs";
+import { normalizeMarketRegimeConfig } from "./market-regime.mjs";
 
 const SUPPORTED_TIMEFRAMES = new Set([
   "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w"
@@ -10,6 +11,7 @@ export function createDefaultWorkerConfig() {
     enabled: false,
     targets: [],
     scalping: {},
+    marketRegime: {},
     notificationSchedule: {
       enabled: false,
       timezone: "Europe/Amsterdam",
@@ -60,6 +62,7 @@ export function normalizeWorkerConfig(input = {}) {
     enabled: input.enabled === true,
     targets: [...unique.values()],
     scalping: normalizeConfig(input.scalping || {}),
+    marketRegime: normalizeMarketRegimeConfig(input.marketRegime || {}),
     notificationSchedule: normalizeNotificationSchedule(input.notificationSchedule || {})
   };
 }
