@@ -109,7 +109,7 @@ npm run backtest -- --pairs=ZEC,NEAR --timeframe=1m --max-candles=5000 --stop-mo
 
 Stop modes:
 - `swing`: stop beyond the recent local high/low over the configured swing lookback.
-- `atr`: stop at 1.5 ATR by default; the multiplier is configurable in the backtest configuration.
+- `atr`: stop at 1.5 ATR by default; set `--atr-multiplier=2` to change it. For the swing stop, set `--swing-lookback=16` to change the number of candles used.
 
 Defaults preserve the agreed test assumptions: 0.5% risk per trade, 1:5 reward/risk, break-even after +1R, fees and slippage included, no partial exits or trailing stop. If stop and target are both touched in one candle, the simulator conservatively assumes the stop was hit first.
 
