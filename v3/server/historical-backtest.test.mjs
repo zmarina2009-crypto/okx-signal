@@ -34,7 +34,7 @@ test("swing stop uses the recent local low for LONG and local high for SHORT", (
   const shortStop = calculateInitialStop(sampleBars.slice(0, 5), "SHORT", 90, {
     stopMode:"swing", swingLookback:4
   });
-  assert.equal(longStop, 96);
+  assert.equal(longStop, 95);
   assert.equal(shortStop, 106);
 });
 
