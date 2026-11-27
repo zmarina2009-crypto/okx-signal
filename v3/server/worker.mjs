@@ -4,6 +4,7 @@ import { createJsonStateStore } from "./json-state-store.mjs";
 import { createSupabaseStateStore } from "./supabase-state-store.mjs";
 import { evaluateScalpingBars, normalizePair, normalizeTimeframe } from "./scalping-engine.mjs";
 import { fetchOkxCandles } from "./okx-market-data.mjs";
+import { classifyMarketRegime } from "./market-regime.mjs";
 import { createDefaultWorkerConfig, getEnabledTargets, normalizeWorkerConfig } from "./worker-config.mjs";
 import { validatePushSubscription } from "./notification-delivery.mjs";
 import { flushPendingNotifications } from "./notification-outbox.mjs";
@@ -43,6 +44,7 @@ function defaultState() {
     schemaVersion: 1,
     config: createDefaultWorkerConfig(),
     scalpingStates: {},
+    marketRegimes: {},
     signalJournal: [],
     deliveries: [],
     pushSubscriptions: [],
@@ -105,6 +107,7 @@ function normalizeLoadedState(loaded) {
   merged.schemaVersion = 1;
   merged.config = normalizeWorkerConfig(merged.config || {});
   if (!merged.scalpingStates || typeof merged.scalpingStates !== "object") merged.scalpingStates = {};
+  if (!merged.marketRegimes || typeof merged.marketRegimes !== "object") merged.marketRegimes = {};
   if (!Array.isArray(merged.signalJournal)) merged.signalJournal = [];
   if (!Array.isArray(merged.deliveries)) merged.deliveries = [];
   if (!Array.isArray(merged.pushSubscriptions)) merged.pushSubscriptions = [];
@@ -158,12 +161,31 @@ export async function runPollingCycle(options = {}) {
           state.config.scalping.swingLength * 2 + 3
         );
         const candles = await fetchOkxCandles(pair, tf, { limit: Math.min(300, limit) });
-        const result = evaluateScalpingBars(candles, pair, tf, {
-          config: state.config.scalping,
-          state: state.scalpingStates[key] || {},
-          now: Date.now()
-        });
-        state.scalpingStates[key] = result.state;
+        const regime = classifyMarketRegime(candles, state.config.marketRegime);
+        state.marketRegimes[key] = {
+          ...regime,
+          pair,
+          tf,
+          updatedAt: Date.now()
+        };
+        let result;
+        if (regime.blockSignals === true) {
+          const prior = state.scalpingStates[key] || {};
+          const confirmed = candles.filter(bar => bar && bar.confirm !== false && String(bar.confirm ?? "1") !== "0");
+          const latestTs = Number(confirmed.at(-1)?.ts);
+          state.scalpingStates[key] = {
+            ...prior,
+            processed: { ...(prior.processed || {}), [key]: latestTs }
+          };
+          result = { events: [], state: state.scalpingStates[key], historyEntries: [] };
+        } else {
+          result = evaluateScalpingBars(candles, pair, tf, {
+            config: state.config.scalping,
+            state: state.scalpingStates[key] || {},
+            now: Date.now()
+          });
+          state.scalpingStates[key] = result.state;
+        }
         processedTargets++;
 
         for (const signal of result.events) {
@@ -287,6 +309,13 @@ async function handleRequest(req, res) {
     } catch (error) {
       json(res, Number(error.statusCode) || 400, { error: String(error.message || error) });
     }
+    return;
+  }
+
+  if (requestUrl.pathname === "/regimes" && req.method === "GET") {
+    json(res, 200, {
+      regimes: Object.values(state.marketRegimes || {}).sort((a, b) => Number(b.updatedAt) - Number(a.updatedAt))
+    });
     return;
   }
 
