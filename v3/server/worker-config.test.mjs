@@ -92,3 +92,28 @@ test("market regime flat filter is enabled by default for V3", () => {
   assert.equal(config.marketRegime.trendEnabled, true);
   assert.equal(config.marketRegime.reversalEnabled, true);
 });
+
+test("BOS, retest and higher timeframe profile settings persist through worker config", () => {
+  const config = normalizeWorkerConfig({
+    marketRegime: {
+      marketStructureEnabled: true,
+      volumeProfileEnabled: true,
+      profileTimeframe: "4h",
+      profileLookback: 180,
+      profileBins: 48,
+      valueAreaPct: 68,
+      requireRetest: false,
+      retestLookback: 12,
+      retestToleranceAtr: 0.4
+    }
+  });
+  assert.equal(config.marketRegime.marketStructureEnabled, true);
+  assert.equal(config.marketRegime.volumeProfileEnabled, true);
+  assert.equal(config.marketRegime.profileTimeframe, "4h");
+  assert.equal(config.marketRegime.profileLookback, 180);
+  assert.equal(config.marketRegime.profileBins, 48);
+  assert.equal(config.marketRegime.valueAreaPct, 68);
+  assert.equal(config.marketRegime.requireRetest, false);
+  assert.equal(config.marketRegime.retestLookback, 12);
+  assert.equal(config.marketRegime.retestToleranceAtr, 0.4);
+});
