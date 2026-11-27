@@ -49,9 +49,10 @@ for (const pair of args.pairs) {
     startTime:args.startTime,
     endTime:args.endTime
   });
+  const profileWarmupMs = (TF_MS[profileTimeframe] || 900000) * (regimeConfig.profileLookback + 20);
   const higherTimeframeCandles = await fetchOkxHistoricalCandles(pair, profileTimeframe, {
     maxCandles:Math.min(20_000, profileBarsNeeded),
-    startTime:args.startTime,
+    startTime:args.startTime ? args.startTime - profileWarmupMs : undefined,
     endTime:args.endTime
   });
   const report = runHistoricalBacktest({
