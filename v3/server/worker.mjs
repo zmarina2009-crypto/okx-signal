@@ -203,6 +203,11 @@ export async function runPollingCycle(options = {}) {
             state: state.scalpingStates[key] || {},
             now: Date.now()
           });
+          // The regime classifier is authoritative for direction: never allow
+          // an opposite-side scalping alert through a confirmed LONG/SHORT setup.
+          if (regime.actionable === true && regime.direction) {
+            result.events = result.events.filter(signal => signal.direction === regime.direction);
+          }
           state.scalpingStates[key] = result.state;
         }
         processedTargets++;
