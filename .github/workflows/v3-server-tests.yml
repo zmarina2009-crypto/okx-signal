@@ -1,0 +1,42 @@
+name: V3 server tests
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "v3/server/**"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or commit to test (for example feature/v3-scalping-foundation)"
+        required: true
+        default: "main"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v3-server-tests-${{ github.event.pull_request.number || inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node.js server tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request or selected ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.pull_request.head.sha }}
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install server dependencies
+        working-directory: v3/server
+        run: npm install --no-audit --no-fund
+      - name: Run server tests
+        working-directory: v3/server
+        run: npm test
