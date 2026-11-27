@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculateInitialStop, normalizeBacktestConfig, runHistoricalBacktest } from "./historical-backtest.mjs";
+import { calculateInitialStop, normalizeBacktestConfig, runHistoricalBacktest, simulatePosition } from "./historical-backtest.mjs";
 
 const sampleBars = [
   { ts:1,o:100,h:102,l:99,c:101,v:10 },
@@ -52,6 +52,31 @@ test("invalid or crossed stops are rejected", () => {
   assert.equal(calculateInitialStop(sampleBars.slice(0, 3), "LONG", 95, {
     stopMode:"swing", swingLookback:2
   }), null);
+});
+
+test("break-even is activated after +1R and applied from the next candle", () => {
+  const bars = [
+    { ts:1,o:100,h:102.2,l:99,c:102 },
+    { ts:2,o:101,h:103,l:100,c:102 }
+  ];
+  const trade = simulatePosition({
+    bars, entryIndex:0, direction:"LONG", entryPrice:100, stopPrice:98,
+    capital:10_000, config:{ riskPercent:0.5, rewardRisk:5, breakEvenAtR:1, feeRate:0, slippageRate:0 }
+  });
+  assert.equal(trade.exitReason, "breakeven");
+  assert.equal(trade.exitPrice, 100);
+  assert.equal(trade.breakEvenActivated, true);
+  assert.equal(trade.netPnl, 0);
+});
+
+test("when stop and target occur in the same candle, the conservative stop wins", () => {
+  const bars = [{ ts:1,o:100,h:111,l:97,c:105 }];
+  const trade = simulatePosition({
+    bars, entryIndex:0, direction:"LONG", entryPrice:100, stopPrice:98,
+    capital:10_000, config:{ rewardRisk:5, feeRate:0, slippageRate:0 }
+  });
+  assert.equal(trade.exitReason, "stop");
+  assert.equal(trade.exitPrice, 98);
 });
 
 test("historical tester returns a stable empty report when there are no actionable signals", () => {
