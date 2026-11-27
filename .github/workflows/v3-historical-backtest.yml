@@ -1,0 +1,84 @@
+name: V3 historical backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or commit to run (use feature/v3-scalping-foundation)"
+        required: true
+        default: "feature/v3-scalping-foundation"
+        type: string
+      pairs:
+        description: "Comma-separated USDT perpetual pairs"
+        required: true
+        default: "ZEC,NEAR"
+        type: string
+      timeframe:
+        description: "Signal timeframe"
+        required: true
+        default: "1m"
+        type: choice
+        options:
+          - "1m"
+          - "5m"
+          - "15m"
+      max_candles:
+        description: "Confirmed candles per pair"
+        required: true
+        default: "5000"
+        type: choice
+        options:
+          - "1000"
+          - "3000"
+          - "5000"
+          - "10000"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v3-historical-backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    name: OKX historical data — swing vs ATR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout selected V3 branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run swing-stop backtest
+        working-directory: v3/server
+        env:
+          PAIRS: ${{ inputs.pairs }}
+          TIMEFRAME: ${{ inputs.timeframe }}
+          MAX_CANDLES: ${{ inputs.max_candles }}
+        run: |
+          npm install --no-audit --no-fund
+          npm run --silent backtest -- --pairs="$PAIRS" --timeframe="$TIMEFRAME" --max-candles="$MAX_CANDLES" --stop-mode=swing > backtest-swing.txt
+          cat backtest-swing.txt
+      - name: Run ATR-stop backtest
+        working-directory: v3/server
+        env:
+          PAIRS: ${{ inputs.pairs }}
+          TIMEFRAME: ${{ inputs.timeframe }}
+          MAX_CANDLES: ${{ inputs.max_candles }}
+        run: |
+          npm run --silent backtest -- --pairs="$PAIRS" --timeframe="$TIMEFRAME" --max-candles="$MAX_CANDLES" --stop-mode=atr --atr-multiplier=1.5 > backtest-atr.txt
+          cat backtest-atr.txt
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: v3-historical-backtest-reports
+          path: |
+            v3/server/backtest-swing.txt
+            v3/server/backtest-atr.txt
+          if-no-files-found: error
+          retention-days: 14
