@@ -146,6 +146,7 @@ export async function runPollingCycle(options = {}) {
   polling = true;
   const pendingSignals = [];
   const errors = [];
+  const profileCache = new Map();
   let processedTargets = 0;
   try {
     for (const target of enabledTargets) {
@@ -165,13 +166,16 @@ export async function runPollingCycle(options = {}) {
         let higherTimeframeBars = [];
         if (regimeConfig.enabled && regimeConfig.volumeProfileEnabled) {
           const profileTf = resolveProfileTimeframe(tf, regimeConfig.profileTimeframe);
-          try {
-            higherTimeframeBars = await fetchOkxCandles(pair, profileTf, {
+          const profileKey = pair + "|" + profileTf;
+          if (!profileCache.has(profileKey)) {
+            profileCache.set(profileKey, fetchOkxCandles(pair, profileTf, {
               limit: Math.min(300, regimeConfig.profileLookback + 20)
-            });
-          } catch (profileError) {
-            errors.push({ pair, tf, stage: "volume_profile", error: String(profileError?.message || profileError) });
+            }).catch(profileError => {
+              errors.push({ pair, tf, stage: "volume_profile", error: String(profileError?.message || profileError) });
+              return [];
+            }));
           }
+          higherTimeframeBars = await profileCache.get(profileKey);
         }
         const regime = classifyMarketRegime(candles, regimeConfig, {
           higherTimeframeBars,
