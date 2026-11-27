@@ -94,3 +94,23 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - No changes to v1/v2 charts, Live, indicators, strategies, or Telegram rules.
 - No new Railway project/service, paid database, or third-party Push SaaS.
 - No migration of the existing v1/v2 user data.
+
+
+## Historical backtesting (QA only)
+
+The separate walk-forward tester downloads confirmed OKX perpetual candles and evaluates the existing V3 regime + scalping engines one candle at a time. Signals are entered at the next candle open; higher-timeframe Volume Profile bars are admitted only after they close. The tester does not place orders.
+
+Run from `v3/server`:
+
+```bash
+npm run backtest -- --pairs=ZEC,NEAR --timeframe=1m --max-candles=5000 --stop-mode=swing
+npm run backtest -- --pairs=ZEC,NEAR --timeframe=1m --max-candles=5000 --stop-mode=atr
+```
+
+Stop modes:
+- `swing`: stop beyond the recent local high/low over the configured swing lookback.
+- `atr`: stop at 1.5 ATR by default; the multiplier is configurable in the backtest configuration.
+
+Defaults preserve the agreed test assumptions: 0.5% risk per trade, 1:5 reward/risk, break-even after +1R, fees and slippage included, no partial exits or trailing stop. If stop and target are both touched in one candle, the simulator conservatively assumes the stop was hit first.
+
+The first QA pass should use ZEC and NEAR. Add SOL and XRP only after reviewing the initial data quality and results. Historical output is research data, not a promise of future performance.
