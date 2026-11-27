@@ -563,6 +563,7 @@
     setChecked("regime-profile-enabled", regime.volumeProfileEnabled);
     setChecked("regime-retest-required", regime.requireRetest);
     setValue("regime-sma-period", regime.smaPeriod);
+    setValue("regime-swing-length", regime.swingLength);
     setValue("regime-flat-slope", regime.maxFlatSlopePct);
     setValue("regime-flat-range", regime.maxFlatRangePct);
     setValue("regime-min-atr", regime.minAtrRatio);
@@ -723,6 +724,7 @@
       volumeProfileEnabled: $("regime-profile-enabled").checked,
       requireRetest: $("regime-retest-required").checked,
       smaPeriod: readNumber("regime-sma-period"),
+      swingLength: readNumber("regime-swing-length"),
       maxFlatSlopePct: readNumber("regime-flat-slope"),
       maxFlatRangePct: readNumber("regime-flat-range"),
       minAtrRatio: readNumber("regime-min-atr"),
@@ -817,7 +819,7 @@
     "long-enabled", "short-enabled", "group-signals", "volume-period",
     "volume-multiplier", "rsi-length", "rsi-oversold", "rsi-overbought",
     "swing-length", "cooldown-seconds", "rsi-cluster-atr", "regime-enabled", "regime-flat-filter",
-    "regime-trend-enabled", "regime-reversal-enabled", "regime-structure-enabled", "regime-profile-enabled", "regime-retest-required", "regime-sma-period", "regime-flat-slope",
+    "regime-trend-enabled", "regime-reversal-enabled", "regime-structure-enabled", "regime-profile-enabled", "regime-retest-required", "regime-sma-period", "regime-swing-length", "regime-flat-slope",
     "regime-flat-range", "regime-min-atr", "regime-volume-ratio", "regime-rsi-long", "regime-rsi-short", "regime-profile-timeframe", "regime-profile-lookback", "regime-profile-bins", "regime-value-area", "regime-retest-lookback", "regime-retest-tolerance", "schedule-enabled",
     "schedule-timezone", "push-enabled", "telegram-enabled"
   ];
