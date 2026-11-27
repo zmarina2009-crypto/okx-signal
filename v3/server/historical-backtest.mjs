@@ -60,13 +60,13 @@ export function calculateInitialStop(bars, direction, entryPrice, config = {}) {
   return stop;
 }
 
-function simulatePosition({ bars, entryIndex, direction, entryPrice, stopPrice, config, regime }) {
+function simulatePosition({ bars, entryIndex, direction, entryPrice, stopPrice, config, regime, capital }) {
   const cfg = normalizeBacktestConfig(config);
   const sign = direction === "LONG" ? 1 : -1;
   const riskPerUnit = Math.abs(entryPrice - stopPrice);
   if (!(riskPerUnit > 0)) return null;
   const targetPrice = entryPrice + sign * riskPerUnit * cfg.rewardRisk;
-  const riskCapital = cfg.initialCapital;
+  const riskCapital = capital;
   const quantity = riskCapital * cfg.riskPercent / 100 / riskPerUnit;
   let breakEvenActive = false;
   const lastIndex = Math.min(bars.length - 1, entryIndex + cfg.maxBarsInTrade - 1);
@@ -216,14 +216,16 @@ export function runHistoricalBacktest({
     const stopPrice = calculateInitialStop(history, regime.direction, entryPrice, cfg);
     if (stopPrice == null) { rejected.invalidStop++; continue; }
 
+    const capital = cfg.initialCapital + trades.reduce((sum, item) => sum + item.netPnl, 0);
     const trade = simulatePosition({
-      bars: bars.slice(0, Math.min(bars.length, entryIndex + cfg.maxBarsInTrade)),
-      entryIndex: 0,
+      bars,
+      entryIndex,
       direction: regime.direction,
       entryPrice,
       stopPrice,
       config: cfg,
-      regime: regime.state
+      regime: regime.state,
+      capital
     });
     if (!trade) continue;
     trade.signalTs = bars[i].ts;
@@ -234,7 +236,7 @@ export function runHistoricalBacktest({
     trade.signalLabel = signal.label || signal.kind;
     trade.stopMode = cfg.stopMode;
     trades.push(trade);
-    blockedUntilIndex = entryIndex + trade.exitIndex;
+    blockedUntilIndex = trade.exitIndex;
     i = blockedUntilIndex;
   }
 
