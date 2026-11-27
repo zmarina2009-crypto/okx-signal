@@ -116,8 +116,7 @@ export async function fetchOkxHistoricalCandles(pairInput, timeframeInput, optio
     url.searchParams.set("instId", pair);
     url.searchParams.set("bar", toOkxBar(timeframe));
     url.searchParams.set("limit", String(Math.min(pageSize, limit - collected.size)));
-    if (pages === 0) url.searchParams.set("before", String(cursor));
-    else url.searchParams.set("after", String(cursor));
+    if (pages > 0) url.searchParams.set("after", String(cursor));
 
     let page = null;
     let lastError = null;
