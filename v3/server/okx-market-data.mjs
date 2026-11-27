@@ -115,8 +115,11 @@ export async function fetchOkxHistoricalCandles(pairInput, timeframeInput, optio
     const url = new URL(OKX_HISTORY_URL);
     url.searchParams.set("instId", pair);
     url.searchParams.set("bar", toOkxBar(timeframe));
-    url.searchParams.set("limit", String(Math.min(pageSize, limit - collected.size)));
-    if (pages > 0) url.searchParams.set("after", String(cursor));
+    const requestedPageSize = Math.min(pageSize, limit - collected.size);
+    url.searchParams.set("limit", String(requestedPageSize));
+    // OKX "after" requests candles strictly older than this timestamp.
+    // Apply it on the first page too, so custom endTime really bounds the dataset.
+    url.searchParams.set("after", String(cursor));
 
     let page = null;
     let lastError = null;
@@ -152,9 +155,52 @@ export async function fetchOkxHistoricalCandles(pairInput, timeframeInput, optio
     lastOldest = oldest;
     cursor = oldest;
     pages++;
-    if (page.length < pageSize) break;
+    if (page.length < requestedPageSize) break;
     await wait(120);
   }
 
   return [...collected.values()].sort((a, b) => a.ts - b.ts).slice(-limit);
+}
+
+
+const AUDIT_TIMEFRAME_MS = Object.freeze({
+  "1m":60_000,"3m":180_000,"5m":300_000,"15m":900_000,"30m":1_800_000,
+  "1h":3_600_000,"2h":7_200_000,"4h":14_400_000,"6h":21_600_000,
+  "12h":43_200_000,"1d":86_400_000,"1w":604_800_000
+});
+
+/**
+ * Audits a candle series for duplicate timestamps, missing intervals and
+ * whether the requested candle count was reached.
+ */
+export function auditCandleSeries(candles, timeframe, expectedCount = null) {
+  const tf = normalizeTimeframe(timeframe);
+  const intervalMs = AUDIT_TIMEFRAME_MS[tf];
+  if (!intervalMs) throw new RangeError("Unsupported audit timeframe: " + timeframe);
+  const timestamps = (Array.isArray(candles) ? candles : [])
+    .map(candle => Number(candle?.ts))
+    .filter(Number.isFinite)
+    .sort((a,b) => a-b);
+  let duplicateTimestamps = 0;
+  let missingCandles = 0;
+  let missingIntervals = 0;
+  for (let i=1;i<timestamps.length;i++) {
+    const delta = timestamps[i] - timestamps[i-1];
+    if (delta === 0) duplicateTimestamps++;
+    else if (delta > intervalMs) {
+      missingIntervals++;
+      missingCandles += Math.max(0, Math.round(delta / intervalMs) - 1);
+    }
+  }
+  const requestedCount = Number.isFinite(Number(expectedCount)) && Number(expectedCount) > 0
+    ? Math.floor(Number(expectedCount)) : null;
+  return {
+    loadedCandles:timestamps.length,
+    requestedCandles:requestedCount,
+    countReached:requestedCount == null ? null : timestamps.length >= requestedCount,
+    duplicateTimestamps,
+    missingIntervals,
+    missingCandles,
+    isContinuous:duplicateTimestamps === 0 && missingCandles === 0
+  };
 }
