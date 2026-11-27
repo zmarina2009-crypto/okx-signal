@@ -270,7 +270,7 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
   const waitingReason=structure?.kind==="CHOCH"?"CHoCH обнаружен — ожидаем ретест и подтверждение":
     structure?.kind==="BOS"?"BOS обнаружен — ожидаем ретест и подтверждение":
     !profile?.ready?"Ожидание данных Volume Profile старшего ТФ":"Нет подтверждённого BOS/CHoCH и ретеста";
-  return {state:"WAIT",direction:null,actionable:false,blockSignals:false,reasons:[waitingReason],metrics};
+  return {state:"WAIT",direction:null,actionable:false,blockSignals:true,reasons:[waitingReason],metrics};
 }
 
 export const DEFAULT_MARKET_REGIME_CONFIG = DEFAULTS;
