@@ -38,6 +38,9 @@ const backtestConfig = normalizeBacktestConfig({
   slippageRate:0.0002
 });
 
+const TF_MS = { "1m":60000,"3m":180000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"2h":7200000,"4h":14400000,"6h":21600000,"12h":43200000,"1d":86400000,"1w":604800000 };
+const profileBarsNeeded = Math.max(300, Math.ceil(args.maxCandles * (TF_MS[args.timeframe] || 60000) / (TF_MS[profileTimeframe] || 900000)) + 300);
+
 const reports = [];
 for (const pair of args.pairs) {
   const profileTimeframe = resolveProfileTimeframe(args.timeframe, regimeConfig.profileTimeframe);
@@ -47,7 +50,7 @@ for (const pair of args.pairs) {
     endTime:args.endTime
   });
   const higherTimeframeCandles = await fetchOkxHistoricalCandles(pair, profileTimeframe, {
-    maxCandles:Math.min(20_000, Math.ceil(args.maxCandles / 15) + 300),
+    maxCandles:Math.min(20_000, profileBarsNeeded),
     startTime:args.startTime,
     endTime:args.endTime
   });
