@@ -13,6 +13,8 @@ function readArgs(argv) {
     timeframe: values.timeframe || "1m",
     maxCandles: Math.max(300, Math.min(20_000, Number(values["max-candles"]) || 5_000)),
     stopMode: values["stop-mode"] === "atr" ? "atr" : "swing",
+    atrMultiplier: Number(values["atr-multiplier"]) || 1.5,
+    swingLookback: Number(values["swing-lookback"]) || 12,
     startTime: values.start ? Date.parse(values.start) : undefined,
     endTime: values.end ? Date.parse(values.end) : Date.now()
   };
@@ -31,6 +33,8 @@ const regimeConfig = normalizeMarketRegimeConfig({
 const scalpingConfig = normalizeConfig({ enabled:true, volumeRsiEnabled:true });
 const backtestConfig = normalizeBacktestConfig({
   stopMode:args.stopMode,
+  atrMultiplier:args.atrMultiplier,
+  swingLookback:args.swingLookback,
   riskPercent:0.5,
   rewardRisk:5,
   breakEvenAtR:1,
