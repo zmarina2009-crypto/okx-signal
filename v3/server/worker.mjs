@@ -4,7 +4,7 @@ import { createJsonStateStore } from "./json-state-store.mjs";
 import { createSupabaseStateStore } from "./supabase-state-store.mjs";
 import { evaluateScalpingBars, normalizePair, normalizeTimeframe } from "./scalping-engine.mjs";
 import { fetchOkxCandles } from "./okx-market-data.mjs";
-import { classifyMarketRegime } from "./market-regime.mjs";
+import { classifyMarketRegime, resolveProfileTimeframe } from "./market-regime.mjs";
 import { createDefaultWorkerConfig, getEnabledTargets, normalizeWorkerConfig } from "./worker-config.mjs";
 import { validatePushSubscription } from "./notification-delivery.mjs";
 import { flushPendingNotifications } from "./notification-outbox.mjs";
@@ -161,7 +161,22 @@ export async function runPollingCycle(options = {}) {
           state.config.scalping.swingLength * 2 + 3
         );
         const candles = await fetchOkxCandles(pair, tf, { limit: Math.min(300, limit) });
-        const regime = classifyMarketRegime(candles, state.config.marketRegime);
+        const regimeConfig = state.config.marketRegime;
+        let higherTimeframeBars = [];
+        if (regimeConfig.enabled && regimeConfig.volumeProfileEnabled) {
+          const profileTf = resolveProfileTimeframe(tf, regimeConfig.profileTimeframe);
+          try {
+            higherTimeframeBars = await fetchOkxCandles(pair, profileTf, {
+              limit: Math.min(300, regimeConfig.profileLookback + 20)
+            });
+          } catch (profileError) {
+            errors.push({ pair, tf, stage: "volume_profile", error: String(profileError?.message || profileError) });
+          }
+        }
+        const regime = classifyMarketRegime(candles, regimeConfig, {
+          higherTimeframeBars,
+          timeframe: tf
+        });
         state.marketRegimes[key] = {
           ...regime,
           pair,
