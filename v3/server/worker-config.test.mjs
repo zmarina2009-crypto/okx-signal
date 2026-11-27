@@ -73,3 +73,22 @@ test("legacy target configurations default to enabled and disabled targets can b
   });
   assert.equal(getEnabledTargets(reEnabled).length, 2);
 });
+
+test("market regime settings are saved with independent flat/trend/reversal switches", () => {
+  const config = normalizeWorkerConfig({
+    marketRegime: { enabled: true, flatFilterEnabled: false, trendEnabled: true, reversalEnabled: false, smaPeriod: 34 }
+  });
+  assert.equal(config.marketRegime.enabled, true);
+  assert.equal(config.marketRegime.flatFilterEnabled, false);
+  assert.equal(config.marketRegime.trendEnabled, true);
+  assert.equal(config.marketRegime.reversalEnabled, false);
+  assert.equal(config.marketRegime.smaPeriod, 34);
+});
+
+test("market regime flat filter is enabled by default for V3", () => {
+  const config = createDefaultWorkerConfig();
+  assert.equal(config.marketRegime.enabled, true);
+  assert.equal(config.marketRegime.flatFilterEnabled, true);
+  assert.equal(config.marketRegime.trendEnabled, true);
+  assert.equal(config.marketRegime.reversalEnabled, true);
+});
