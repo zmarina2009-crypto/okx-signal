@@ -189,6 +189,7 @@ function calculateVolumeProfile(rawBars, config, lowerBars, lowerTimeframe) {
   const lowerMs = TIMEFRAME_MS[lowerTimeframe] || 60000;
   const profileTf = resolveProfileTimeframe(lowerTimeframe, config.profileTimeframe);
   const profileMs = TIMEFRAME_MS[profileTf] || lowerMs;
+  if (profileMs <= lowerMs) return { ready:false, reason:"Таймфрейм Volume Profile должен быть старше торгового", timeframe:profileTf, candles:0 };
   // Exclude higher-timeframe candles that had not closed by the last lower-TF close.
   const cutoff = Number(lowerLast?.ts) + lowerMs;
   const closed = bars.filter(bar => bar.ts + profileMs <= cutoff);
@@ -216,7 +217,8 @@ function calculateVolumeProfile(rawBars, config, lowerBars, lowerTimeframe) {
   }
   return { ready:true, timeframe:profileTf || "auto", candles:sample.length, poc:min+(poc+0.5)*step,
     vah:min+(right+1)*step, val:min+left*step, valueAreaPct:config.valueAreaPct,
-    close:lowerLast?.c, position:lowerLast?.c>min+(right+1)*step?"ABOVE_VA":lowerLast?.c<min+left*step?"BELOW_VA":"IN_VALUE_AREA" };
+    close:lowerLast?.c, pocSide:lowerLast?.c>=min+(poc+0.5)*step?"ABOVE_POC":"BELOW_POC",
+    position:lowerLast?.c>min+(right+1)*step?"ABOVE_VA":lowerLast?.c<min+left*step?"BELOW_VA":"IN_VALUE_AREA" };
 }
 
 export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
@@ -251,8 +253,8 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
     lowSlope?"Наклон SMA недостаточный":null,narrowRange?"Узкий диапазон цены":null,compressed&&nearSma?"ATR сжат и цена около SMA":null
   ].filter(Boolean),metrics};
 
-  const profileLong=!config.volumeProfileEnabled||(profile?.ready===true&&profile.position!=="BELOW_VA");
-  const profileShort=!config.volumeProfileEnabled||(profile?.ready===true&&profile.position!=="ABOVE_VA");
+  const profileLong=!config.volumeProfileEnabled||(profile?.ready===true&&profile.pocSide==="ABOVE_POC");
+  const profileShort=!config.volumeProfileEnabled||(profile?.ready===true&&profile.pocSide==="BELOW_POC");
   const trendDirection=last.c>currentSma&&slopePct>config.maxFlatSlopePct?"LONG":last.c<currentSma&&slopePct< -config.maxFlatSlopePct?"SHORT":null;
   const structureConfirmed=structure?.kind==="BOS"&&structure.retest===true;
   const reversalConfirmed=structure?.kind==="CHOCH"&&structure.retest===true;
