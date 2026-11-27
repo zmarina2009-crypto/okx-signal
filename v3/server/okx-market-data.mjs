@@ -107,7 +107,9 @@ export async function fetchOkxHistoricalCandles(pairInput, timeframeInput, optio
   if (typeof fetchImpl !== "function") throw new Error("Fetch API is not available in this Node.js runtime.");
 
   const collected = new Map();
-  let cursor = endTime;
+  // OKX `after` is exclusive. Add 1 ms on the first page so a candle
+  // whose timestamp equals the requested endTime remains inside the range.
+  let cursor = endTime + 1;
   let pages = 0;
   let lastOldest = Infinity;
 
