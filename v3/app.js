@@ -10,7 +10,8 @@
     health: null,
     vapidPublicKey: null,
     serviceWorkerRegistration: null,
-    history: { signals: [], deliveries: [], totalSignals: 0, totalDeliveries: 0 }
+    history: { signals: [], deliveries: [], totalSignals: 0, totalDeliveries: 0 },
+    regimes: []
   };
 
   const SCALPING_DEFAULTS = {
@@ -30,6 +31,14 @@
     cooldownSeconds: 60,
     rsiClusterAtrMultiplier: 1,
     groupSignals: true
+  };
+
+
+  const MARKET_REGIME_DEFAULTS = {
+    enabled: true, flatFilterEnabled: true, trendEnabled: true, reversalEnabled: true,
+    smaPeriod: 21, slopeLookback: 5, atrPeriod: 14, volumePeriod: 20,
+    maxFlatSlopePct: 0.035, maxFlatRangePct: 0.45, minAtrRatio: 0.65,
+    minVolumeRatio: 1.15, reversalRsiLongMax: 45, reversalRsiShortMin: 55, swingLength: 3
   };
 
   const SCHEDULE_DEFAULTS = {
@@ -194,6 +203,53 @@
       $("history-updated").textContent = "Обновлено: " + new Date().toLocaleTimeString("ru-RU");
     } catch (error) {
       $("history-updated").textContent = "Ошибка загрузки: " + error.message;
+    } finally {
+      button.disabled = !state.connected;
+    }
+  }
+
+
+  function renderRegimes() {
+    const list = $("regime-list");
+    const items = Array.isArray(state.regimes) ? state.regimes : [];
+    $("regime-count").textContent = items.length ? items.length + " оценок" : "Нет данных";
+    list.replaceChildren();
+    if (!items.length) {
+      list.append(createElement("div", "empty-state", "Состояния ещё не получены. Включи монитор и дождись цикла опроса."));
+      return;
+    }
+    const labels = { TREND: "Продолжение тренда", REVERSAL: "Возможный разворот", FLAT: "Флет · вход запрещён", WAIT: "Ожидание", DISABLED: "Анализ отключён" };
+    items.forEach(item => {
+      const card = createElement("article", "journal-card");
+      const top = createElement("div", "journal-card-top");
+      const identity = createElement("div", "journal-identity");
+      identity.append(createElement("strong", "journal-pair", item.pair || "—"), createElement("span", "tf-chip", item.tf || "—"));
+      const status = createElement("span", "delivery-status " + (item.state === "FLAT" ? "delivery-failed" : item.state === "TREND" || item.state === "REVERSAL" ? "delivery-sent" : "delivery-pending"), labels[item.state] || item.state);
+      top.append(identity, status);
+      const metrics = item.metrics || {};
+      const details = createElement("div", "journal-details");
+      details.append(
+        createElement("span", "", "Направление: " + (item.direction || "—")),
+        createElement("span", "", "SMA: " + (Number.isFinite(Number(metrics.sma)) ? Number(metrics.sma).toPrecision(7) : "—")),
+        createElement("span", "", "ATR: " + (Number.isFinite(Number(metrics.atrPercent)) ? Number(metrics.atrPercent).toFixed(3) + "%" : "—")),
+        createElement("span", "", "Объём: " + (Number.isFinite(Number(metrics.volumeRatio)) ? Number(metrics.volumeRatio).toFixed(2) + "×" : "—"))
+      );
+      const reasons = createElement("p", "journal-message", (item.reasons || []).join(" · ") || "Ожидается подтверждение.");
+      card.append(top, details, reasons);
+      list.append(card);
+    });
+  }
+
+  async function refreshRegimes() {
+    if (!state.connected) return;
+    const button = $("refresh-regimes");
+    button.disabled = true;
+    try {
+      const result = await request("/regimes", { method: "GET" });
+      state.regimes = Array.isArray(result.regimes) ? result.regimes : [];
+      renderRegimes();
+    } catch (error) {
+      $("regime-list").replaceChildren(createElement("div", "empty-state", "Не удалось загрузить состояния: " + error.message));
     } finally {
       button.disabled = !state.connected;
     }
@@ -488,6 +544,21 @@
     setValue("cooldown-seconds", scalping.cooldownSeconds);
     setValue("rsi-cluster-atr", scalping.rsiClusterAtrMultiplier);
 
+
+    const regime = { ...MARKET_REGIME_DEFAULTS, ...(state.config.marketRegime || {}) };
+    setChecked("regime-enabled", regime.enabled);
+    setChecked("regime-flat-filter", regime.flatFilterEnabled);
+    setChecked("regime-trend-enabled", regime.trendEnabled);
+    setChecked("regime-reversal-enabled", regime.reversalEnabled);
+    setValue("regime-sma-period", regime.smaPeriod);
+    setValue("regime-flat-slope", regime.maxFlatSlopePct);
+    setValue("regime-flat-range", regime.maxFlatRangePct);
+    setValue("regime-min-atr", regime.minAtrRatio);
+    setValue("regime-volume-ratio", regime.minVolumeRatio);
+    setValue("regime-rsi-long", regime.reversalRsiLongMax);
+    setValue("regime-rsi-short", regime.reversalRsiShortMin);
+    renderRegimes();
+
     setChecked("schedule-enabled", schedule.enabled);
     setValue("schedule-timezone", schedule.timezone);
     document.querySelectorAll("[data-weekday]").forEach(input => {
@@ -532,6 +603,7 @@
       state.vapidPublicKey = result.vapidPublicKey || null;
       state.config.targets = state.config.targets.map(target => ({ ...target, enabled: target.enabled !== false }));
       state.config.scalping = { ...SCALPING_DEFAULTS, ...(state.config.scalping || {}) };
+      state.config.marketRegime = { ...MARKET_REGIME_DEFAULTS, ...(state.config.marketRegime || {}) };
       state.config.notificationSchedule = {
         ...SCHEDULE_DEFAULTS,
         ...(state.config.notificationSchedule || {}),
@@ -559,7 +631,7 @@
       setConnectionStatus("Подключён", "ok");
       setSaveStatus("Настройки загружены. Изменения ещё не вносились.");
       $("refresh-history").disabled = false;
-      await Promise.all([refreshHistory(), refreshPushDeviceStatus()]);
+      await Promise.all([refreshHistory(), refreshPushDeviceStatus(), refreshRegimes()]);
     } catch (error) {
       state.connected = false;
       setConnectionStatus("Ошибка подключения", "error");
@@ -621,6 +693,24 @@
     };
   }
 
+
+  function collectMarketRegimeSettings() {
+    return {
+      ...state.config.marketRegime,
+      enabled: $("regime-enabled").checked,
+      flatFilterEnabled: $("regime-flat-filter").checked,
+      trendEnabled: $("regime-trend-enabled").checked,
+      reversalEnabled: $("regime-reversal-enabled").checked,
+      smaPeriod: readNumber("regime-sma-period"),
+      maxFlatSlopePct: readNumber("regime-flat-slope"),
+      maxFlatRangePct: readNumber("regime-flat-range"),
+      minAtrRatio: readNumber("regime-min-atr"),
+      minVolumeRatio: readNumber("regime-volume-ratio"),
+      reversalRsiLongMax: readNumber("regime-rsi-long"),
+      reversalRsiShortMin: readNumber("regime-rsi-short")
+    };
+  }
+
   function collectScheduleSettings() {
     const timezone = $("schedule-timezone").value.trim();
     if (!timezone) throw new Error("Укажи часовой пояс расписания, например Europe/Amsterdam.");
@@ -649,6 +739,7 @@
     try {
       state.config.enabled = $("monitor-enabled").checked;
       state.config.scalping = collectScalpingSettings();
+      state.config.marketRegime = collectMarketRegimeSettings();
       state.config.notificationSchedule = collectScheduleSettings();
       const payload = await request("/config", {
         method: "PUT",
@@ -685,6 +776,7 @@
   $("add-target").addEventListener("click", addTarget);
   $("save-button").addEventListener("click", save);
   $("refresh-history").addEventListener("click", refreshHistory);
+  $("refresh-regimes").addEventListener("click", refreshRegimes);
   $("history-filter").addEventListener("change", renderHistory);
   $("push-subscribe").addEventListener("click", subscribePushOnThisDevice);
   $("push-unsubscribe").addEventListener("click", unsubscribePushOnThisDevice);
@@ -697,7 +789,9 @@
     "volume-rsi-enabled", "bos-enabled", "bos-alerts", "require-bos",
     "long-enabled", "short-enabled", "group-signals", "volume-period",
     "volume-multiplier", "rsi-length", "rsi-oversold", "rsi-overbought",
-    "swing-length", "cooldown-seconds", "rsi-cluster-atr", "schedule-enabled",
+    "swing-length", "cooldown-seconds", "rsi-cluster-atr", "regime-enabled", "regime-flat-filter",
+    "regime-trend-enabled", "regime-reversal-enabled", "regime-sma-period", "regime-flat-slope",
+    "regime-flat-range", "regime-min-atr", "regime-volume-ratio", "regime-rsi-long", "regime-rsi-short", "schedule-enabled",
     "schedule-timezone", "push-enabled", "telegram-enabled"
   ];
   $("bos-enabled").addEventListener("change", () => {
