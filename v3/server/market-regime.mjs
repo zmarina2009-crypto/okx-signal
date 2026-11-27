@@ -256,18 +256,17 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
   const profileLong=!config.volumeProfileEnabled||(profile?.ready===true&&profile.pocSide==="ABOVE_POC");
   const profileShort=!config.volumeProfileEnabled||(profile?.ready===true&&profile.pocSide==="BELOW_POC");
   const trendDirection=last.c>currentSma&&slopePct>config.maxFlatSlopePct?"LONG":last.c<currentSma&&slopePct< -config.maxFlatSlopePct?"SHORT":null;
-  const structureConfirmed=structure?.kind==="BOS"&&structure.retest===true;
-  const reversalConfirmed=structure?.kind==="CHOCH"&&structure.retest===true;
-  const canActOnRetest=!config.requireRetest||(structure?.retest===true);
+  const structureConfirmed=structure?.kind==="BOS"&&(!config.requireRetest||structure.retest===true);
+  const reversalConfirmed=structure?.kind==="CHOCH"&&(!config.requireRetest||structure.retest===true);
   const reversalDirection=reversalConfirmed&&volumeConfirmed&&
     ((structure.direction==="LONG"&&currentRsi<=config.reversalRsiLongMax&&profileLong)||(structure.direction==="SHORT"&&currentRsi>=config.reversalRsiShortMin&&profileShort))
       ?structure.direction:null;
 
   if(config.reversalEnabled&&reversalDirection) return {state:"REVERSAL",direction:reversalDirection,actionable:true,blockSignals:false,
-    reasons:["CHoCH: подтверждена смена рыночной структуры","Ретест уровня структуры подтверждён","Объём и RSI подтверждают разворот",profile?.ready?"Volume Profile старшего ТФ учтён":"Volume Profile пока недоступен"],metrics};
+    reasons:["CHoCH: подтверждена смена рыночной структуры",config.requireRetest?"Ретест уровня структуры подтверждён":"Ретест отключён настройкой","Объём и RSI подтверждают разворот",profile?.ready?"Volume Profile старшего ТФ учтён":"Volume Profile отключён"],metrics};
   if(config.trendEnabled&&trendDirection&&structureConfirmed&&structure.direction===trendDirection&&volumeConfirmed&&canActOnRetest&&
     (trendDirection==="LONG"?profileLong:profileShort)) return {state:"TREND",direction:trendDirection,actionable:true,blockSignals:false,
-    reasons:["BOS подтверждает продолжение структуры","Ретест уровня пробоя подтверждён","Цена и SMA21 направлены одинаково","Объём и Volume Profile поддерживают направление"],metrics};
+    reasons:["BOS подтверждает продолжение структуры",config.requireRetest?"Ретест уровня пробоя подтверждён":"Ретест отключён настройкой","Цена и SMA21 направлены одинаково","Объём и Volume Profile поддерживают направление"],metrics};
 
   const waitingReason=structure?.kind==="CHOCH"?"CHoCH обнаружен — ожидаем ретест и подтверждение":
     structure?.kind==="BOS"?"BOS обнаружен — ожидаем ретест и подтверждение":
