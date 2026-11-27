@@ -21,7 +21,7 @@ test("historical OKX loader pages backward and returns chronological confirmed c
     fetchImpl:fakeFetch, maxCandles:200, pageSize:100, attempts:1, endTime:250
   });
   assert.equal(urls.length, 2);
-  assert.equal(urls[0].searchParams.get("after"), "250");
+  assert.equal(urls[0].searchParams.get("after"), "251");
   assert.equal(urls[1].searchParams.get("after"), "101");
   assert.equal(candles.length, 200);
   assert.equal(candles[0].ts, 1);
@@ -41,7 +41,7 @@ test("historical loader respects a custom endTime on the first page", async () =
   const candles = await fetchOkxHistoricalCandles("NEAR", "1m", {
     fetchImpl:fakeFetch, maxCandles:20, pageSize:20, attempts:1, endTime:250
   });
-  assert.equal(requestedUrl.searchParams.get("after"), "250");
+  assert.equal(requestedUrl.searchParams.get("after"), "251");
   assert.deepEqual(candles.map(candle => candle.ts), [180, 240]);
 });
 
