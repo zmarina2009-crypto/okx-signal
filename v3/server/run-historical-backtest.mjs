@@ -1,4 +1,4 @@
-import { fetchOkxHistoricalCandles } from "./okx-market-data.mjs";
+import { fetchOkxHistoricalCandles, auditCandleSeries } from "./okx-market-data.mjs";
 import { runHistoricalBacktest, normalizeBacktestConfig } from "./historical-backtest.mjs";
 import { normalizeConfig } from "./scalping-engine.mjs";
 import { normalizeMarketRegimeConfig, resolveProfileTimeframe } from "./market-regime.mjs";
@@ -59,6 +59,10 @@ for (const pair of args.pairs) {
     startTime:args.startTime ? args.startTime - profileWarmupMs : undefined,
     endTime:args.endTime
   });
+  const dataAudit = {
+    primary: auditCandleSeries(candles, args.timeframe, args.maxCandles),
+    higherTimeframe: auditCandleSeries(higherTimeframeCandles, profileTimeframe)
+  };
   const report = runHistoricalBacktest({
     pair,
     timeframe:args.timeframe,
@@ -68,6 +72,7 @@ for (const pair of args.pairs) {
     marketRegimeConfig:regimeConfig,
     backtestConfig
   });
+  report.dataAudit = dataAudit;
   reports.push(report);
   console.log(JSON.stringify(report, null, 2));
 }
