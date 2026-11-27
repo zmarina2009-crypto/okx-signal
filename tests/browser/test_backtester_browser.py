@@ -1,0 +1,274 @@
+import json
+import os
+import re
+import unittest
+from pathlib import Path
+from urllib.parse import urlparse, parse_qs
+
+from playwright.sync_api import sync_playwright
+
+
+BASE_URL = os.environ.get("PLAYWRIGHT_TEST_BASE_URL", "http://127.0.0.1:4173")
+OKX_HISTORY_URL = "https://www.okx.com/api/v5/market/history-candles"
+HOLDOUT_PAIRS = (
+    "ZEC-USDT-SWAP",
+    "NEAR-USDT-SWAP",
+    "BTC-USDT-SWAP",
+    "ETH-USDT-SWAP",
+    "SOL-USDT-SWAP",
+    "XRP-USDT-SWAP",
+    "DOGE-USDT-SWAP",
+)
+HOLDOUT_WINDOWS = ("older", "middle-2", "newer")
+
+
+class BacktesterBrowserSmokeTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.playwright = sync_playwright().start()
+        cls.browser = cls.playwright.chromium.launch()
+        cls.context = cls.browser.new_context(viewport={"width": 1440, "height": 1000})
+        cls.page = cls.context.new_page()
+        cls.page_errors = []
+        cls.okx_responses = []
+        cls.period_comparison = ""
+        cls.mtf_comparison = ""
+        cls.mtf_entry_comparison = ""
+        cls.mtf_holdout_comparison = ""
+        cls.mtf_holdout_audit = ""
+        cls.page.on("pageerror", lambda error: cls.page_errors.append(str(error)))
+
+        def record_okx_response(response):
+            if not response.url.startswith(OKX_HISTORY_URL):
+                return
+            parsed = urlparse(response.url)
+            params = parse_qs(parsed.query)
+            item = {
+                "status": response.status,
+                "bar": params.get("bar", [""])[0],
+                "instId": params.get("instId", [""])[0],
+                "count": 0,
+                "code": None,
+                "error": None,
+            }
+            try:
+                payload = response.json()
+                item["code"] = payload.get("code")
+                item["count"] = len(payload.get("data") or [])
+                item["error"] = payload.get("msg") if payload.get("code") != "0" else None
+            except Exception as exc:
+                item["error"] = str(exc)
+            cls.okx_responses.append(item)
+
+        cls.page.on("response", record_okx_response)
+
+    @classmethod
+    def tearDownClass(cls):
+        Path("test-results").mkdir(exist_ok=True)
+        if hasattr(cls, "page"):
+            try:
+                cls.page.screenshot(path="test-results/backtester-final.png", full_page=True)
+            except Exception:
+                pass
+        Path("test-results").mkdir(exist_ok=True)
+        Path("test-results/browser-report.json").write_text(
+            json.dumps({
+                "pageErrors": cls.page_errors,
+                "okxResponses": cls.okx_responses,
+                "periodComparison": cls.period_comparison,
+                "mtfComparison": cls.mtf_comparison,
+                "mtfEntryComparison": cls.mtf_entry_comparison,
+                "mtfHoldoutComparison": cls.mtf_holdout_comparison,
+                "mtfHoldoutAudit": cls.mtf_holdout_audit,
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        cls.context.close()
+        cls.browser.close()
+        cls.playwright.stop()
+
+    def wait_for_action(self, button_id, expected_status, timeout=240_000):
+        button = self.page.locator(f"#{button_id}")
+        status_locator = self.page.locator("#btStatus")
+        previous_status = status_locator.inner_text().strip()
+        button.click()
+        self.page.wait_for_function(
+            """({id, previous, expected}) => {
+                const button = document.getElementById(id);
+                const status = (document.getElementById('btStatus')?.textContent || '').trim();
+                return !!button && !button.disabled && status !== previous && status.includes(expected);
+            }""",
+            arg={"id": button_id, "previous": previous_status, "expected": expected_status},
+            timeout=timeout,
+        )
+        status = status_locator.inner_text().strip()
+        self.assertIn(expected_status, status, f"{button_id} did not finish successfully: {status}")
+        self.assertFalse(status.startswith("Ошибка"), f"{button_id} failed in browser: {status}")
+        return status
+
+    def test_backtester_and_comparison_buttons_against_okx_history(self):
+        response = self.page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60_000)
+        self.assertIsNotNone(response, "App navigation returned no response")
+        self.assertLess(response.status, 400, f"App page HTTP error: {response.status}")
+        self.page.locator("#smaTester").wait_for(state="attached", timeout=30_000)
+
+        self.page.locator("#btPair").select_option("ZEC-USDT-SWAP")
+        self.page.locator("#btDays").select_option("1")
+        self.assertEqual(self.page.locator("#btVpFilter").input_value(), "poc")
+        self.assertEqual(self.page.locator("#btCapital").input_value(), "1000")
+
+        main_status = self.wait_for_action("btRun", "Готово:")
+        self.assertIn("ZEC-USDT-SWAP", main_status)
+        self.assertRegex(main_status, r"\d+ (?:закрытых )?свечей 1m")
+        self.assertRegex(main_status, r"\d+ (?:закрытых )?свечей 15m")
+        self.assertGreater(
+            self.page.locator("#btResults .btmetric").count(), 5,
+            "The main backtest should render its metrics.",
+        )
+        main_text = self.page.locator("#btResults").inner_text()
+        self.assertIn("Закрытых сделок", main_text)
+        self.assertIn("VP-фильтр", main_text)
+
+        comparisons = (
+            ("btCompareEntry", "Сравнение входов завершено", "btCompareEntryResults"),
+            ("btCompareExit", "Сравнение выходов завершено", "btCompareExitResults"),
+            ("btCompareTrail", "Сравнение 5R и ATR-трейлинга завершено", "btCompareTrailResults"),
+            ("btComparePhase", "Сравнение завершено на одном наборе", "btComparePhaseResults"),
+            ("btCompareAdaptive", "Адаптивное сравнение завершено", "btCompareAdaptiveResults"),
+            ("btCompare", "Сравнение VP завершено", "btCompareResults"),
+            ("btCompareMtf", "MTF-тест завершён", "btCompareMtfResults"),
+        )
+        for button_id, expected_status, result_id in comparisons:
+            with self.subTest(button=button_id):
+                status = self.wait_for_action(button_id, expected_status)
+                self.assertRegex(status, r"(?:\d+ закрытых (?:минутных )?свеч|\d+ свечей 1m)")
+                if button_id in ("btCompare", "btCompareMtf"):
+                    self.assertRegex(status, r"\d+ (?:закрытых )?свечей 15m")
+                result = self.page.locator(f"#{result_id}")
+                self.assertTrue(result.inner_text().strip(), f"{button_id} returned no visible comparison table")
+                if button_id == "btCompareMtf":
+                    self.assertEqual(result.locator('tr[data-scenario="continuation"]').count(), 1)
+                    self.assertEqual(result.locator('tr[data-scenario="reversal"]').count(), 1)
+
+        period_status = self.wait_for_action(
+            "btComparePeriod",
+            "Сравнение ZEC/NEAR за 7 и 14 дней завершено",
+            timeout=480_000,
+        )
+        self.assertIn("четыре сценария", period_status)
+        period_table = self.page.locator("#btComparePeriodResults table")
+        self.assertTrue(period_table.is_visible(), "The 7d/14d comparison table should be visible")
+        expected_cases = (
+            "ZEC-USDT-SWAP-7",
+            "ZEC-USDT-SWAP-14",
+            "NEAR-USDT-SWAP-7",
+            "NEAR-USDT-SWAP-14",
+        )
+        for case in expected_cases:
+            row = self.page.locator(f'#btComparePeriodResults tr[data-case="{case}"]')
+            self.assertEqual(row.count(), 1, f"Missing comparison row for {case}")
+            self.assertGreater(len(row.locator("td").all()), 10, f"Incomplete result row for {case}")
+        self.__class__.period_comparison = period_table.inner_text()
+        print("\\nFOUR-WAY ZEC / NEAR 7D / 14D COMPARISON\\n" + self.period_comparison)
+
+        mtf_status = self.wait_for_action(
+            "btCompareMtfPeriod",
+            "Сравнение MTF за 7 и 14 дней завершено",
+            timeout=900_000,
+        )
+        self.assertIn("четыре независимых прогона", mtf_status)
+        mtf_tables = self.page.locator("#btCompareMtfPeriodResults table")
+        self.assertEqual(mtf_tables.count(), 2, "The MTF comparison should render both performance and cost tables")
+        mtf_table = mtf_tables.first
+        self.assertTrue(mtf_table.is_visible(), "The primary MTF comparison table should be visible")
+        mtf_cases = (
+            "ZEC-USDT-SWAP-7",
+            "ZEC-USDT-SWAP-14",
+            "NEAR-USDT-SWAP-7",
+            "NEAR-USDT-SWAP-14",
+        )
+        for case in mtf_cases:
+            row = self.page.locator(f'#btCompareMtfPeriodResults tr[data-case="{case}"]')
+            self.assertEqual(row.count(), 1, f"Missing MTF comparison row for {case}")
+            self.assertGreaterEqual(len(row.locator("td").all()), 19, f"Incomplete MTF result row for {case}")
+        self.__class__.mtf_comparison = mtf_table.inner_text()
+        print("\\nFOUR-WAY MTF CONTINUATION / REVERSAL COMPARISON\\n" + self.mtf_comparison)
+
+        entry_table = self.page.locator("#btCompareMtfEntryResults table#btMtfEntryComparison")
+        self.assertEqual(entry_table.count(), 1, "The three-variant MTF entry table should render")
+        entry_rows = entry_table.locator("tbody tr")
+        self.assertEqual(entry_rows.count(), 24, "Four datasets × three confirmations × two scenarios should produce 24 rows")
+        for variant in ("previous", "structure2", "structure2-volume"):
+            variant_rows = entry_table.locator(f'tr[data-variant="{variant}"]')
+            self.assertEqual(variant_rows.count(), 8, f"Expected 8 rows for MTF confirmation {variant}")
+            for scenario in ("continuation", "reversal"):
+                scenario_rows = entry_table.locator(
+                    f'tr[data-variant="{variant}"][data-scenario="{scenario}"]'
+                )
+                self.assertEqual(scenario_rows.count(), 4, f"Expected one {scenario} row for each pair/period for {variant}")
+        for case in mtf_cases:
+            case_rows = entry_table.locator(f'tr[data-case="{case}"]')
+            self.assertEqual(case_rows.count(), 6, f"Expected 3 confirmation modes × 2 scenarios for {case}")
+            self.assertTrue(all(len(row.locator("td").all()) == 11 for row in case_rows.all()))
+        self.__class__.mtf_entry_comparison = entry_table.inner_text()
+        print("\\nMTF ENTRY CONFIRMATION VARIANTS\\n" + self.mtf_entry_comparison)
+
+        holdout_status = self.wait_for_action(
+            "btCompareMtfHoldout",
+            "три неперекрывающихся 14-дневных окна",
+            timeout=1_200_000,
+        )
+        self.assertIn("ZEC и NEAR + BTC, ETH, SOL, XRP и DOGE", holdout_status)
+        self.assertIn("три неперекрывающихся 14-дневных окна", holdout_status)
+        self.assertIn("последние 49 суток исключены", holdout_status)
+        holdout_root = self.page.locator("#btCompareMtfHoldoutResults")
+        audit_table = holdout_root.locator("table#btMtfHoldoutAudit")
+        result_table = holdout_root.locator("table#btMtfHoldoutComparison")
+        self.assertEqual(audit_table.count(), 1, "The holdout data-quality audit table should render")
+        self.assertEqual(result_table.count(), 1, "The non-overlapping holdout comparison should render")
+        audit_rows = audit_table.locator("tbody tr")
+        self.assertEqual(audit_rows.count(), len(HOLDOUT_PAIRS) * len(HOLDOUT_WINDOWS), "7 instruments × 3 disjoint periods should produce 21 audit rows")
+        for pair in HOLDOUT_PAIRS:
+            for window in HOLDOUT_WINDOWS:
+                case = f"{pair}-{window}"
+                audit_row = audit_table.locator(f'tr[data-case="{case}"]')
+                self.assertEqual(audit_row.count(), 1, f"Missing data audit for {case}")
+                cells = audit_row.locator("td").all()
+                self.assertEqual(len(cells), 8, f"Incomplete coverage audit for {case}")
+                self.assertIn("100", cells[5].inner_text(), f"Expected complete 1m coverage for {case}")
+                self.assertEqual(cells[4].inner_text().strip(), "0", f"Unexpected 1m gaps in {case}")
+
+        holdout_rows = result_table.locator("tbody tr")
+        self.assertEqual(holdout_rows.count(), len(HOLDOUT_PAIRS) * len(HOLDOUT_WINDOWS) * 3 * 2, "7 pairs × 3 windows × 3 entry modes × 2 scenarios must produce 126 rows")
+        for pair in HOLDOUT_PAIRS:
+            for window in HOLDOUT_WINDOWS:
+                case = f"{pair}-{window}"
+                case_rows = result_table.locator(f'tr[data-case="{case}"]')
+                self.assertEqual(case_rows.count(), 6, f"Expected 3 entry modes × 2 scenarios for {case}")
+                for variant in ("previous", "structure2", "structure2-volume"):
+                    for scenario in ("continuation", "reversal"):
+                        matching = result_table.locator(
+                            f'tr[data-case="{case}"][data-variant="{variant}"][data-scenario="{scenario}"]'
+                        )
+                        self.assertEqual(matching.count(), 1, f"Missing {variant}/{scenario} row for {case}")
+        self.__class__.mtf_holdout_audit = audit_table.inner_text()
+        self.__class__.mtf_holdout_comparison = result_table.inner_text()
+        print("\\nNON-OVERLAPPING MTF HOLDOUT AUDIT\\n" + self.mtf_holdout_audit)
+        print("\\nNON-OVERLAPPING MTF HOLDOUT RESULTS\\n" + self.mtf_holdout_comparison)
+
+        self.assertEqual(self.page_errors, [], f"Uncaught browser errors: {self.page_errors}")
+        for pair in HOLDOUT_PAIRS:
+            pair_responses = [
+                r for r in self.okx_responses
+                if r["instId"] == pair and r["status"] == 200 and r["code"] == "0" and r["count"] > 0
+            ]
+            self.assertTrue(any(r["bar"] == "1m" for r in pair_responses), f"No successful {pair} 1m history response")
+            self.assertTrue(any(r["bar"] == "15m" for r in pair_responses), f"No successful {pair} 15m history response")
+        self.assertFalse(
+            [r for r in self.okx_responses if r["instId"] in HOLDOUT_PAIRS and r["error"]],
+            f"OKX history API errors: {self.okx_responses}",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
