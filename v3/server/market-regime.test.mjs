@@ -53,8 +53,14 @@ test("disabled module never blocks signals", () => {
   assert.equal(result.blockSignals, undefined);
 });
 
-test("rejects overlapping reversal RSI thresholds", () => {
-  assert.throws(() => normalizeMarketRegimeConfig({ reversalRsiLongMax: 60, reversalRsiShortMin: 55 }), /below SHORT/);
+test("reversal RSI thresholds are clamped to non-overlapping safe ranges", () => {
+  const config = normalizeMarketRegimeConfig({
+    reversalRsiLongMax: 60,
+    reversalRsiShortMin: 55
+  });
+  assert.equal(config.reversalRsiLongMax, 49);
+  assert.equal(config.reversalRsiShortMin, 55);
+  assert.ok(config.reversalRsiLongMax < config.reversalRsiShortMin);
 });
 
 test("automatic profile timeframe selects a higher timeframe for each scalping interval", () => {
