@@ -38,7 +38,10 @@
     enabled: true, flatFilterEnabled: true, trendEnabled: true, reversalEnabled: true,
     smaPeriod: 21, slopeLookback: 5, atrPeriod: 14, volumePeriod: 20,
     maxFlatSlopePct: 0.035, maxFlatRangePct: 0.45, minAtrRatio: 0.65,
-    minVolumeRatio: 1.15, reversalRsiLongMax: 45, reversalRsiShortMin: 55, swingLength: 3
+    minVolumeRatio: 1.15, reversalRsiLongMax: 45, reversalRsiShortMin: 55, swingLength: 3,
+    marketStructureEnabled: true, volumeProfileEnabled: true, profileTimeframe: "auto",
+    profileLookback: 100, profileBins: 32, valueAreaPct: 70, requireRetest: true,
+    retestLookback: 8, retestToleranceAtr: 0.25
   };
 
   const SCHEDULE_DEFAULTS = {
@@ -550,6 +553,9 @@
     setChecked("regime-flat-filter", regime.flatFilterEnabled);
     setChecked("regime-trend-enabled", regime.trendEnabled);
     setChecked("regime-reversal-enabled", regime.reversalEnabled);
+    setChecked("regime-structure-enabled", regime.marketStructureEnabled);
+    setChecked("regime-profile-enabled", regime.volumeProfileEnabled);
+    setChecked("regime-retest-required", regime.requireRetest);
     setValue("regime-sma-period", regime.smaPeriod);
     setValue("regime-flat-slope", regime.maxFlatSlopePct);
     setValue("regime-flat-range", regime.maxFlatRangePct);
@@ -557,6 +563,12 @@
     setValue("regime-volume-ratio", regime.minVolumeRatio);
     setValue("regime-rsi-long", regime.reversalRsiLongMax);
     setValue("regime-rsi-short", regime.reversalRsiShortMin);
+    setValue("regime-profile-timeframe", regime.profileTimeframe);
+    setValue("regime-profile-lookback", regime.profileLookback);
+    setValue("regime-profile-bins", regime.profileBins);
+    setValue("regime-value-area", regime.valueAreaPct);
+    setValue("regime-retest-lookback", regime.retestLookback);
+    setValue("regime-retest-tolerance", regime.retestToleranceAtr);
     renderRegimes();
 
     setChecked("schedule-enabled", schedule.enabled);
@@ -701,13 +713,22 @@
       flatFilterEnabled: $("regime-flat-filter").checked,
       trendEnabled: $("regime-trend-enabled").checked,
       reversalEnabled: $("regime-reversal-enabled").checked,
+      marketStructureEnabled: $("regime-structure-enabled").checked,
+      volumeProfileEnabled: $("regime-profile-enabled").checked,
+      requireRetest: $("regime-retest-required").checked,
       smaPeriod: readNumber("regime-sma-period"),
       maxFlatSlopePct: readNumber("regime-flat-slope"),
       maxFlatRangePct: readNumber("regime-flat-range"),
       minAtrRatio: readNumber("regime-min-atr"),
       minVolumeRatio: readNumber("regime-volume-ratio"),
       reversalRsiLongMax: readNumber("regime-rsi-long"),
-      reversalRsiShortMin: readNumber("regime-rsi-short")
+      reversalRsiShortMin: readNumber("regime-rsi-short"),
+      profileTimeframe: $("regime-profile-timeframe").value,
+      profileLookback: readNumber("regime-profile-lookback"),
+      profileBins: readNumber("regime-profile-bins"),
+      valueAreaPct: readNumber("regime-value-area"),
+      retestLookback: readNumber("regime-retest-lookback"),
+      retestToleranceAtr: readNumber("regime-retest-tolerance")
     };
   }
 
@@ -790,8 +811,8 @@
     "long-enabled", "short-enabled", "group-signals", "volume-period",
     "volume-multiplier", "rsi-length", "rsi-oversold", "rsi-overbought",
     "swing-length", "cooldown-seconds", "rsi-cluster-atr", "regime-enabled", "regime-flat-filter",
-    "regime-trend-enabled", "regime-reversal-enabled", "regime-sma-period", "regime-flat-slope",
-    "regime-flat-range", "regime-min-atr", "regime-volume-ratio", "regime-rsi-long", "regime-rsi-short", "schedule-enabled",
+    "regime-trend-enabled", "regime-reversal-enabled", "regime-structure-enabled", "regime-profile-enabled", "regime-retest-required", "regime-sma-period", "regime-flat-slope",
+    "regime-flat-range", "regime-min-atr", "regime-volume-ratio", "regime-rsi-long", "regime-rsi-short", "regime-profile-timeframe", "regime-profile-lookback", "regime-profile-bins", "regime-value-area", "regime-retest-lookback", "regime-retest-tolerance", "schedule-enabled",
     "schedule-timezone", "push-enabled", "telegram-enabled"
   ];
   $("bos-enabled").addEventListener("change", () => {
