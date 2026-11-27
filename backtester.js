@@ -195,13 +195,9 @@
       const targetR=Number.isFinite(configuredR)&&configuredR>0?configuredR:5;
       pos={ts:x.ts,dir,entry,stop:entry-dir*risk,risk,targetR,qty:100,phase,pnl:0};
 
-      // Entry and exit levels can both be crossed during the touch candle.
-      // OHLC does not reveal sequence, so an initial stop takes precedence.
-      const initialStopHit=dir===1?x.l<=pos.stop:x.h>=pos.stop;
-      if(initialStopHit) { close(pos.stop,"SL",x.ts); continue; }
-      const initialTarget=entry+dir*targetR*risk;
-      const initialTargetHit=dir===1?x.h>=initialTarget:x.l<=initialTarget;
-      if(initialTargetHit) { close(initialTarget,"TP"+targetR+"R",x.ts); continue; }
+      // Entry occurs at the already-closed signal candle's close.
+      // Its earlier high/low cannot trigger this new position's stop or target.
+      // The first eligible stop/target check is the following candle.
     }
 
     if(pos) close(a[a.length-1].c,"END",a[a.length-1].ts);
@@ -398,7 +394,7 @@
         continue;
       }
       if(!Number.isFinite(avPrev)||!Number.isFinite(mPrev)||avPrev<=0)continue;
-      // First SMA21 touch, direction follows price momentum into the average:
+      // Closed SMA21 signal candle, direction follows price momentum into the average:
       // falling from above => SHORT; rising from below => LONG.
       // SMA/ATR values come from the previous fully closed candle.
       const approachedFromAbove=prev.c>mPrev && x.l<=mPrev;
@@ -447,7 +443,7 @@
         ["Упущенные TP 5R после защитного выхода",0,b.missedTP5R]
       ];
       const show=(v,i)=>i===0||i===7||i===8?String(Math.round(v)):i===2?fmt(v)+"%":i===3?(v===Infinity?"∞":fmt(v)):fmt(v);
-      let html='<div class="small" style="margin-bottom:7px">Один набор закрытых свечей; вход — первое касание SMA21 без подтверждающей свечи, направление определяется стороной подхода. ATR(14) × '+fmt(mult)+', комиссия '+fmt(fee)+'% и проскальзывание '+fmt(slip)+'% на сторону. Безубыток активируется после +1R; стоп учитывает оценку расходов, затем подтягивается по ATR. Если после защитного выхода цена достигает 5R раньше исходного стопа, сделка учитывается как упущенный TP 5R.</div>';
+      let html='<div class="small" style="margin-bottom:7px">Один набор закрытых свечей; вход — после закрытия сигнальной свечи SMA21, направление определяется стороной подхода. ATR(14) × '+fmt(mult)+', комиссия '+fmt(fee)+'% и проскальзывание '+fmt(slip)+'% на сторону. Безубыток активируется после +1R; стоп учитывает оценку расходов, затем подтягивается по ATR. Если после защитного выхода цена достигает 5R раньше исходного стопа, сделка учитывается как упущенный TP 5R.</div>';
       html+='<table class="table"><thead><tr><th>Показатель</th><th>База: фиксированный SL / TP 5R</th><th>BE +1R и ATR-трейлинг</th></tr></thead><tbody>';
       html+=rows.map((r,i)=>'<tr><td>'+r[0]+'</td><td>'+show(r[1],i)+'</td><td>'+show(r[2],i)+'</td></tr>').join('');
       html+='</tbody></table><div class="small" style="margin-top:7px">Ограничение данных: минутные OHLC не раскрывают точный порядок тиков внутри свечи. При неоднозначности применяется консервативное правило «стоп раньше тейка»; новые стопы, которые могли быть задеты в той же свече, также считаются сработавшими. Это снижает риск завышения результата, но не заменяет тест по тиковым данным.</div>';
