@@ -221,7 +221,7 @@
       list.append(createElement("div", "empty-state", "Состояния ещё не получены. Включи монитор и дождись цикла опроса."));
       return;
     }
-    const labels = { TREND: "Продолжение тренда", REVERSAL: "Возможный разворот", FLAT: "Флет · вход запрещён", WAIT: "Ожидание", DISABLED: "Анализ отключён" };
+    const labels = { TREND: "Продолжение тренда", REVERSAL: "Возможный разворот", FLAT: "Флет · вход запрещён", WAIT: "Ожидание · вход запрещён", DISABLED: "Анализ отключён" };
     items.forEach(item => {
       const card = createElement("article", "journal-card");
       const top = createElement("div", "journal-card-top");
@@ -231,11 +231,17 @@
       top.append(identity, status);
       const metrics = item.metrics || {};
       const details = createElement("div", "journal-details");
+      const structure = metrics.choch || metrics.bos;
+      const profile = metrics.volumeProfile || {};
       details.append(
         createElement("span", "", "Направление: " + (item.direction || "—")),
         createElement("span", "", "SMA: " + (Number.isFinite(Number(metrics.sma)) ? Number(metrics.sma).toPrecision(7) : "—")),
         createElement("span", "", "ATR: " + (Number.isFinite(Number(metrics.atrPercent)) ? Number(metrics.atrPercent).toFixed(3) + "%" : "—")),
-        createElement("span", "", "Объём: " + (Number.isFinite(Number(metrics.volumeRatio)) ? Number(metrics.volumeRatio).toFixed(2) + "×" : "—"))
+        createElement("span", "", "Объём: " + (Number.isFinite(Number(metrics.volumeRatio)) ? Number(metrics.volumeRatio).toFixed(2) + "×" : "—")),
+        createElement("span", "", "Структура: " + (structure ? structure.kind + " " + structure.direction : "нет подтверждения")),
+        createElement("span", "", "Ретест: " + (metrics.retest ? "да" : "нет")),
+        createElement("span", "", "VP POC: " + (profile.ready ? Number(profile.poc).toPrecision(7) : "нет данных")),
+        createElement("span", "", "VP Value Area: " + (profile.ready ? Number(profile.val).toPrecision(7) + " – " + Number(profile.vah).toPrecision(7) : "—"))
       );
       const reasons = createElement("p", "journal-message", (item.reasons || []).join(" · ") || "Ожидается подтверждение.");
       card.append(top, details, reasons);
