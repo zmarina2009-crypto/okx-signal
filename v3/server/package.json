@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node worker.mjs",
-    "test": "node --test *.test.mjs"
+    "test": "node --test *.test.mjs",
+    "backtest": "node run-historical-backtest.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7"
