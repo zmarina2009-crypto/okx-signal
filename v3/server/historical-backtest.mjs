@@ -60,7 +60,7 @@ export function calculateInitialStop(bars, direction, entryPrice, config = {}) {
   return stop;
 }
 
-function simulatePosition({ bars, entryIndex, direction, entryPrice, stopPrice, config, regime, capital }) {
+export function simulatePosition({ bars, entryIndex, direction, entryPrice, stopPrice, config, regime, capital }) {
   const cfg = normalizeBacktestConfig(config);
   const sign = direction === "LONG" ? 1 : -1;
   const riskPerUnit = Math.abs(entryPrice - stopPrice);
