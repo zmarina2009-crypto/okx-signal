@@ -187,11 +187,11 @@ function calculateVolumeProfile(rawBars, config, lowerBars, lowerTimeframe) {
   const bars = normalizeBars(rawBars);
   const lowerLast = lowerBars.at(-1);
   const lowerMs = TIMEFRAME_MS[lowerTimeframe] || 60000;
-  const profileTf = config.profileTimeframe === "auto" ? null : config.profileTimeframe;
-  const profileMs = profileTf ? (TIMEFRAME_MS[profileTf] || lowerMs) : null;
+  const profileTf = resolveProfileTimeframe(lowerTimeframe, config.profileTimeframe);
+  const profileMs = TIMEFRAME_MS[profileTf] || lowerMs;
   // Exclude higher-timeframe candles that had not closed by the last lower-TF close.
   const cutoff = Number(lowerLast?.ts) + lowerMs;
-  const closed = bars.filter(bar => !profileMs || bar.ts + profileMs <= cutoff);
+  const closed = bars.filter(bar => bar.ts + profileMs <= cutoff);
   const sample = closed.slice(-config.profileLookback);
   if (sample.length < 20) return { ready:false, reason:"Недостаточно закрытых свечей старшего ТФ", candles:sample.length };
   let min = Math.min(...sample.map(b=>b.l)), max = Math.max(...sample.map(b=>b.h));
@@ -251,8 +251,8 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
     lowSlope?"Наклон SMA недостаточный":null,narrowRange?"Узкий диапазон цены":null,compressed&&nearSma?"ATR сжат и цена около SMA":null
   ].filter(Boolean),metrics};
 
-  const profileLong=profile?.ready!==true||profile.position!=="BELOW_VA";
-  const profileShort=profile?.ready!==true||profile.position!=="ABOVE_VA";
+  const profileLong=!config.volumeProfileEnabled||(profile?.ready===true&&profile.position!=="BELOW_VA");
+  const profileShort=!config.volumeProfileEnabled||(profile?.ready===true&&profile.position!=="ABOVE_VA");
   const trendDirection=last.c>currentSma&&slopePct>config.maxFlatSlopePct?"LONG":last.c<currentSma&&slopePct< -config.maxFlatSlopePct?"SHORT":null;
   const structureConfirmed=structure?.kind==="BOS"&&structure.retest===true;
   const reversalConfirmed=structure?.kind==="CHOCH"&&structure.retest===true;
