@@ -114,3 +114,27 @@ test("market regime settings expose bounded BOS, profile and retest parameters",
   assert.equal(config.retestLookback, 2);
   assert.equal(config.retestToleranceAtr, 1.5);
 });
+
+test("multi-timeframe BOS filter defaults to 15m and 1h and blocks entries without confirmed higher structure", () => {
+  const config = normalizeMarketRegimeConfig({});
+  assert.equal(config.multiTimeframeStructureEnabled, true);
+  assert.deepEqual(config.structureTimeframes, ["15m", "1h"]);
+
+  const closes = Array.from({ length: 120 }, (_, i) => 100 + i * 0.12);
+  const lower = makeBars(closes);
+  const result = classifyMarketRegime(lower, {
+    flatFilterEnabled: false,
+    volumeProfileEnabled: false,
+    minVolumeRatio: 0.1
+  }, {
+    timeframe: "1m",
+    structureBarsByTimeframe: {
+      "15m": [],
+      "1h": []
+    }
+  });
+  assert.equal(result.actionable, false);
+  assert.equal(result.state, "WAIT");
+  assert.match(result.reasons[0], /BOS 15m\/1h/);
+  assert.equal(result.metrics.higherTrendDirection, null);
+});
