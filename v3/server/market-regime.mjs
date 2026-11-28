@@ -22,7 +22,9 @@ const DEFAULTS = Object.freeze({
   valueAreaPct: 70,
   requireRetest: true,
   retestLookback: 8,
-  retestToleranceAtr: 0.25
+  retestToleranceAtr: 0.25,
+  multiTimeframeStructureEnabled: true,
+  structureTimeframes: ["15m", "1h"]
 });
 
 const clamp = (value, min, max, fallback) => {
@@ -56,6 +58,12 @@ export function normalizeMarketRegimeConfig(input = {}) {
   cfg.requireRetest = cfg.requireRetest !== false;
   cfg.retestLookback = Math.round(clamp(cfg.retestLookback, 2, 30, DEFAULTS.retestLookback));
   cfg.retestToleranceAtr = clamp(cfg.retestToleranceAtr, 0.05, 1.5, DEFAULTS.retestToleranceAtr);
+  cfg.multiTimeframeStructureEnabled = cfg.multiTimeframeStructureEnabled !== false;
+  cfg.structureTimeframes = Array.isArray(cfg.structureTimeframes)
+    ? [...new Set(cfg.structureTimeframes.map(String).filter(tf => ["5m","15m","30m","1h","2h","4h"].includes(tf)))].slice(0, 3)
+    : [...DEFAULTS.structureTimeframes];
+  if (cfg.multiTimeframeStructureEnabled && !cfg.structureTimeframes.includes("15m")) cfg.structureTimeframes.unshift("15m");
+  if (cfg.multiTimeframeStructureEnabled && !cfg.structureTimeframes.includes("1h")) cfg.structureTimeframes.push("1h");
   if (cfg.reversalRsiLongMax >= cfg.reversalRsiShortMin) {
     throw new RangeError("Reversal LONG RSI threshold must be below SHORT threshold.");
   }
@@ -246,8 +254,36 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
   const volumeConfirmed=volumeRatio!=null&&volumeRatio>=config.minVolumeRatio;
   const profile=calculateVolumeProfile(context.higherTimeframeBars,config,bars,context.timeframe||"1m");
   const structure=detectStructureEvent(bars,config,currentAtr);
+  const structureBarsByTimeframe = context.structureBarsByTimeframe || {};
+  const higherStructures = {};
+  if (config.multiTimeframeStructureEnabled) {
+    for (const higherTf of config.structureTimeframes) {
+      const higherBars = normalizeBars(structureBarsByTimeframe[higherTf] || []);
+      const higherAtr = atr(higherBars, config.atrPeriod);
+      const event = detectStructureEvent(higherBars, config, higherAtr);
+      higherStructures[higherTf] = {
+        state: event?.kind || "NO_CONFIRMED_BREAK",
+        direction: event?.direction || event?.bias || null,
+        kind: event?.kind || null,
+        retest: event?.retest === true,
+        bias: event?.bias || null,
+        candles: higherBars.length
+      };
+    }
+  }
+  const trendStructureDirections = config.structureTimeframes.map(tf => higherStructures[tf]);
+  const higherTrendDirection = config.multiTimeframeStructureEnabled
+    ? (trendStructureDirections.length && trendStructureDirections.every(item => item?.kind === "BOS" && item.retest && item.direction === trendStructureDirections[0].direction)
+      ? trendStructureDirections[0].direction : null)
+    : (structure?.kind === "BOS" && (!config.requireRetest || structure.retest) ? structure.direction : null);
+  const reversalStructure = config.multiTimeframeStructureEnabled ? higherStructures["15m"] : structure;
+  const oneHourStructure = config.multiTimeframeStructureEnabled ? higherStructures["1h"] : null;
+  const higherReversalDirection = reversalStructure?.kind === "CHOCH" && reversalStructure.retest &&
+    (!oneHourStructure || !(oneHourStructure.kind === "BOS" && oneHourStructure.direction !== reversalStructure.direction))
+      ? reversalStructure.direction : null;
   const metrics={close:last.c,sma:currentSma,slopePct,atr:currentAtr,atrPercent:currentAtr/last.c*100,atrRatio,rangePct,volumeRatio,rsi:currentRsi,
     bos:structure?.kind==="BOS"?structure:null,choch:structure?.kind==="CHOCH"?structure:null,structureBias:structure?.bias||null,
+    higherTimeframeStructure:higherStructures, higherTrendDirection, higherReversalDirection,
     retest:structure?.retest===true,volumeProfile:profile};
   if(flat) return {state:"FLAT",direction:null,actionable:false,blockSignals:true,reasons:[
     lowSlope?"Наклон SMA недостаточный":null,narrowRange?"Узкий диапазон цены":null,compressed&&nearSma?"ATR сжат и цена около SMA":null
@@ -256,20 +292,22 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
   const profileLong=!config.volumeProfileEnabled||(profile?.ready===true&&profile.pocSide==="ABOVE_POC");
   const profileShort=!config.volumeProfileEnabled||(profile?.ready===true&&profile.pocSide==="BELOW_POC");
   const trendDirection=last.c>currentSma&&slopePct>config.maxFlatSlopePct?"LONG":last.c<currentSma&&slopePct< -config.maxFlatSlopePct?"SHORT":null;
-  const structureConfirmed=structure?.kind==="BOS"&&(!config.requireRetest||structure.retest===true);
-  const reversalConfirmed=structure?.kind==="CHOCH"&&(!config.requireRetest||structure.retest===true);
-  const reversalDirection=reversalConfirmed&&volumeConfirmed&&
-    ((structure.direction==="LONG"&&currentRsi<=config.reversalRsiLongMax&&profileLong)||(structure.direction==="SHORT"&&currentRsi>=config.reversalRsiShortMin&&profileShort))
-      ?structure.direction:null;
+  const structureConfirmed = Boolean(higherTrendDirection);
+  const reversalDirection = higherReversalDirection && volumeConfirmed &&
+    ((higherReversalDirection === "LONG" && currentRsi <= config.reversalRsiLongMax && profileLong) ||
+     (higherReversalDirection === "SHORT" && currentRsi >= config.reversalRsiShortMin && profileShort))
+      ? higherReversalDirection : null;
 
   if(config.reversalEnabled&&reversalDirection) return {state:"REVERSAL",direction:reversalDirection,actionable:true,blockSignals:false,
     reasons:["CHoCH: подтверждена смена рыночной структуры",config.requireRetest?"Ретест уровня структуры подтверждён":"Ретест отключён настройкой","Объём и RSI подтверждают разворот",profile?.ready?"Volume Profile старшего ТФ учтён":"Volume Profile отключён"],metrics};
-  if(config.trendEnabled&&trendDirection&&structureConfirmed&&structure.direction===trendDirection&&volumeConfirmed&&
+  if(config.trendEnabled&&trendDirection&&structureConfirmed&&higherTrendDirection===trendDirection&&volumeConfirmed&&
     (trendDirection==="LONG"?profileLong:profileShort)) return {state:"TREND",direction:trendDirection,actionable:true,blockSignals:false,
-    reasons:["BOS подтверждает продолжение структуры",config.requireRetest?"Ретест уровня пробоя подтверждён":"Ретест отключён настройкой","Цена и SMA21 направлены одинаково","Объём и Volume Profile поддерживают направление"],metrics};
+    reasons:[config.multiTimeframeStructureEnabled?"BOS 15m и 1h подтверждают одно направление":"BOS подтверждает продолжение структуры","Ретест старших уровней подтверждён","Цена и SMA21 на младшем ТФ направлены одинаково","Объём и Volume Profile поддерживают направление"],metrics};
 
   let waitingReason = "Нет подтверждённого BOS/CHoCH и ретеста";
-  if (structure?.kind === "CHOCH") {
+  if (config.multiTimeframeStructureEnabled && !higherTrendDirection && !higherReversalDirection) {
+    waitingReason = "Ожидаем согласованный BOS 15m/1h или подтверждённый CHoCH 15m";
+  } else if (structure?.kind === "CHOCH") {
     if (config.requireRetest && structure.retest !== true) {
       waitingReason = "CHoCH обнаружен — ожидаем ретест";
     } else if (!volumeConfirmed) {
