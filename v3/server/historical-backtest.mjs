@@ -296,6 +296,9 @@ export function runHistoricalBacktest({
         rsiShortThreshold: Number(scalpingConfig.rsiOverbought ?? 70),
         bos: metrics.bos || null,
         choch: metrics.choch || null,
+        higherTimeframeStructure: metrics.higherTimeframeStructure || {},
+        higherTrendDirection: metrics.higherTrendDirection || null,
+        higherReversalDirection: metrics.higherReversalDirection || null,
         reasons: regime.reasons || [],
         scalpingEvents: scalpingEvents.map(event => ({ direction:event.direction, label:event.label }))
       });
