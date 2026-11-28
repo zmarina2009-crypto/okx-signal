@@ -199,7 +199,6 @@ export function runHistoricalBacktest({
   const profileMs = TIMEFRAME_MS[profileTf] || tfMs;
 
   for (let i = 0; i < bars.length - 1; i++) {
-    if (i <= blockedUntilIndex) continue;
     const history = bars.slice(0, i + 1);
     const candleCloseTs = bars[i].ts + tfMs;
 
@@ -213,6 +212,10 @@ export function runHistoricalBacktest({
     Object.assign(engineState, scalpingResult.state);
     const scalpingEvents = scalpingResult.events.filter(event => event.kind === "scalping");
     diagnostics.scalpingEvents += scalpingEvents.length;
+
+    // Signals are still observed while a simulated position is open, but
+    // overlapping entries remain blocked until that position has exited.
+    if (i <= blockedUntilIndex) continue;
 
     const closedProfileBars = higher.filter(bar => bar.ts + profileMs <= candleCloseTs);
     const regime = classifyMarketRegime(history, marketRegimeConfig, {
