@@ -417,6 +417,30 @@ export function evaluateScalpingBars(rawBars, rawPair, rawTf, options = {}) {
     }
   }
 
+  // Trend continuation uses RSI momentum around the 50 line, not the
+  // oversold/overbought reversal thresholds. Reversal signals above remain
+  // unchanged and keep their existing RSI-cluster behavior.
+  if (cfg.volumeRsiEnabled && volumeSpike && currentRsi != null && previousRsi != null) {
+    const momentumCandidates = [];
+    if (currentRsi > 50 && currentRsi > previousRsi) momentumCandidates.push("LONG");
+    if (currentRsi < 50 && currentRsi < previousRsi) momentumCandidates.push("SHORT");
+
+    for (const direction of momentumCandidates) {
+      if (cfg.requireBos && (!bos || bos.direction !== direction)) continue;
+      const id = ["volume-rsi-momentum", pair, tf, candleTs, direction].join("|");
+      const label = "VOL+RSI-MOMENTUM";
+      const message = (direction === "LONG" ? "⚡ LONG" : "⚡ SHORT") +
+        " • Volume ×" + (volume / baseVolume).toFixed(2) +
+        " + RSI momentum " + Number(currentRsi).toFixed(1) +
+        " • " + pair + " • " + tf;
+      emitSignal({
+        state, events, cfg, kind: "scalping", pair, tf, candle,
+        direction, price: Number(candle.c), label, message,
+        uniqueId: id, now
+      });
+    }
+  }
+
   state.processed[scopeKey] = candleTs;
   return {
     events,
