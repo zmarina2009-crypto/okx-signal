@@ -371,14 +371,14 @@ export function evaluateScalpingBars(rawBars, rawPair, rawTf, options = {}) {
   const previousRsi = values[values.length - 2];
   updateRsiCluster(state, pair, tf, candle, currentRsi);
 
-  const rsiLong = currentRsi != null && (
-    currentRsi <= cfg.rsiOversold ||
-    (previousRsi != null && previousRsi <= cfg.rsiOversold && currentRsi > cfg.rsiOversold)
-  );
-  const rsiShort = currentRsi != null && (
-    currentRsi >= cfg.rsiOverbought ||
-    (previousRsi != null && previousRsi >= cfg.rsiOverbought && currentRsi < cfg.rsiOverbought)
-  );
+  // Reversal RSI must actually turn away from the extreme zone.
+  // Merely remaining overbought/oversold is not a reversal confirmation.
+  const rsiLong = currentRsi != null && previousRsi != null &&
+    currentRsi > previousRsi &&
+    (previousRsi <= cfg.rsiOversold || currentRsi <= cfg.rsiOversold);
+  const rsiShort = currentRsi != null && previousRsi != null &&
+    currentRsi < previousRsi &&
+    (previousRsi >= cfg.rsiOverbought || currentRsi >= cfg.rsiOverbought);
 
   const bos = detectBos(bars, cfg.swingLength, cfg.bosEnabled);
   if (bos && cfg.bosEnabled && cfg.bosAlerts) {
@@ -427,17 +427,21 @@ export function evaluateScalpingBars(rawBars, rawPair, rawTf, options = {}) {
 
     for (const direction of momentumCandidates) {
       if (cfg.requireBos && (!bos || bos.direction !== direction)) continue;
+      // Momentum and reversal triggers in the same direction belong to one
+      // active price situation and should share the existing journal cluster.
+      if (mergeRsiRepeat(state, pair, tf, candle, direction, cfg, now)) continue;
       const id = ["volume-rsi-momentum", pair, tf, candleTs, direction].join("|");
       const label = "VOL+RSI-MOMENTUM";
       const message = (direction === "LONG" ? "⚡ LONG" : "⚡ SHORT") +
         " • Volume ×" + (volume / baseVolume).toFixed(2) +
         " + RSI momentum " + Number(currentRsi).toFixed(1) +
         " • " + pair + " • " + tf;
-      emitSignal({
+      const historyItem = emitSignal({
         state, events, cfg, kind: "scalping", pair, tf, candle,
         direction, price: Number(candle.c), label, message,
         uniqueId: id, now
       });
+      if (historyItem) startRsiCluster(state, pair, tf, candle, direction, Number(candle.c), bars, cfg, historyItem);
     }
   }
 
