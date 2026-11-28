@@ -268,9 +268,38 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
     (trendDirection==="LONG"?profileLong:profileShort)) return {state:"TREND",direction:trendDirection,actionable:true,blockSignals:false,
     reasons:["BOS подтверждает продолжение структуры",config.requireRetest?"Ретест уровня пробоя подтверждён":"Ретест отключён настройкой","Цена и SMA21 направлены одинаково","Объём и Volume Profile поддерживают направление"],metrics};
 
-  const waitingReason=structure?.kind==="CHOCH"?"CHoCH обнаружен — ожидаем ретест и подтверждение":
-    structure?.kind==="BOS"?"BOS обнаружен — ожидаем ретест и подтверждение":
-    !profile?.ready?"Ожидание данных Volume Profile старшего ТФ":"Нет подтверждённого BOS/CHoCH и ретеста";
+  let waitingReason = "Нет подтверждённого BOS/CHoCH и ретеста";
+  if (!profile?.ready) {
+    waitingReason = "Ожидание данных Volume Profile старшего ТФ";
+  } else if (structure?.kind === "CHOCH") {
+    if (config.requireRetest && structure.retest !== true) {
+      waitingReason = "CHoCH обнаружен — ожидаем ретест";
+    } else if (!volumeConfirmed) {
+      waitingReason = "CHoCH и ретест есть, но объём недостаточен";
+    } else if (structure.direction === "LONG" && currentRsi > config.reversalRsiLongMax) {
+      waitingReason = "CHoCH и объём подтверждены, RSI не подтверждает LONG-разворот";
+    } else if (structure.direction === "SHORT" && currentRsi < config.reversalRsiShortMin) {
+      waitingReason = "CHoCH и объём подтверждены, RSI не подтверждает SHORT-разворот";
+    } else if (structure.direction === "LONG" ? !profileLong : !profileShort) {
+      waitingReason = "Volume Profile старшего ТФ не поддерживает направление разворота";
+    } else {
+      waitingReason = "CHoCH обнаружен — требуется дополнительное подтверждение";
+    }
+  } else if (structure?.kind === "BOS") {
+    if (config.requireRetest && structure.retest !== true) {
+      waitingReason = "BOS обнаружен — ожидаем ретест";
+    } else if (!trendDirection) {
+      waitingReason = "BOS есть, но цена и наклон SMA не подтверждают тренд";
+    } else if (trendDirection !== structure.direction) {
+      waitingReason = "Направление BOS не совпадает с направлением SMA";
+    } else if (!volumeConfirmed) {
+      waitingReason = "BOS и ретест есть, но объём недостаточен";
+    } else if (structure.direction === "LONG" ? !profileLong : !profileShort) {
+      waitingReason = "Volume Profile старшего ТФ не поддерживает направление тренда";
+    } else {
+      waitingReason = "BOS обнаружен — ожидаем дополнительное подтверждение";
+    }
+  }
   return {state:"WAIT",direction:null,actionable:false,blockSignals:true,reasons:[waitingReason],metrics};
 }
 
