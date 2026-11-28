@@ -136,7 +136,11 @@ export async function fetchOkxHistoricalCandles(pairInput, timeframeInput, optio
         if (body?.code !== "0" || !Array.isArray(body.data)) {
           throw new Error(body?.msg || "Invalid OKX historical candle response.");
         }
-        page = parseOkxCandles(body.data).filter(candle =>
+        // Keep the raw page for pagination: the newest OKX candle can be
+        // unconfirmed, so filtering it out must not make a full 100-row page
+        // look like a short final page.
+        const rawPage = parseOkxCandles(body.data);
+        page = rawPage.filter(candle =>
           candle.confirm === "1" && candle.ts <= endTime && (!startTime || candle.ts >= startTime)
         );
         break;
@@ -149,15 +153,15 @@ export async function fetchOkxHistoricalCandles(pairInput, timeframeInput, optio
       throw new Error("OKX historical candle request failed for " + pair + " " + timeframe + ": " +
         String(lastError?.message || lastError || "unknown error"));
     }
-    if (!page.length) break;
+    if (!rawPage.length) break;
 
     for (const candle of page) collected.set(candle.ts, candle);
-    const oldest = Math.min(...page.map(candle => candle.ts));
-    if (oldest >= lastOldest || (startTime && oldest <= startTime) || page.length < 1) break;
+    const oldest = Math.min(...rawPage.map(candle => candle.ts));
+    if (oldest >= lastOldest) break;
     lastOldest = oldest;
     cursor = oldest;
     pages++;
-    if (page.length < requestedPageSize) break;
+    if ((startTime && oldest <= startTime) || rawPage.length < requestedPageSize) break;
     await wait(120);
   }
 
