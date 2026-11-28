@@ -67,6 +67,25 @@ test("emits a LONG Volume + RSI signal only after a confirmed candle", () => {
   assert.ok(result.events[0].message.includes("Volume ×10.00 + RSI 50.0"));
 });
 
+test("emits a momentum RSI signal for trend continuation without requiring RSI 70/30 extremes", () => {
+  const closes = [100, 99, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111];
+  const volumes = closes.map((_, index) => index === closes.length - 1 ? 100 : 10);
+  const bars = candles(closes, volumes);
+  const result = evaluateScalpingBars(bars, "ZEC", "1m", {
+    now: bars.at(-1).ts + 60_000,
+    config: {
+      volumePeriod: 2, volumeMultiplier: 2, rsiLength: 3,
+      rsiOversold: 30, rsiOverbought: 70, swingLength: 1,
+      bosEnabled: false, bosAlerts: false, groupSignals: false
+    }
+  });
+
+  assert.ok(result.events.some(event =>
+    event.kind === "scalping" && event.label === "VOL+RSI-MOMENTUM" && event.direction === "LONG"
+  ));
+  assert.ok(result.events.every(event => event.label !== "VOL+RSI" || event.direction !== "SHORT"));
+});
+
 test("does not emit the same candle twice after the state is restored", () => {
   const bars = candles([100, 99, 98, 97, 98], [10, 10, 10, 10, 100]);
   const options = {
