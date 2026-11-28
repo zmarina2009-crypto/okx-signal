@@ -236,7 +236,7 @@ export function runHistoricalBacktest({
     if (!signal) {
       diagnostics.noMatchingSignal++;
       if (regimeDiagnostic) regimeDiagnostic.noMatchingSignal++;
-      const metrics = result.metrics || {};
+      const metrics = scalpingResult.metrics || {};
       const volumeMultiple = Number(metrics.volumeMultiple);
       const volumePass = Number.isFinite(volumeMultiple) && volumeMultiple > Number(scalpingConfig.volumeMultiplier ?? 2);
       const rsiValue = Number(metrics.rsi);
