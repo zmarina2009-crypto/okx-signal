@@ -322,7 +322,6 @@ export function runHistoricalBacktest({
     trade.stopMode = cfg.stopMode;
     trades.push(trade);
     blockedUntilIndex = trade.exitIndex;
-    i = blockedUntilIndex;
   }
 
   return {
