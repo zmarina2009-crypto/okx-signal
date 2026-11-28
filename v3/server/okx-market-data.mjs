@@ -124,6 +124,7 @@ export async function fetchOkxHistoricalCandles(pairInput, timeframeInput, optio
     url.searchParams.set("after", String(cursor));
 
     let page = null;
+    let rawPage = null;
     let lastError = null;
     for (let attempt = 0; attempt < attempts; attempt++) {
       try {
@@ -139,7 +140,7 @@ export async function fetchOkxHistoricalCandles(pairInput, timeframeInput, optio
         // Keep the raw page for pagination: the newest OKX candle can be
         // unconfirmed, so filtering it out must not make a full 100-row page
         // look like a short final page.
-        const rawPage = parseOkxCandles(body.data);
+        rawPage = parseOkxCandles(body.data);
         page = rawPage.filter(candle =>
           candle.confirm === "1" && candle.ts <= endTime && (!startTime || candle.ts >= startTime)
         );
