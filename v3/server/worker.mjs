@@ -164,21 +164,31 @@ export async function runPollingCycle(options = {}) {
         const candles = await fetchOkxCandles(pair, tf, { limit: Math.min(300, limit) });
         const regimeConfig = state.config.marketRegime;
         let higherTimeframeBars = [];
+        const structureBarsByTimeframe = {};
+        const requiredHigherTimeframes = new Set();
         if (regimeConfig.enabled && regimeConfig.volumeProfileEnabled) {
-          const profileTf = resolveProfileTimeframe(tf, regimeConfig.profileTimeframe);
-          const profileKey = pair + "|" + profileTf;
-          if (!profileCache.has(profileKey)) {
-            profileCache.set(profileKey, fetchOkxCandles(pair, profileTf, {
-              limit: Math.min(300, regimeConfig.profileLookback + 20)
-            }).catch(profileError => {
-              errors.push({ pair, tf, stage: "volume_profile", error: String(profileError?.message || profileError) });
+          requiredHigherTimeframes.add(resolveProfileTimeframe(tf, regimeConfig.profileTimeframe));
+        }
+        if (regimeConfig.enabled && regimeConfig.multiTimeframeStructureEnabled) {
+          for (const structureTf of regimeConfig.structureTimeframes) requiredHigherTimeframes.add(structureTf);
+        }
+        for (const higherTf of requiredHigherTimeframes) {
+          const higherKey = pair + "|" + higherTf;
+          if (!profileCache.has(higherKey)) {
+            profileCache.set(higherKey, fetchOkxCandles(pair, higherTf, {
+              limit: Math.min(300, Math.max(regimeConfig.profileLookback + 20, 100))
+            }).catch(higherError => {
+              errors.push({ pair, tf, stage: "higher_timeframe_" + higherTf, error: String(higherError?.message || higherError) });
               return [];
             }));
           }
-          higherTimeframeBars = await profileCache.get(profileKey);
+          const higherBars = await profileCache.get(higherKey);
+          structureBarsByTimeframe[higherTf] = higherBars;
+          if (higherTf === resolveProfileTimeframe(tf, regimeConfig.profileTimeframe)) higherTimeframeBars = higherBars;
         }
         const regime = classifyMarketRegime(candles, regimeConfig, {
           higherTimeframeBars,
+          structureBarsByTimeframe,
           timeframe: tf
         });
         state.marketRegimes[key] = {
