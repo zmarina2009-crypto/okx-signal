@@ -269,9 +269,7 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
     reasons:["BOS подтверждает продолжение структуры",config.requireRetest?"Ретест уровня пробоя подтверждён":"Ретест отключён настройкой","Цена и SMA21 направлены одинаково","Объём и Volume Profile поддерживают направление"],metrics};
 
   let waitingReason = "Нет подтверждённого BOS/CHoCH и ретеста";
-  if (!profile?.ready) {
-    waitingReason = "Ожидание данных Volume Profile старшего ТФ";
-  } else if (structure?.kind === "CHOCH") {
+  if (structure?.kind === "CHOCH") {
     if (config.requireRetest && structure.retest !== true) {
       waitingReason = "CHoCH обнаружен — ожидаем ретест";
     } else if (!volumeConfirmed) {
@@ -280,6 +278,8 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
       waitingReason = "CHoCH и объём подтверждены, RSI не подтверждает LONG-разворот";
     } else if (structure.direction === "SHORT" && currentRsi < config.reversalRsiShortMin) {
       waitingReason = "CHoCH и объём подтверждены, RSI не подтверждает SHORT-разворот";
+    } else if (!profile?.ready) {
+      waitingReason = "CHoCH, ретест и RSI/объём подтверждены; ожидаются данные Volume Profile";
     } else if (structure.direction === "LONG" ? !profileLong : !profileShort) {
       waitingReason = "Volume Profile старшего ТФ не поддерживает направление разворота";
     } else {
@@ -294,11 +294,15 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
       waitingReason = "Направление BOS не совпадает с направлением SMA";
     } else if (!volumeConfirmed) {
       waitingReason = "BOS и ретест есть, но объём недостаточен";
+    } else if (!profile?.ready) {
+      waitingReason = "BOS, ретест и тренд подтверждены; ожидаются данные Volume Profile";
     } else if (structure.direction === "LONG" ? !profileLong : !profileShort) {
       waitingReason = "Volume Profile старшего ТФ не поддерживает направление тренда";
     } else {
       waitingReason = "BOS обнаружен — ожидаем дополнительное подтверждение";
     }
+  } else if (!profile?.ready) {
+    waitingReason = "Ожидание данных Volume Profile старшего ТФ";
   }
   return {state:"WAIT",direction:null,actionable:false,blockSignals:true,reasons:[waitingReason],metrics};
 }
