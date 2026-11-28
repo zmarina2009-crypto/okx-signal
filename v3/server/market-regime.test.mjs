@@ -117,6 +117,7 @@ test("market regime settings expose bounded BOS, profile and retest parameters",
 
 test("market regime exposes the prior RSI value needed to confirm reversal momentum", () => {
   const closes = Array.from({ length: 120 }, (_, i) => 100 + i * 0.12);
+  closes[118] -= 1;
   const result = classifyMarketRegime(makeBars(closes), {
     flatFilterEnabled: false,
     volumeProfileEnabled: false
