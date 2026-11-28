@@ -68,7 +68,7 @@ test("emits a LONG Volume + RSI signal only after a confirmed candle", () => {
 });
 
 test("emits a momentum RSI signal for trend continuation without requiring RSI 70/30 extremes", () => {
-  const closes = [100, 99, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111];
+  const closes = [100, 101, 102, 103, 104, 103, 102, 103, 104, 105, 106];
   const volumes = closes.map((_, index) => index === closes.length - 1 ? 100 : 10);
   const bars = candles(closes, volumes);
   const result = evaluateScalpingBars(bars, "ZEC", "1m", {
