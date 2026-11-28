@@ -181,6 +181,18 @@ export function runHistoricalBacktest({
   const trades = [];
   const rejected = { noNextCandle:0, invalidStop:0, signalDuringOpenTrade:0 };
   const regimeCounts = { TREND:0, REVERSAL:0, FLAT:0, WAIT:0 };
+  const diagnostics = {
+    actionableRegimeBars: 0,
+    scalpingEvents: 0,
+    matchingSignals: 0,
+    noMatchingSignal: 0,
+    waitReasons: {},
+    byRegime: {
+      TREND: { bars:0, matchingSignals:0, noMatchingSignal:0, volumeNotConfirmed:0, rsiNotExtreme:0, directionMismatch:0, otherSuppression:0 },
+      REVERSAL: { bars:0, matchingSignals:0, noMatchingSignal:0, volumeNotConfirmed:0, rsiNotExtreme:0, directionMismatch:0, otherSuppression:0 }
+    },
+    samples: []
+  };
   let blockedUntilIndex = -1;
   const profileTf = resolveProfileTimeframe(tf, marketRegimeConfig.profileTimeframe || "auto");
   const profileMs = TIMEFRAME_MS[profileTf] || tfMs;
@@ -195,21 +207,60 @@ export function runHistoricalBacktest({
       timeframe: tf
     });
     if (Object.hasOwn(regimeCounts, regime.state)) regimeCounts[regime.state]++;
+    for (const reason of regime.reasons || []) {
+      diagnostics.waitReasons[reason] = (diagnostics.waitReasons[reason] || 0) + 1;
+    }
 
     if (regime.blockSignals === true || !regime.actionable || !regime.direction) {
       continue;
     }
 
+    diagnostics.actionableRegimeBars++;
+    const regimeDiagnostic = diagnostics.byRegime[regime.state];
+    if (regimeDiagnostic) regimeDiagnostic.bars++;
     const result = evaluateScalpingBars(history, normalizedPair, tf, {
       config: scalpingConfig,
       state: engineState,
       now: candleCloseTs
     });
     Object.assign(engineState, result.state);
-    const signal = result.events.find(event =>
-      event.kind === "scalping" && event.direction === regime.direction
-    );
-    if (!signal) continue;
+    const scalpingEvents = result.events.filter(event => event.kind === "scalping");
+    diagnostics.scalpingEvents += scalpingEvents.length;
+    const signal = scalpingEvents.find(event => event.direction === regime.direction);
+    if (!signal) {
+      diagnostics.noMatchingSignal++;
+      if (regimeDiagnostic) regimeDiagnostic.noMatchingSignal++;
+      const metrics = result.metrics || {};
+      const volumeMultiple = Number(metrics.volumeMultiple);
+      const volumePass = Number.isFinite(volumeMultiple) && volumeMultiple > Number(scalpingConfig.volumeMultiplier ?? 2);
+      const rsiValue = Number(metrics.rsi);
+      const rsiLong = Number.isFinite(rsiValue) && rsiValue <= Number(scalpingConfig.rsiOversold ?? 30);
+      const rsiShort = Number.isFinite(rsiValue) && rsiValue >= Number(scalpingConfig.rsiOverbought ?? 70);
+      const directionCandidate = regime.direction === "LONG" ? rsiLong : rsiShort;
+      const oppositeCandidate = regime.direction === "LONG" ? rsiShort : rsiLong;
+      let reason = "otherSuppression";
+      if (!volumePass) reason = "volumeNotConfirmed";
+      else if (!directionCandidate && oppositeCandidate) reason = "directionMismatch";
+      else if (!directionCandidate) reason = "rsiNotExtreme";
+      if (regimeDiagnostic) regimeDiagnostic[reason]++;
+      if (diagnostics.samples.length < 20) diagnostics.samples.push({
+        timestamp: bars[i].ts,
+        regime: regime.state,
+        direction: regime.direction,
+        volumeMultiple: Number.isFinite(volumeMultiple) ? Number(volumeMultiple.toFixed(3)) : null,
+        requiredVolumeMultiple: Number(scalpingConfig.volumeMultiplier ?? 2),
+        rsi: Number.isFinite(rsiValue) ? Number(rsiValue.toFixed(2)) : null,
+        rsiLongThreshold: Number(scalpingConfig.rsiOversold ?? 30),
+        rsiShortThreshold: Number(scalpingConfig.rsiOverbought ?? 70),
+        bos: metrics.bos || null,
+        choch: metrics.choch || null,
+        reasons: regime.reasons || [],
+        scalpingEvents: scalpingEvents.map(event => ({ direction:event.direction, label:event.label }))
+      });
+      continue;
+    }
+    diagnostics.matchingSignals++;
+    if (regimeDiagnostic) regimeDiagnostic.matchingSignals++;
 
     const entryIndex = i + 1;
     const entryPrice = bars[entryIndex].o;
@@ -256,6 +307,7 @@ export function runHistoricalBacktest({
       REVERSAL: trades.filter(trade => trade.regime === "REVERSAL").length
     },
     regimeCounts,
+    diagnostics,
     rejected,
     trades
   };
