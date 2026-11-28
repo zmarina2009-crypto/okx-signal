@@ -96,6 +96,15 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - No migration of the existing v1/v2 user data.
 
 
+## Multi-timeframe market structure (QA change)
+
+- The default V3 scalping structure filter uses confirmed 15m and 1h market structure while the configured lower timeframe (initially 1m) remains responsible for the actual scalping trigger.
+- Trend continuation requires BOS + retest on both 15m and 1h in the same direction, plus the lower-timeframe trend, volume, and Volume Profile filters.
+- Reversal uses a confirmed 15m CHoCH + retest, and is blocked if the 1h structure has a confirmed BOS in the opposite direction. RSI and volume remain separate confirmation filters.
+- Higher-timeframe candles are filtered by their close timestamp relative to each lower-timeframe candle. An unfinished 15m/1h candle must never influence a historical decision.
+- The live worker fetches 15m/1h public candles; the historical runner fetches and audits both structure timeframes separately.
+- This is a test-branch strategy change only. It must pass the server test workflow and a fresh walk-forward comparison before any production deployment. V1/V2 and Railway are unchanged.
+
 ## Historical backtesting (QA only)
 
 The separate walk-forward tester downloads confirmed OKX perpetual candles and evaluates the existing V3 regime + scalping engines one candle at a time. Signals are entered at the next candle open; higher-timeframe Volume Profile bars are admitted only after they close. The tester does not place orders.
