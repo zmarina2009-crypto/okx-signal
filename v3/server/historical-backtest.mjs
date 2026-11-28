@@ -243,15 +243,21 @@ export function runHistoricalBacktest({
     const regimeDiagnostic = diagnostics.byRegime[regime.state];
     if (regimeDiagnostic) regimeDiagnostic.bars++;
     diagnostics.scalpingEventsOnActionableBars += scalpingEvents.length;
-    const signal = scalpingEvents.find(event => event.direction === regime.direction);
+    const signal = scalpingEvents.find(event =>
+      event.direction === regime.direction &&
+      (regime.state === "TREND"
+        ? event.label === "VOL+RSI-MOMENTUM"
+        : event.label === "VOL+RSI" || event.label === "VOL+RSI+BOS")
+    );
     if (!signal) {
       diagnostics.noMatchingSignal++;
       if (regimeDiagnostic) regimeDiagnostic.noMatchingSignal++;
-      const metrics = scalpingResult.metrics || {};
-      const volumeMultiple = Number(metrics.volumeMultiple);
+      const scalpingMetrics = scalpingResult.metrics || {};
+      const regimeMetrics = regime.metrics || {};
+      const volumeMultiple = Number(scalpingMetrics.volumeMultiple);
       const volumePass = Number.isFinite(volumeMultiple) && volumeMultiple > Number(scalpingConfig.volumeMultiplier ?? 2);
-      const rsiValue = Number(metrics.rsi);
-      const previousRsi = Number(metrics.previousRsi);
+      const rsiValue = Number(scalpingMetrics.rsi);
+      const previousRsi = Number(scalpingMetrics.previousRsi);
       // Keep diagnostic RSI rules exactly in sync with scalping-engine.mjs,
       // including the recovery/cross-back candle after an extreme reading.
       const rsiLong = Number.isFinite(rsiValue) && (
@@ -264,16 +270,22 @@ export function runHistoricalBacktest({
         (Number.isFinite(previousRsi) && previousRsi >= Number(scalpingConfig.rsiOverbought ?? 70) &&
           rsiValue < Number(scalpingConfig.rsiOverbought ?? 70))
       );
-      const directionCandidate = regime.direction === "LONG" ? rsiLong : rsiShort;
-      const oppositeCandidate = regime.direction === "LONG" ? rsiShort : rsiLong;
+      const momentumLong = Number.isFinite(rsiValue) && Number.isFinite(previousRsi) && rsiValue > 50 && rsiValue > previousRsi;
+      const momentumShort = Number.isFinite(rsiValue) && Number.isFinite(previousRsi) && rsiValue < 50 && rsiValue < previousRsi;
+      const directionCandidate = regime.state === "TREND"
+        ? (regime.direction === "LONG" ? momentumLong : momentumShort)
+        : (regime.direction === "LONG" ? rsiLong : rsiShort);
+      const oppositeCandidate = regime.state === "TREND"
+        ? (regime.direction === "LONG" ? momentumShort : momentumLong)
+        : (regime.direction === "LONG" ? rsiShort : rsiLong);
       const blockers = [];
       if (!volumePass) {
         blockers.push("volumeNotConfirmed");
         if (regimeDiagnostic) regimeDiagnostic.volumeNotConfirmed++;
       }
       if (!directionCandidate) {
-        blockers.push("rsiNotExtreme");
-        if (regimeDiagnostic) regimeDiagnostic.rsiNotExtreme++;
+        blockers.push(regime.state === "TREND" ? "rsiMomentumNotConfirmed" : "rsiNotExtreme");
+        if (regime.state !== "TREND" && regimeDiagnostic) regimeDiagnostic.rsiNotExtreme++;
       }
       if (oppositeCandidate) {
         blockers.push("directionMismatch");
@@ -294,11 +306,11 @@ export function runHistoricalBacktest({
         blockers,
         rsiLongThreshold: Number(scalpingConfig.rsiOversold ?? 30),
         rsiShortThreshold: Number(scalpingConfig.rsiOverbought ?? 70),
-        bos: metrics.bos || null,
-        choch: metrics.choch || null,
-        higherTimeframeStructure: metrics.higherTimeframeStructure || {},
-        higherTrendDirection: metrics.higherTrendDirection || null,
-        higherReversalDirection: metrics.higherReversalDirection || null,
+        bos: regimeMetrics.bos || null,
+        choch: regimeMetrics.choch || null,
+        higherTimeframeStructure: regimeMetrics.higherTimeframeStructure || {},
+        higherTrendDirection: regimeMetrics.higherTrendDirection || null,
+        higherReversalDirection: regimeMetrics.higherReversalDirection || null,
         reasons: regime.reasons || [],
         scalpingEvents: scalpingEvents.map(event => ({ direction:event.direction, label:event.label }))
       });
