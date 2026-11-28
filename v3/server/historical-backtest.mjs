@@ -184,6 +184,7 @@ export function runHistoricalBacktest({
   const diagnostics = {
     actionableRegimeBars: 0,
     scalpingEvents: 0,
+    scalpingEventsOnActionableBars: 0,
     matchingSignals: 0,
     noMatchingSignal: 0,
     waitReasons: {},
@@ -201,6 +202,18 @@ export function runHistoricalBacktest({
     if (i <= blockedUntilIndex) continue;
     const history = bars.slice(0, i + 1);
     const candleCloseTs = bars[i].ts + tfMs;
+
+    // Evaluate the scalping engine on every completed candle so its state,
+    // RSI clusters and signal history do not skip WAIT/FLAT market bars.
+    const scalpingResult = evaluateScalpingBars(history, normalizedPair, tf, {
+      config: scalpingConfig,
+      state: engineState,
+      now: candleCloseTs
+    });
+    Object.assign(engineState, scalpingResult.state);
+    const scalpingEvents = scalpingResult.events.filter(event => event.kind === "scalping");
+    diagnostics.scalpingEvents += scalpingEvents.length;
+
     const closedProfileBars = higher.filter(bar => bar.ts + profileMs <= candleCloseTs);
     const regime = classifyMarketRegime(history, marketRegimeConfig, {
       higherTimeframeBars: closedProfileBars,
@@ -218,14 +231,7 @@ export function runHistoricalBacktest({
     diagnostics.actionableRegimeBars++;
     const regimeDiagnostic = diagnostics.byRegime[regime.state];
     if (regimeDiagnostic) regimeDiagnostic.bars++;
-    const result = evaluateScalpingBars(history, normalizedPair, tf, {
-      config: scalpingConfig,
-      state: engineState,
-      now: candleCloseTs
-    });
-    Object.assign(engineState, result.state);
-    const scalpingEvents = result.events.filter(event => event.kind === "scalping");
-    diagnostics.scalpingEvents += scalpingEvents.length;
+    diagnostics.scalpingEventsOnActionableBars += scalpingEvents.length;
     const signal = scalpingEvents.find(event => event.direction === regime.direction);
     if (!signal) {
       diagnostics.noMatchingSignal++;
@@ -234,15 +240,38 @@ export function runHistoricalBacktest({
       const volumeMultiple = Number(metrics.volumeMultiple);
       const volumePass = Number.isFinite(volumeMultiple) && volumeMultiple > Number(scalpingConfig.volumeMultiplier ?? 2);
       const rsiValue = Number(metrics.rsi);
-      const rsiLong = Number.isFinite(rsiValue) && rsiValue <= Number(scalpingConfig.rsiOversold ?? 30);
-      const rsiShort = Number.isFinite(rsiValue) && rsiValue >= Number(scalpingConfig.rsiOverbought ?? 70);
+      const previousRsi = Number(metrics.previousRsi);
+      // Keep diagnostic RSI rules exactly in sync with scalping-engine.mjs,
+      // including the recovery/cross-back candle after an extreme reading.
+      const rsiLong = Number.isFinite(rsiValue) && (
+        rsiValue <= Number(scalpingConfig.rsiOversold ?? 30) ||
+        (Number.isFinite(previousRsi) && previousRsi <= Number(scalpingConfig.rsiOversold ?? 30) &&
+          rsiValue > Number(scalpingConfig.rsiOversold ?? 30))
+      );
+      const rsiShort = Number.isFinite(rsiValue) && (
+        rsiValue >= Number(scalpingConfig.rsiOverbought ?? 70) ||
+        (Number.isFinite(previousRsi) && previousRsi >= Number(scalpingConfig.rsiOverbought ?? 70) &&
+          rsiValue < Number(scalpingConfig.rsiOverbought ?? 70))
+      );
       const directionCandidate = regime.direction === "LONG" ? rsiLong : rsiShort;
       const oppositeCandidate = regime.direction === "LONG" ? rsiShort : rsiLong;
-      let reason = "otherSuppression";
-      if (!volumePass) reason = "volumeNotConfirmed";
-      else if (!directionCandidate && oppositeCandidate) reason = "directionMismatch";
-      else if (!directionCandidate) reason = "rsiNotExtreme";
-      if (regimeDiagnostic) regimeDiagnostic[reason]++;
+      const blockers = [];
+      if (!volumePass) {
+        blockers.push("volumeNotConfirmed");
+        if (regimeDiagnostic) regimeDiagnostic.volumeNotConfirmed++;
+      }
+      if (!directionCandidate) {
+        blockers.push("rsiNotExtreme");
+        if (regimeDiagnostic) regimeDiagnostic.rsiNotExtreme++;
+      }
+      if (oppositeCandidate) {
+        blockers.push("directionMismatch");
+        if (regimeDiagnostic) regimeDiagnostic.directionMismatch++;
+      }
+      if (volumePass && directionCandidate && !oppositeCandidate) {
+        blockers.push("otherSuppression");
+        if (regimeDiagnostic) regimeDiagnostic.otherSuppression++;
+      }
       if (diagnostics.samples.length < 20) diagnostics.samples.push({
         timestamp: bars[i].ts,
         regime: regime.state,
@@ -250,6 +279,8 @@ export function runHistoricalBacktest({
         volumeMultiple: Number.isFinite(volumeMultiple) ? Number(volumeMultiple.toFixed(3)) : null,
         requiredVolumeMultiple: Number(scalpingConfig.volumeMultiplier ?? 2),
         rsi: Number.isFinite(rsiValue) ? Number(rsiValue.toFixed(2)) : null,
+        previousRsi: Number.isFinite(previousRsi) ? Number(previousRsi.toFixed(2)) : null,
+        blockers,
         rsiLongThreshold: Number(scalpingConfig.rsiOversold ?? 30),
         rsiShortThreshold: Number(scalpingConfig.rsiOverbought ?? 70),
         bos: metrics.bos || null,
