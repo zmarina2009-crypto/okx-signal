@@ -250,7 +250,9 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
   const rangeBars=bars.slice(-config.smaPeriod);
   const rangePct=((Math.max(...rangeBars.map(b=>b.h))-Math.min(...rangeBars.map(b=>b.l)))/last.c)*100;
   const baselineVolume=averageVolume(bars,config.volumePeriod), volumeRatio=baselineVolume>0?last.v/baselineVolume:null;
-  const currentRsi=rsi(closes,config.smaPeriod>=14?14:config.smaPeriod);
+  const rsiPeriod=config.smaPeriod>=14?14:config.smaPeriod;
+  const currentRsi=rsi(closes,rsiPeriod);
+  const previousRsi=rsi(closes.slice(0,-1),rsiPeriod);
   const crossedUp=previous.c<=(sma(closes,config.smaPeriod,bars.length-2)??currentSma)&&last.c>currentSma;
   const crossedDown=previous.c>=(sma(closes,config.smaPeriod,bars.length-2)??currentSma)&&last.c<currentSma;
   const nearSma=Math.abs((last.c-currentSma)/currentSma)*100<=Math.max(config.maxFlatSlopePct*3,0.08);
@@ -287,7 +289,7 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
   const higherReversalDirection = reversalStructure?.kind === "CHOCH" && reversalStructure.retest &&
     (!oneHourStructure || !(oneHourStructure.kind === "BOS" && oneHourStructure.direction !== reversalStructure.direction))
       ? reversalStructure.direction : null;
-  const metrics={close:last.c,sma:currentSma,slopePct,atr:currentAtr,atrPercent:currentAtr/last.c*100,atrRatio,rangePct,volumeRatio,rsi:currentRsi,
+  const metrics={close:last.c,sma:currentSma,slopePct,atr:currentAtr,atrPercent:currentAtr/last.c*100,atrRatio,rangePct,volumeRatio,rsi:currentRsi, previousRsi,
     bos:structure?.kind==="BOS"?structure:null,choch:structure?.kind==="CHOCH"?structure:null,structureBias:structure?.bias||null,
     higherTimeframeStructure:higherStructures, higherTrendDirection, higherReversalDirection,
     retest:structure?.retest===true,volumeProfile:profile};
@@ -299,9 +301,17 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
   const profileShort=!config.volumeProfileEnabled||(profile?.ready===true&&profile.pocSide==="BELOW_POC");
   const trendDirection=last.c>currentSma&&slopePct>config.maxFlatSlopePct?"LONG":last.c<currentSma&&slopePct< -config.maxFlatSlopePct?"SHORT":null;
   const structureConfirmed = Boolean(higherTrendDirection);
+  // Reversals require RSI to turn away from the relevant extreme zone:
+  // rising RSI for LONG, falling RSI for SHORT. Trend continuation does not
+  // use the 30/70 extreme gate; its momentum confirmation lives in the
+  // scalping engine and is matched by the backtester.
+  const reversalLongRsi = currentRsi != null && previousRsi != null &&
+    currentRsi > previousRsi && (previousRsi <= config.reversalRsiLongMax || currentRsi <= config.reversalRsiLongMax);
+  const reversalShortRsi = currentRsi != null && previousRsi != null &&
+    currentRsi < previousRsi && (previousRsi >= config.reversalRsiShortMin || currentRsi >= config.reversalRsiShortMin);
   const reversalDirection = higherReversalDirection && volumeConfirmed &&
-    ((higherReversalDirection === "LONG" && currentRsi <= config.reversalRsiLongMax && profileLong) ||
-     (higherReversalDirection === "SHORT" && currentRsi >= config.reversalRsiShortMin && profileShort))
+    ((higherReversalDirection === "LONG" && reversalLongRsi && profileLong) ||
+     (higherReversalDirection === "SHORT" && reversalShortRsi && profileShort))
       ? higherReversalDirection : null;
 
   if(config.reversalEnabled&&reversalDirection) return {state:"REVERSAL",direction:reversalDirection,actionable:true,blockSignals:false,
@@ -318,10 +328,10 @@ export function classifyMarketRegime(rawBars, inputConfig = {}, context = {}) {
       waitingReason = "CHoCH обнаружен — ожидаем ретест";
     } else if (!volumeConfirmed) {
       waitingReason = "CHoCH и ретест есть, но объём недостаточен";
-    } else if (structure.direction === "LONG" && currentRsi > config.reversalRsiLongMax) {
-      waitingReason = "CHoCH и объём подтверждены, RSI не подтверждает LONG-разворот";
-    } else if (structure.direction === "SHORT" && currentRsi < config.reversalRsiShortMin) {
-      waitingReason = "CHoCH и объём подтверждены, RSI не подтверждает SHORT-разворот";
+    } else if (structure.direction === "LONG" && !reversalLongRsi) {
+      waitingReason = "CHoCH и объём подтверждены, ожидаем разворот импульса RSI вверх";
+    } else if (structure.direction === "SHORT" && !reversalShortRsi) {
+      waitingReason = "CHoCH и объём подтверждены, ожидаем разворот импульса RSI вниз";
     } else if (!profile?.ready) {
       waitingReason = "CHoCH, ретест и RSI/объём подтверждены; ожидаются данные Volume Profile";
     } else if (structure.direction === "LONG" ? !profileLong : !profileShort) {
