@@ -190,8 +190,8 @@ export function runHistoricalBacktest({
     noMatchingSignal: 0,
     waitReasons: {},
     byRegime: {
-      TREND: { bars:0, matchingSignals:0, noMatchingSignal:0, volumeNotConfirmed:0, rsiNotExtreme:0, directionMismatch:0, otherSuppression:0 },
-      REVERSAL: { bars:0, matchingSignals:0, noMatchingSignal:0, volumeNotConfirmed:0, rsiNotExtreme:0, directionMismatch:0, otherSuppression:0 }
+      TREND: { bars:0, matchingSignals:0, noMatchingSignal:0, volumeNotConfirmed:0, rsiNotExtreme:0, rsiMomentumNotConfirmed:0, directionMismatch:0, otherSuppression:0 },
+      REVERSAL: { bars:0, matchingSignals:0, noMatchingSignal:0, volumeNotConfirmed:0, rsiNotExtreme:0, rsiMomentumNotConfirmed:0, directionMismatch:0, otherSuppression:0 }
     },
     samples: []
   };
@@ -285,7 +285,10 @@ export function runHistoricalBacktest({
       }
       if (!directionCandidate) {
         blockers.push(regime.state === "TREND" ? "rsiMomentumNotConfirmed" : "rsiNotExtreme");
-        if (regime.state !== "TREND" && regimeDiagnostic) regimeDiagnostic.rsiNotExtreme++;
+        if (regimeDiagnostic) {
+          if (regime.state === "TREND") regimeDiagnostic.rsiMomentumNotConfirmed++;
+          else regimeDiagnostic.rsiNotExtreme++;
+        }
       }
       if (oppositeCandidate) {
         blockers.push("directionMismatch");
