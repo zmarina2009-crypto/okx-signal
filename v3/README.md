@@ -96,6 +96,13 @@ Build v3 as a separate application line while keeping v1 and v2 intact. The firs
 - No migration of the existing v1/v2 user data.
 
 
+## RSI confirmation by setup type
+
+- Trend continuation uses a separate volume + RSI momentum event: LONG requires RSI above 50 and rising; SHORT requires RSI below 50 and falling. It does not require an RSI 70/30 extreme.
+- Reversal continues to use the extreme/recovery Volume + RSI event and additionally requires a confirmed RSI turn away from the relevant zone: rising for LONG, falling for SHORT.
+- The historical tester matches momentum events only to TREND regimes and reversal events only to REVERSAL regimes. Opposite-direction signals are never combined.
+- Diagnostic MTF fields are read from the market-regime result, not from the scalping engine result.
+
 ## Multi-timeframe market structure (QA change)
 
 - The default V3 scalping structure filter uses confirmed 15m and 1h market structure while the configured lower timeframe (initially 1m) remains responsible for the actual scalping trigger.
