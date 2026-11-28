@@ -183,11 +183,17 @@ function detectStructureEvent(bars, config, atrValue) {
   if (!breakout) return { bias, lastHigh:lastHigh.price, lastLow:lastLow.price, event:null };
   const last = bars.at(-1);
   const tolerance = Math.max((Number(atrValue) || 0) * config.retestToleranceAtr, Math.abs(last.c) * 0.00015);
-  const touched = breakout.direction === "LONG"
-    ? last.l <= breakout.level + tolerance && last.c > breakout.level
-    : last.h >= breakout.level - tolerance && last.c < breakout.level;
-  const retest = breakout.index < lastIndex && touched;
-  return { ...breakout, bias, retest, tolerance, lastHigh:lastHigh.price, lastLow:lastLow.price };
+  let retestIndex = null;
+  for (let i = breakout.index + 1; i <= lastIndex; i++) {
+    const candidate = bars[i];
+    const touched = breakout.direction === "LONG"
+      ? candidate.l <= breakout.level + tolerance && candidate.c > breakout.level
+      : candidate.h >= breakout.level - tolerance && candidate.c < breakout.level;
+    if (touched) retestIndex = i;
+  }
+  const retest = retestIndex !== null;
+  return { ...breakout, bias, retest, retestIndex, retestTs:retestIndex === null ? null : bars[retestIndex].ts,
+    tolerance, lastHigh:lastHigh.price, lastLow:lastLow.price };
 }
 
 function calculateVolumeProfile(rawBars, config, lowerBars, lowerTimeframe) {
