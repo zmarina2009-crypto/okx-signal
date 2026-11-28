@@ -73,12 +73,37 @@ jobs:
         run: |
           npm run --silent backtest -- --pairs="$PAIRS" --timeframe="$TIMEFRAME" --max-candles="$MAX_CANDLES" --stop-mode=atr --atr-multiplier=1.5 > backtest-atr.txt
           cat backtest-atr.txt
+      - name: Show reports on workflow summary page
+        if: always()
+        run: |
+          {
+            echo "## V3 historical backtest results"
+            echo
+            echo "### Swing stop"
+            echo '~~~text'
+            if [ -f v3/server/backtest-swing.txt ]; then
+              cat v3/server/backtest-swing.txt
+            else
+              echo "Swing report was not created. Check the job logs above."
+            fi
+            echo '~~~'
+            echo
+            echo "### ATR stop"
+            echo '~~~text'
+            if [ -f v3/server/backtest-atr.txt ]; then
+              cat v3/server/backtest-atr.txt
+            else
+              echo "ATR report was not created. Check the job logs above."
+            fi
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: v3-historical-backtest-reports
           path: |
             v3/server/backtest-swing.txt
             v3/server/backtest-atr.txt
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
