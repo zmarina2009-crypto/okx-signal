@@ -156,6 +156,7 @@ export function runHistoricalBacktest({
   timeframe = "1m",
   candles = [],
   higherTimeframeCandles = [],
+  structureBarsByTimeframe = {},
   scalpingConfig = {},
   marketRegimeConfig = {},
   backtestConfig = {}
@@ -218,8 +219,15 @@ export function runHistoricalBacktest({
     if (i <= blockedUntilIndex) continue;
 
     const closedProfileBars = higher.filter(bar => bar.ts + profileMs <= candleCloseTs);
+    const closedStructureBarsByTimeframe = Object.fromEntries(
+      Object.entries(structureBarsByTimeframe || {}).map(([higherTf, higherBars]) => {
+        const higherMs = TIMEFRAME_MS[higherTf] || tfMs;
+        return [higherTf, (higherBars || []).filter(bar => Number(bar.ts) + higherMs <= candleCloseTs)];
+      })
+    );
     const regime = classifyMarketRegime(history, marketRegimeConfig, {
       higherTimeframeBars: closedProfileBars,
+      structureBarsByTimeframe: closedStructureBarsByTimeframe,
       timeframe: tf
     });
     if (Object.hasOwn(regimeCounts, regime.state)) regimeCounts[regime.state]++;
