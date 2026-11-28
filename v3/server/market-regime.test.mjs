@@ -115,6 +115,20 @@ test("market regime settings expose bounded BOS, profile and retest parameters",
   assert.equal(config.retestToleranceAtr, 1.5);
 });
 
+test("market regime exposes the prior RSI value needed to confirm reversal momentum", () => {
+  const closes = Array.from({ length: 120 }, (_, i) => 100 + i * 0.12);
+  const result = classifyMarketRegime(makeBars(closes), {
+    flatFilterEnabled: false,
+    volumeProfileEnabled: false
+  }, {
+    timeframe: "1m",
+    structureBarsByTimeframe: { "15m": [], "1h": [] }
+  });
+  assert.equal(Number.isFinite(result.metrics.rsi), true);
+  assert.equal(Number.isFinite(result.metrics.previousRsi), true);
+  assert.ok(result.metrics.rsi > result.metrics.previousRsi);
+});
+
 test("multi-timeframe BOS filter defaults to 15m and 1h and blocks entries without confirmed higher structure", () => {
   const config = normalizeMarketRegimeConfig({});
   assert.equal(config.multiTimeframeStructureEnabled, true);
