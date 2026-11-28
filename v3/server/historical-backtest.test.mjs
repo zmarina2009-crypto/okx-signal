@@ -91,3 +91,41 @@ test("historical tester returns a stable empty report when there are no actionab
   assert.equal(result.summary.trades, 0);
   assert.equal(result.data.candles, sampleBars.length);
 });
+
+test("scalping engine diagnostics process every candle even while regime is not actionable", () => {
+  const closes = [100, 99, 98, 97, 98, 99];
+  const volumes = [10, 10, 10, 10, 100, 10];
+  const candles = closes.map((close, index) => ({
+    ts: 1_700_000_000_000 + index * 60_000,
+    o: index ? closes[index - 1] : close,
+    h: Math.max(close, index ? closes[index - 1] : close) + 0.5,
+    l: Math.min(close, index ? closes[index - 1] : close) - 0.5,
+    c: close,
+    v: volumes[index],
+    confirm: "1"
+  }));
+  const result = runHistoricalBacktest({
+    pair: "ZEC-USDT-SWAP",
+    timeframe: "1m",
+    candles,
+    marketRegimeConfig: { enabled: false },
+    scalpingConfig: {
+      enabled: true,
+      volumeRsiEnabled: true,
+      volumePeriod: 2,
+      volumeMultiplier: 2,
+      rsiLength: 2,
+      rsiOversold: 40,
+      rsiOverbought: 60,
+      swingLength: 1,
+      bosEnabled: false,
+      bosAlerts: false,
+      groupSignals: false
+    }
+  });
+
+  assert.equal(result.diagnostics.actionableRegimeBars, 0);
+  assert.equal(result.diagnostics.scalpingEvents, 1);
+  assert.equal(result.diagnostics.scalpingEventsOnActionableBars, 0);
+  assert.equal(result.summary.trades, 0);
+});
