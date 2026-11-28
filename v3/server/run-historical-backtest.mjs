@@ -59,15 +59,32 @@ for (const pair of args.pairs) {
     startTime:args.startTime ? args.startTime - profileWarmupMs : undefined,
     endTime:args.endTime
   });
+  const structureBarsByTimeframe = {};
+  if (regimeConfig.multiTimeframeStructureEnabled) {
+    for (const structureTf of regimeConfig.structureTimeframes) {
+      if (structureTf === profileTimeframe) {
+        structureBarsByTimeframe[structureTf] = higherTimeframeCandles;
+        continue;
+      }
+      const structureWarmupMs = (TF_MS[structureTf] || 900_000) * 80;
+      structureBarsByTimeframe[structureTf] = await fetchOkxHistoricalCandles(pair, structureTf, {
+        maxCandles:Math.min(20_000, Math.ceil(args.maxCandles * (TF_MS[args.timeframe] || 60_000) / (TF_MS[structureTf] || 900_000)) + 100),
+        startTime:args.startTime ? args.startTime - structureWarmupMs : undefined,
+        endTime:args.endTime
+      });
+    }
+  }
   const dataAudit = {
     primary: auditCandleSeries(candles, args.timeframe, args.maxCandles),
-    higherTimeframe: auditCandleSeries(higherTimeframeCandles, profileTimeframe)
+    higherTimeframe: auditCandleSeries(higherTimeframeCandles, profileTimeframe),
+    structureTimeframes: Object.fromEntries(Object.entries(structureBarsByTimeframe).map(([tf, bars]) => [tf, auditCandleSeries(bars, tf)]))
   };
   const report = runHistoricalBacktest({
     pair,
     timeframe:args.timeframe,
     candles,
     higherTimeframeCandles,
+    structureBarsByTimeframe,
     scalpingConfig,
     marketRegimeConfig:regimeConfig,
     backtestConfig
